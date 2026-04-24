@@ -1,0 +1,30 @@
+# Step 17 — HTTP + WebSocket server (stub)
+
+## Goal
+
+Replace `sauce4zwift/src/webserver.mjs` with an axum-based server. Must
+serve the exact JSON protocol widgets expect (spec §6.3 / §7.9).
+
+- `GET /api/socket` — WebSocket upgrade. Per-client JSON frames:
+  ```
+  → { "type":"request", "method":"subscribe|unsubscribe|rpc",
+      "uid": <int>, "arg": {...} }
+  ← { "type":"response", "uid", "success", "data" }
+  ← { "type":"event",    "uid":<subId>, "success":true, "data": <...> }
+  ```
+- `/pages/*` — static file server rooted at a configurable path
+  (default: `./pages` relative to binary, copied or symlinked from
+  sauce4zwift).
+- Bind to `server.bind:server.port` from config (default
+  `127.0.0.1:1080`).
+- HTTPS auto-enables if `./https/{key,cert}.pem` exists.
+- Backpressure: drop clients that exceed 8 MB buffered.
+
+## Tests-first outline
+
+- End-to-end: spawn the server, connect a test WS client, drive
+  subscribe / event / unsubscribe flows, assert exact JSON frames.
+- Backpressure: feed a stuck client; socket is closed after threshold.
+- HTTPS conditional: cert files present → TLS listener, absent → HTTP.
+
+To be fully elaborated when we start work on this step.
