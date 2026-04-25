@@ -22,7 +22,9 @@ handle) per role, plus non-secret tuning knobs.
 ## Schema (v1)
 
 ```toml
-# ~/.config/ranchero/ranchero.toml (XDG_CONFIG_HOME on linux/mac, %APPDATA% on win)
+# macOS:   ~/Library/Application Support/net.heroic.ranchero/ranchero.toml
+# Linux:   ~/.config/ranchero/ranchero.toml  (XDG_CONFIG_HOME)
+# Windows: %APPDATA%\heroic\ranchero\config\ranchero.toml
 schema_version = 1
 
 [accounts.main]

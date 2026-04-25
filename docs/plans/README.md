@@ -24,7 +24,7 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 | #   | Status | Step | File |
 |----:|:------:|:-----|:-----|
 |  01 | ☑ | Base CLI (subcommands + options + config-file flag) | [STEP-01-cli-base.md](STEP-01-cli-base.md) |
-|  02 | ☐ | Configuration file + interactive TUI (`ranchero configure`) | [STEP-02-configuration.md](STEP-02-configuration.md) |
+|  02 | ☑ | Configuration file + interactive TUI (`ranchero configure`) | [STEP-02-configuration.md](STEP-02-configuration.md) |
 |  03 | ☐ | Daemon lifecycle (`start` / `stop` / `status`, PID file, foreground vs background) | [STEP-03-daemon-lifecycle.md](STEP-03-daemon-lifecycle.md) |
 |  04 | ☐ | Structured logging & verbose/debug flags | [STEP-04-logging.md](STEP-04-logging.md) |
 |  05 | ☐ | Credential storage in OS keyring | [STEP-05-credentials.md](STEP-05-credentials.md) |

@@ -86,6 +86,8 @@ impl Command {
     }
 }
 
+use std::process::ExitCode;
+
 pub fn parse_from<I, T>(args: I) -> Result<Cli, clap::Error>
 where
     I: IntoIterator<Item = T>,
@@ -123,4 +125,32 @@ pub fn run(cli: Cli) -> String {
     }
 
     out
+}
+
+/// Real dispatcher: routes subcommands to their actual implementations.
+/// The stub `run()` above remains for the STEP 01 test suite.
+pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    use crate::config::{self, store::FileConfigStore};
+    use crate::tui::{self, InMemoryKeyringStore};
+
+    match cli.command {
+        Command::Configure => {
+            let config_path = cli.global.config.clone()
+                .unwrap_or_else(config::default_config_path);
+            let mut store = FileConfigStore::new(config_path);
+            let mut keyring = InMemoryKeyringStore::default();
+            let saved = tui::run_configure(&mut store, &mut keyring)
+                .map_err(|e| format!("{e}"))?;
+            if saved {
+                println!("Configuration saved.");
+            } else {
+                println!("Configuration unchanged.");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Command::Start | Command::Stop | Command::Status => {
+            println!("{}", run(cli));
+            Ok(ExitCode::SUCCESS)
+        }
+    }
 }
