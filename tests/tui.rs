@@ -130,7 +130,8 @@ fn missing_config_starts_with_defaults() {
     let store = FakeConfigStore::new(None);
     let initial = store.load().unwrap();
     assert!(initial.is_none());
+    use ranchero::tui::model::FieldId;
     let model = Model::new(initial.unwrap_or_default());
-    assert_eq!(model.fields.server_port, "1080");
-    assert_eq!(model.fields.server_bind, "127.0.0.1");
+    assert_eq!(model.fields.text(FieldId::ServerPort), "1080");
+    assert_eq!(model.fields.text(FieldId::ServerBind), "127.0.0.1");
 }

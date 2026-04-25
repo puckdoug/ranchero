@@ -91,11 +91,16 @@ fn run_loop(
 }
 
 pub fn save_passwords(model: &Model, keyring: &mut dyn KeyringStore) {
-    if !model.fields.main_email.is_empty() && !model.fields.main_password.is_empty() {
-        let _ = keyring.set("main", &model.fields.main_email, &model.fields.main_password);
+    use crate::tui::model::FieldId;
+    let main_email    = model.fields.text(FieldId::MainEmail);
+    let main_password = model.fields.text(FieldId::MainPassword);
+    if !main_email.is_empty() && !main_password.is_empty() {
+        let _ = keyring.set("main", &main_email, &main_password);
     }
-    if !model.fields.monitor_email.is_empty() && !model.fields.monitor_password.is_empty() {
-        let _ = keyring.set("monitor", &model.fields.monitor_email, &model.fields.monitor_password);
+    let monitor_email    = model.fields.text(FieldId::MonitorEmail);
+    let monitor_password = model.fields.text(FieldId::MonitorPassword);
+    if !monitor_email.is_empty() && !monitor_password.is_empty() {
+        let _ = keyring.set("monitor", &monitor_email, &monitor_password);
     }
 }
 

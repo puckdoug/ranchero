@@ -1,6 +1,9 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use std::collections::HashMap;
 
-use crate::config::ConfigFile;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
+
+use crate::config::{ConfigFile, EditingMode};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,7 +34,7 @@ impl Screen {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FieldId {
     MainEmail,
     MainPassword,
@@ -103,37 +106,69 @@ impl ValidationReport {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct Fields {
-    pub main_email: String,
-    pub main_password: String,       // draft only; never serialized
-    pub monitor_email: String,
-    pub monitor_password: String,    // draft only; never serialized
-    pub server_bind: String,
-    pub server_port: String,         // kept as string for editing
-    pub server_https: bool,
-    pub log_level: String,
-    pub log_file: String,
-    pub pid_file: String,
+    pub main_email:       EditorState,
+    pub main_password:    EditorState,   // rendered as *** in view; never serialized
+    pub monitor_email:    EditorState,
+    pub monitor_password: EditorState,   // rendered as *** in view; never serialized
+    pub server_bind:      EditorState,
+    pub server_port:      EditorState,   // only digits accepted
+    pub server_https:     bool,          // toggled, not text-edited
+    pub log_level:        EditorState,
+    pub log_file:         EditorState,
+    pub pid_file:         EditorState,
+}
+
+fn make_editor(text: &str) -> EditorState {
+    let mut s = EditorState::new(Lines::from(text));
+    s.set_single_line(true);
+    s
+}
+
+fn editor_text(state: &EditorState) -> String {
+    state.lines.flatten(&Some('\n')).into_iter().collect()
 }
 
 impl Fields {
     pub fn from_config(cfg: &ConfigFile) -> Self {
         Self {
-            main_email:       cfg.accounts.main.email.clone().unwrap_or_default(),
-            main_password:    String::new(),
-            monitor_email:    cfg.accounts.monitor.email.clone().unwrap_or_default(),
-            monitor_password: String::new(),
-            server_bind:      cfg.server.bind.clone(),
-            server_port:      cfg.server.port.to_string(),
+            main_email:       make_editor(&cfg.accounts.main.email.clone().unwrap_or_default()),
+            main_password:    make_editor(""),
+            monitor_email:    make_editor(&cfg.accounts.monitor.email.clone().unwrap_or_default()),
+            monitor_password: make_editor(""),
+            server_bind:      make_editor(&cfg.server.bind),
+            server_port:      make_editor(&cfg.server.port.to_string()),
             server_https:     cfg.server.https,
-            log_level:        cfg.logging.level.to_string(),
-            log_file:         cfg.logging.file.clone(),
-            pid_file:         cfg.daemon.pidfile.clone(),
+            log_level:        make_editor(&cfg.logging.level.to_string()),
+            log_file:         make_editor(&cfg.logging.file),
+            pid_file:         make_editor(&cfg.daemon.pidfile),
         }
     }
 
-    pub fn get_mut(&mut self, field: FieldId) -> Option<&mut String> {
+    /// Return the current text content of a field.
+    pub fn text(&self, field: FieldId) -> String {
+        match field {
+            FieldId::MainEmail       => editor_text(&self.main_email),
+            FieldId::MainPassword    => editor_text(&self.main_password),
+            FieldId::MonitorEmail    => editor_text(&self.monitor_email),
+            FieldId::MonitorPassword => editor_text(&self.monitor_password),
+            FieldId::ServerBind      => editor_text(&self.server_bind),
+            FieldId::ServerPort      => editor_text(&self.server_port),
+            FieldId::LogLevel        => editor_text(&self.log_level),
+            FieldId::LogFile         => editor_text(&self.log_file),
+            FieldId::PidFile         => editor_text(&self.pid_file),
+            FieldId::ServerHttps     => if self.server_https { "true" } else { "false" }.to_string(),
+        }
+    }
+
+    /// Overwrite the text content of a field (used for revert-on-Esc).
+    pub fn set_text(&mut self, field: FieldId, text: &str) {
+        if let Some(ed) = self.get_editor_mut(field) {
+            *ed = make_editor(text);
+        }
+    }
+
+    pub fn get_editor_mut(&mut self, field: FieldId) -> Option<&mut EditorState> {
         match field {
             FieldId::MainEmail       => Some(&mut self.main_email),
             FieldId::MainPassword    => Some(&mut self.main_password),
@@ -144,22 +179,22 @@ impl Fields {
             FieldId::LogLevel        => Some(&mut self.log_level),
             FieldId::LogFile         => Some(&mut self.log_file),
             FieldId::PidFile         => Some(&mut self.pid_file),
-            FieldId::ServerHttps     => None,  // boolean, toggled not edited
+            FieldId::ServerHttps     => None,
         }
     }
 
-    pub fn get(&self, field: FieldId) -> &str {
+    pub fn get_editor(&self, field: FieldId) -> Option<&EditorState> {
         match field {
-            FieldId::MainEmail       => &self.main_email,
-            FieldId::MainPassword    => &self.main_password,
-            FieldId::MonitorEmail    => &self.monitor_email,
-            FieldId::MonitorPassword => &self.monitor_password,
-            FieldId::ServerBind      => &self.server_bind,
-            FieldId::ServerPort      => &self.server_port,
-            FieldId::LogLevel        => &self.log_level,
-            FieldId::LogFile         => &self.log_file,
-            FieldId::PidFile         => &self.pid_file,
-            FieldId::ServerHttps     => if self.server_https { "true" } else { "false" },
+            FieldId::MainEmail       => Some(&self.main_email),
+            FieldId::MainPassword    => Some(&self.main_password),
+            FieldId::MonitorEmail    => Some(&self.monitor_email),
+            FieldId::MonitorPassword => Some(&self.monitor_password),
+            FieldId::ServerBind      => Some(&self.server_bind),
+            FieldId::ServerPort      => Some(&self.server_port),
+            FieldId::LogLevel        => Some(&self.log_level),
+            FieldId::LogFile         => Some(&self.log_file),
+            FieldId::PidFile         => Some(&self.pid_file),
+            FieldId::ServerHttps     => None,
         }
     }
 }
@@ -180,7 +215,6 @@ impl StatusBar {
     pub fn clear() -> Self { Self { message: String::new(), is_error: false } }
 }
 
-#[derive(Debug)]
 pub struct Model {
     pub current_screen: Screen,
     pub focus: FieldId,
@@ -189,8 +223,9 @@ pub struct Model {
     pub status: StatusBar,
     pub dirty: bool,
     pub mode: Mode,
-    /// Snapshot of `fields` at model creation, for cancel-revert logic.
-    pub initial_fields: Fields,
+    pub editing_mode: EditingMode,
+    /// Text snapshots taken at construction time; used to revert on Esc.
+    initial_texts: HashMap<FieldId, String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -199,8 +234,21 @@ pub struct Model {
 
 impl Model {
     pub fn new(cfg: ConfigFile) -> Self {
+        let editing_mode = match cfg.tui.editing_mode {
+            crate::config::EditingModeConfig::Vi    => EditingMode::Vi,
+            crate::config::EditingModeConfig::Emacs => EditingMode::Emacs,
+            crate::config::EditingModeConfig::Default => EditingMode::Default,
+        };
         let fields = Fields::from_config(&cfg);
-        let initial_fields = fields.clone();
+        // Snapshot initial text for every text field (used by Esc revert)
+        let initial_texts = [
+            FieldId::MainEmail, FieldId::MainPassword,
+            FieldId::MonitorEmail, FieldId::MonitorPassword,
+            FieldId::ServerBind, FieldId::ServerPort,
+            FieldId::LogLevel, FieldId::LogFile, FieldId::PidFile,
+        ].into_iter()
+            .map(|f| (f, fields.text(f)))
+            .collect();
         let mut m = Self {
             current_screen: Screen::Accounts,
             focus: FieldId::MainEmail,
@@ -209,7 +257,8 @@ impl Model {
             status: StatusBar::info("Tab/Shift-Tab: move  Enter: edit  Ctrl-→/←: screen  Ctrl-S: save  ?: help"),
             dirty: false,
             mode: Mode::Normal,
-            initial_fields,
+            editing_mode,
+            initial_texts,
         };
         m.validate();
         m
@@ -225,13 +274,13 @@ impl Model {
         let mut errors = Vec::new();
 
         for field in [FieldId::MainEmail, FieldId::MonitorEmail] {
-            let v = self.fields.get(field);
-            if !v.is_empty() && !looks_like_email(v) {
+            let v = self.fields.text(field);
+            if !v.is_empty() && !looks_like_email(&v) {
                 errors.push((field, "must be a valid email address".to_string()));
             }
         }
 
-        let port_str = self.fields.get(FieldId::ServerPort);
+        let port_str = self.fields.text(FieldId::ServerPort);
         match port_str.parse::<u32>() {
             Ok(0) | Err(_) => errors.push((
                 FieldId::ServerPort,
@@ -330,8 +379,26 @@ impl Model {
                     self.dirty = true;
                     self.validate();
                 } else {
+                    // Set editor mode and position cursor correctly for the field.
+                    // EditorState defaults to Normal; emacs/default need Insert at end-of-text.
+                    if let Some(ed) = self.fields.get_editor_mut(self.focus) {
+                        match self.editing_mode {
+                            EditingMode::Vi => {
+                                ed.mode = EditorMode::Normal;
+                            }
+                            EditingMode::Emacs | EditingMode::Default => {
+                                ed.mode = EditorMode::Insert;
+                                // Move cursor to end of existing text (Ctrl+E in emacs).
+                                let mut h = EditorEventHandler::emacs_mode();
+                                h.on_key_event(
+                                    KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL),
+                                    ed,
+                                );
+                            }
+                        }
+                    }
                     self.mode = Mode::Editing;
-                    self.status = StatusBar::info("Editing — Enter: confirm  Esc: cancel");
+                    self.status = StatusBar::info("Editing — Enter: confirm  Esc: cancel  ?: help");
                 }
                 Action::None
             }
@@ -366,51 +433,49 @@ impl Model {
 
     fn handle_editing(&mut self, ev: Event) -> Action {
         let Event::Key(key) = ev else { return Action::None; };
-        match key.code {
-            KeyCode::Enter | KeyCode::Tab => {
+
+        // Enter always commits and exits editing, regardless of mode
+        if key.code == KeyCode::Enter {
+            self.mode = Mode::Normal;
+            self.status = StatusBar::info("Tab/Shift-Tab: move  Enter: edit  Ctrl-→/←: screen  Ctrl-S: save  ?: help");
+            self.validate();
+            return Action::None;
+        }
+
+        // Esc: in vi mode, only exit our Editing layer when already in Normal;
+        // let edtui handle Insert→Normal first. In emacs/default, always exit.
+        if key.code == KeyCode::Esc {
+            let already_normal = self.fields.get_editor(self.focus)
+                .map(|ed| ed.mode == EditorMode::Normal)
+                .unwrap_or(true);
+            let should_exit = match self.editing_mode {
+                EditingMode::Vi => already_normal,
+                EditingMode::Emacs | EditingMode::Default => true,
+            };
+            if should_exit {
+                let init_text = self.initial_texts.get(&self.focus).cloned().unwrap_or_default();
+                self.fields.set_text(self.focus, &init_text);
                 self.mode = Mode::Normal;
                 self.status = StatusBar::info("Tab/Shift-Tab: move  Enter: edit  Ctrl-→/←: screen  Ctrl-S: save  ?: help");
                 self.validate();
+                return Action::None;
             }
-            KeyCode::Esc => {
-                // revert field to its initial value
-                let init_val = match self.focus {
-                    FieldId::MainEmail       => self.initial_fields.main_email.clone(),
-                    FieldId::MainPassword    => String::new(),
-                    FieldId::MonitorEmail    => self.initial_fields.monitor_email.clone(),
-                    FieldId::MonitorPassword => String::new(),
-                    FieldId::ServerBind      => self.initial_fields.server_bind.clone(),
-                    FieldId::ServerPort      => self.initial_fields.server_port.clone(),
-                    FieldId::LogLevel        => self.initial_fields.log_level.clone(),
-                    FieldId::LogFile         => self.initial_fields.log_file.clone(),
-                    FieldId::PidFile         => self.initial_fields.pid_file.clone(),
-                    FieldId::ServerHttps     => String::new(),
-                };
-                if let Some(field) = self.fields.get_mut(self.focus) {
-                    *field = init_val;
-                }
-                self.mode = Mode::Normal;
-                self.validate();
-            }
-            KeyCode::Backspace => {
-                if let Some(field) = self.fields.get_mut(self.focus) {
-                    field.pop();
-                    self.dirty = true;
-                    self.validate();
-                }
-            }
-            KeyCode::Char(c) => {
-                // Reject non-digit input for numeric fields
-                if self.focus.is_numeric() && !c.is_ascii_digit() {
-                    return Action::None;
-                }
-                if let Some(field) = self.fields.get_mut(self.focus) {
-                    field.push(c);
-                    self.dirty = true;
-                    self.validate();
-                }
-            }
-            _ => {}
+            // Fall through — let edtui switch Insert→Normal
+        }
+
+        // Reject non-digit input for the port field before it reaches edtui
+        if let KeyCode::Char(c) = key.code
+            && self.focus.is_numeric() && !c.is_ascii_digit() { return Action::None; }
+
+        // Route to edtui. Create the handler each time (it's a thin struct).
+        let mut handler = match self.editing_mode {
+            EditingMode::Vi => EditorEventHandler::vim_mode(),
+            EditingMode::Emacs | EditingMode::Default => EditorEventHandler::emacs_mode(),
+        };
+        if let Some(editor) = self.fields.get_editor_mut(self.focus) {
+            handler.on_key_event(key, editor);
+            self.dirty = true;
+            self.validate();
         }
         Action::None
     }
@@ -439,33 +504,45 @@ impl Model {
 
     /// Build a `ConfigFile` from the current draft fields (no passwords).
     pub fn to_config_file(&self) -> ConfigFile {
-        use crate::config::{AccountEntry, AccountsConfig, DaemonConfig, LoggingConfig, LogLevel, ServerConfig};
-        let port = self.fields.server_port.parse::<u32>().unwrap_or(1080);
-        let log_level = match self.fields.log_level.as_str() {
+        use crate::config::{
+            AccountEntry, AccountsConfig, DaemonConfig, EditingModeConfig,
+            LoggingConfig, LogLevel, ServerConfig, TuiConfig,
+        };
+        let port = self.fields.text(FieldId::ServerPort).parse::<u32>().unwrap_or(1080);
+        let log_level_str = self.fields.text(FieldId::LogLevel);
+        let log_level = match log_level_str.as_str() {
             "trace" => LogLevel::Trace,
             "debug" => LogLevel::Debug,
             "warn"  => LogLevel::Warn,
             "error" => LogLevel::Error,
             _       => LogLevel::Info,
         };
+        let editing_mode_cfg = match self.editing_mode {
+            crate::config::EditingMode::Vi      => EditingModeConfig::Vi,
+            crate::config::EditingMode::Emacs   => EditingModeConfig::Emacs,
+            crate::config::EditingMode::Default => EditingModeConfig::Default,
+        };
+        let main_email   = self.fields.text(FieldId::MainEmail);
+        let monitor_email = self.fields.text(FieldId::MonitorEmail);
         ConfigFile {
             schema_version: crate::config::CURRENT_SCHEMA_VERSION,
             accounts: AccountsConfig {
-                main:    AccountEntry { email: Some(self.fields.main_email.clone()).filter(|s| !s.is_empty()) },
-                monitor: AccountEntry { email: Some(self.fields.monitor_email.clone()).filter(|s| !s.is_empty()) },
+                main:    AccountEntry { email: Some(main_email).filter(|s| !s.is_empty()) },
+                monitor: AccountEntry { email: Some(monitor_email).filter(|s| !s.is_empty()) },
             },
             server: ServerConfig {
-                bind:  self.fields.server_bind.clone(),
+                bind:  self.fields.text(FieldId::ServerBind),
                 port,
                 https: self.fields.server_https,
             },
             logging: LoggingConfig {
                 level: log_level,
-                file:  self.fields.log_file.clone(),
+                file:  self.fields.text(FieldId::LogFile),
             },
             daemon: DaemonConfig {
-                pidfile: self.fields.pid_file.clone(),
+                pidfile: self.fields.text(FieldId::PidFile),
             },
+            tui: TuiConfig { editing_mode: editing_mode_cfg },
         }
     }
 }
@@ -499,8 +576,8 @@ mod tests {
     #[test]
     fn model_initial_state_reflects_loaded_config() {
         let m = model_with_valid_config();
-        assert_eq!(m.fields.main_email, "rider@example.com");
-        assert_eq!(m.fields.monitor_email, "monitor@example.com");
+        assert_eq!(m.fields.text(FieldId::MainEmail), "rider@example.com");
+        assert_eq!(m.fields.text(FieldId::MonitorEmail), "monitor@example.com");
         assert_eq!(m.current_screen, Screen::Accounts);
         assert_eq!(m.focus, FieldId::MainEmail);
         assert!(!m.dirty);
@@ -567,18 +644,15 @@ mod tests {
     fn editing_mode_captures_typed_text_into_focused_field() {
         let mut m = model_with_valid_config();
         m.update(key(KeyCode::Enter));
+        // Wipe existing text then type new value
+        let len = m.fields.text(FieldId::MainEmail).len();
+        for _ in 0..len {
+            m.update(key(KeyCode::Backspace));
+        }
         for c in "new@email.com".chars() {
-            // clear first char
-            if m.fields.main_email == "rider@example.com" {
-                // wipe existing with backspaces
-                let len = m.fields.main_email.len();
-                for _ in 0..len {
-                    m.update(key(KeyCode::Backspace));
-                }
-            }
             m.update(key(KeyCode::Char(c)));
         }
-        assert_eq!(m.fields.main_email, "new@email.com");
+        assert_eq!(m.fields.text(FieldId::MainEmail), "new@email.com");
         assert!(m.dirty);
     }
 
@@ -593,13 +667,13 @@ mod tests {
     #[test]
     fn escape_in_editing_mode_reverts_field() {
         let mut m = model_with_valid_config();
-        let original = m.fields.main_email.clone();
+        let original = m.fields.text(FieldId::MainEmail);
         m.update(key(KeyCode::Enter)); // editing
         m.update(key(KeyCode::Backspace));
         m.update(key(KeyCode::Backspace));
-        m.update(key(KeyCode::Esc)); // revert
+        m.update(key(KeyCode::Esc)); // revert (emacs/default mode exits immediately)
         assert_eq!(m.mode, Mode::Normal);
-        assert_eq!(m.fields.main_email, original);
+        assert_eq!(m.fields.text(FieldId::MainEmail), original);
     }
 
     #[test]
@@ -608,11 +682,11 @@ mod tests {
         m.update(ctrl(KeyCode::Right)); // → Server
         m.update(key(KeyCode::Tab)); // ServerBind → ServerPort
         m.update(key(KeyCode::Enter)); // edit
-        let before = m.fields.server_port.clone();
+        let before = m.fields.text(FieldId::ServerPort);
         m.update(key(KeyCode::Char('x')));
-        assert_eq!(m.fields.server_port, before, "non-digit should be ignored");
+        assert_eq!(m.fields.text(FieldId::ServerPort), before, "non-digit should be ignored");
         m.update(key(KeyCode::Char('9')));
-        assert!(m.fields.server_port.ends_with('9'));
+        assert!(m.fields.text(FieldId::ServerPort).ends_with('9'));
     }
 
     #[test]
@@ -620,7 +694,7 @@ mod tests {
         let mut m = model_with_valid_config();
         m.update(key(KeyCode::Enter)); // edit MainEmail
         // Clear field
-        let len = m.fields.main_email.len();
+        let len = m.fields.text(FieldId::MainEmail).len();
         for _ in 0..len {
             m.update(key(KeyCode::Backspace));
         }
@@ -662,7 +736,7 @@ mod tests {
         m.update(ctrl(KeyCode::Right)); // → Server
         m.update(key(KeyCode::Tab)); // → ServerPort
         m.update(key(KeyCode::Enter));
-        let len = m.fields.server_port.len();
+        let len = m.fields.text(FieldId::ServerPort).len();
         for _ in 0..len { m.update(key(KeyCode::Backspace)); }
         for c in "0".chars() { m.update(key(KeyCode::Char(c))); }
         m.update(key(KeyCode::Enter));
@@ -724,5 +798,132 @@ mod tests {
         assert_eq!(m.mode, Mode::Help);
         m.update(key(KeyCode::Char('?')));
         assert_eq!(m.mode, Mode::Normal);
+    }
+
+    // -----------------------------------------------------------------------
+    // vi mode tests
+    // -----------------------------------------------------------------------
+
+    fn model_vi() -> Model {
+        let mut cfg = ConfigFile::default();
+        cfg.accounts.main.email = Some("rider@example.com".to_string());
+        cfg.tui.editing_mode = crate::config::EditingModeConfig::Vi;
+        Model::new(cfg)
+    }
+
+    #[test]
+    fn vi_mode_starts_in_normal_editor_state() {
+        let m = model_vi();
+        let ed = m.fields.get_editor(FieldId::MainEmail).unwrap();
+        assert_eq!(ed.mode, EditorMode::Normal,
+            "vi mode should start with EditorState in Normal mode");
+    }
+
+    #[test]
+    fn vi_enter_normal_mode_on_field_enter() {
+        let mut m = model_vi();
+        m.update(key(KeyCode::Enter)); // enter our Mode::Editing
+        assert_eq!(m.mode, Mode::Editing);
+        let ed = m.fields.get_editor(FieldId::MainEmail).unwrap();
+        assert_eq!(ed.mode, EditorMode::Normal,
+            "vi should open in Normal mode");
+    }
+
+    #[test]
+    fn vi_i_enters_insert_mode() {
+        let mut m = model_vi();
+        m.update(key(KeyCode::Enter)); // Mode::Editing
+        m.update(key(KeyCode::Char('i'))); // edtui: Normal → Insert
+        let ed = m.fields.get_editor(FieldId::MainEmail).unwrap();
+        assert_eq!(ed.mode, EditorMode::Insert,
+            "pressing i in vi normal mode should enter Insert");
+    }
+
+    #[test]
+    fn vi_esc_in_insert_transitions_to_normal_not_exits_editing() {
+        let mut m = model_vi();
+        m.update(key(KeyCode::Enter));          // Mode::Editing, editor Normal
+        m.update(key(KeyCode::Char('i')));      // editor → Insert
+        m.update(key(KeyCode::Esc));            // editor → Normal (NOT exit Mode::Editing)
+        assert_eq!(m.mode, Mode::Editing,
+            "first Esc in vi Insert should stay in Mode::Editing");
+        let ed = m.fields.get_editor(FieldId::MainEmail).unwrap();
+        assert_eq!(ed.mode, EditorMode::Normal,
+            "editor should now be in Normal mode");
+    }
+
+    #[test]
+    fn vi_second_esc_exits_editing_mode() {
+        let mut m = model_vi();
+        m.update(key(KeyCode::Enter));          // Mode::Editing
+        m.update(key(KeyCode::Char('i')));      // Insert
+        m.update(key(KeyCode::Esc));            // → Normal (stay in Mode::Editing)
+        m.update(key(KeyCode::Esc));            // editor already Normal → exit Mode::Editing
+        assert_eq!(m.mode, Mode::Normal,
+            "second Esc in vi Normal should exit Mode::Editing");
+    }
+
+    #[test]
+    fn vi_second_esc_reverts_to_initial_text() {
+        let mut m = model_vi();
+        let original = m.fields.text(FieldId::MainEmail);
+        m.update(key(KeyCode::Enter));          // Mode::Editing
+        m.update(key(KeyCode::Char('A')));      // append at end → Insert
+        m.update(key(KeyCode::Char('X')));      // type X
+        m.update(key(KeyCode::Esc));            // Insert → Normal
+        m.update(key(KeyCode::Esc));            // exit and revert
+        assert_eq!(m.fields.text(FieldId::MainEmail), original,
+            "should revert to initial text on double-Esc in vi mode");
+    }
+
+    // -----------------------------------------------------------------------
+    // emacs mode tests
+    // -----------------------------------------------------------------------
+
+    fn model_emacs() -> Model {
+        let mut cfg = ConfigFile::default();
+        cfg.accounts.main.email = Some("hello@example.com".to_string());
+        cfg.tui.editing_mode = crate::config::EditingModeConfig::Emacs;
+        Model::new(cfg)
+    }
+
+    #[test]
+    fn emacs_mode_starts_in_insert_editor_state() {
+        let mut m = model_emacs();
+        m.update(key(KeyCode::Enter));
+        let ed = m.fields.get_editor(FieldId::MainEmail).unwrap();
+        assert_eq!(ed.mode, EditorMode::Insert,
+            "emacs mode should open in Insert mode");
+    }
+
+    #[test]
+    fn emacs_esc_exits_editing_immediately() {
+        let mut m = model_emacs();
+        m.update(key(KeyCode::Enter));
+        m.update(key(KeyCode::Esc));
+        assert_eq!(m.mode, Mode::Normal,
+            "single Esc in emacs mode should immediately exit Mode::Editing");
+    }
+
+    #[test]
+    fn emacs_ctrl_a_moves_to_start_of_line() {
+        let mut m = model_emacs();
+        m.update(key(KeyCode::Enter)); // in editing, cursor at end
+        m.update(Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)));
+        // Cursor should now be at col 0
+        let ed = m.fields.get_editor(FieldId::MainEmail).unwrap();
+        assert_eq!(ed.cursor.col, 0, "Ctrl+A should move cursor to start");
+    }
+
+    #[test]
+    fn emacs_ctrl_k_kills_to_end_of_line() {
+        let mut m = model_emacs();
+        m.update(key(KeyCode::Enter)); // cursor at end
+        // Move to start first
+        m.update(Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)));
+        // Kill to end
+        m.update(Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)));
+        assert_eq!(m.fields.text(FieldId::MainEmail), "",
+            "Ctrl+K from start should clear the line");
     }
 }

@@ -64,13 +64,6 @@ fn render_field(
     model: &Model,
 ) {
     let is_focused = model.focus == field;
-    let is_editing = is_focused && model.mode == Mode::Editing;
-    let value = model.fields.get(field);
-    let display = if field.is_password() {
-        "*".repeat(value.len())
-    } else {
-        value.to_string()
-    };
 
     let border_style = if is_focused {
         Style::default().fg(Color::Yellow)
@@ -84,14 +77,37 @@ fn render_field(
         label.to_string()
     };
 
-    let content = if is_editing {
-        format!("{display}█") // cursor
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(border_style);
+
+    let value = model.fields.text(field);
+
+    let display = if field.is_password() {
+        "*".repeat(value.len())
+    } else {
+        value
+    };
+
+    // Append a cursor marker and vi-mode indicator when actively editing
+    let content = if is_focused && model.mode == Mode::Editing {
+        let mode_tag = if let Some(ed) = model.fields.get_editor(field) {
+            match ed.mode {
+                edtui::EditorMode::Normal => " [N]",
+                edtui::EditorMode::Insert => " [I]",
+                edtui::EditorMode::Visual => " [V]",
+                _                         => "",
+            }
+        } else {
+            ""
+        };
+        format!("{display}█{mode_tag}")
     } else {
         display
     };
 
-    let paragraph = Paragraph::new(content)
-        .block(Block::default().borders(Borders::ALL).title(title).border_style(border_style));
+    let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -266,7 +282,7 @@ mod tests {
         let mut m = model_accounts();
         m.update(crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
         // Clear and type invalid email
-        let len = m.fields.main_email.len();
+        let len = m.fields.text(super::super::model::FieldId::MainEmail).len();
         for _ in 0..len {
             m.update(crossterm::event::Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)));
         }

@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use ranchero::config::{self, ConfigError, atomic_write};
+use ranchero::config::editrc::{EditrcMode, detect_from_editrc};
 #[cfg(target_os = "macos")]
 use ranchero::config::paths::create_xdg_symlink;
 
@@ -101,6 +102,30 @@ fn config_file_store_round_trips() {
 
     // Written atomically — no .tmp file left over
     assert!(!p.with_extension("toml.tmp").exists());
+}
+
+// ---------------------------------------------------------------------------
+// editrc detection
+// ---------------------------------------------------------------------------
+
+#[test]
+fn editrc_absent_returns_none() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(detect_from_editrc(dir.path()), None);
+}
+
+#[test]
+fn editrc_file_bind_v_returns_vi() {
+    let dir = tempfile::tempdir().unwrap();
+    writeln!(std::fs::File::create(dir.path().join(".editrc")).unwrap(), "bind -v").unwrap();
+    assert_eq!(detect_from_editrc(dir.path()), Some(EditrcMode::Vi));
+}
+
+#[test]
+fn editrc_file_bind_e_returns_emacs() {
+    let dir = tempfile::tempdir().unwrap();
+    writeln!(std::fs::File::create(dir.path().join(".editrc")).unwrap(), "bind -e").unwrap();
+    assert_eq!(detect_from_editrc(dir.path()), Some(EditrcMode::Emacs));
 }
 
 // ---------------------------------------------------------------------------

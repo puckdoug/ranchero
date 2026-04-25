@@ -16,8 +16,9 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 directories = "5"
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = "0.30"
+crossterm = "0.29"
+edtui = "0.11"
 
 [dev-dependencies]
 tempfile = "3"
