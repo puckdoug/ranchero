@@ -1,0 +1,288 @@
+//! Integration tests for `ranchero start`, `ranchero stop`, and
+//! `ranchero status`. Each test gets a unique config and PID/socket path
+//! so the suite can run in parallel.
+
+#![cfg(unix)]
+
+use std::path::PathBuf;
+use std::process::{Child, Command, Output, Stdio};
+use std::time::{Duration, Instant};
+
+const POLL_INTERVAL: Duration = Duration::from_millis(20);
+const READY_TIMEOUT: Duration = Duration::from_secs(5);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn binary_path() -> &'static str {
+    env!("CARGO_BIN_EXE_ranchero")
+}
+
+/// Per-test state: temp dir holding a config file and the daemon's PID and
+/// socket. Drop tears down any child still running.
+struct DaemonHarness {
+    _dir: tempfile::TempDir,
+    config_path: PathBuf,
+    pidfile_path: PathBuf,
+    socket_path: PathBuf,
+    child: Option<Child>,
+}
+
+impl DaemonHarness {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("ranchero.toml");
+        // Use a short subdirectory so the UDS path stays under macOS's ~104
+        // char limit.
+        let state = dir.path().join("s");
+        std::fs::create_dir_all(&state).unwrap();
+        let pidfile_path = state.join("ranchero.pid");
+        let socket_path = state.join("ranchero.sock");
+
+        let toml = format!(
+            "schema_version = 1\n\
+             [daemon]\n\
+             pidfile = \"{}\"\n",
+            pidfile_path.display()
+        );
+        std::fs::write(&config_path, toml).unwrap();
+
+        DaemonHarness {
+            _dir: dir,
+            config_path,
+            pidfile_path,
+            socket_path,
+            child: None,
+        }
+    }
+
+    fn config_args(&self) -> Vec<String> {
+        vec!["--config".into(), self.config_path.to_string_lossy().into_owned()]
+    }
+
+    fn run(&self, extra: &[&str]) -> Output {
+        let mut cmd = Command::new(binary_path());
+        cmd.args(self.config_args()).args(extra);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.output().expect("spawn")
+    }
+
+    fn spawn_foreground(&mut self, debug: bool) -> &mut Child {
+        let mut cmd = Command::new(binary_path());
+        cmd.args(self.config_args());
+        if debug {
+            cmd.arg("--debug");
+        } else {
+            cmd.arg("--foreground");
+        }
+        cmd.arg("start");
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = cmd.spawn().expect("spawn ranchero");
+        self.child = Some(child);
+        self.child.as_mut().unwrap()
+    }
+
+    fn wait_for_pidfile(&self) -> Option<u32> {
+        let deadline = Instant::now() + READY_TIMEOUT;
+        while Instant::now() < deadline {
+            if let Ok(s) = std::fs::read_to_string(&self.pidfile_path)
+                && let Ok(pid) = s.trim().parse::<u32>()
+                && self.socket_path.exists()
+            {
+                return Some(pid);
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        None
+    }
+
+    fn wait_for_pidfile_gone(&self) -> bool {
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+        while Instant::now() < deadline {
+            if !self.pidfile_path.exists() {
+                return true;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        false
+    }
+}
+
+impl Drop for DaemonHarness {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Ok(s) = std::fs::read_to_string(&self.pidfile_path)
+            && let Ok(pid) = s.trim().parse::<u32>()
+        {
+            // Best-effort: SIGKILL any straggler.
+            let _ = Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+}
+
+fn stdout_string(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn stderr_string(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn start_writes_pid_file_and_status_reports_running() {
+    let mut h = DaemonHarness::new();
+    h.spawn_foreground(false);
+    let pid = h.wait_for_pidfile().expect("daemon should become ready");
+    assert!(pid > 0);
+
+    let out = h.run(&["status"]);
+    assert!(out.status.success(), "status exited with {:?}", out.status);
+    let text = stdout_string(&out);
+    assert!(
+        text.contains("running"),
+        "expected 'running' in status output, got: {text}"
+    );
+    assert!(
+        text.contains(&format!("pid {pid}")),
+        "expected pid {pid} in status output, got: {text}"
+    );
+}
+
+#[test]
+fn stop_clears_pid_file_and_status_reports_shutdown() {
+    let mut h = DaemonHarness::new();
+    h.spawn_foreground(false);
+    h.wait_for_pidfile().expect("daemon should become ready");
+
+    let stop = h.run(&["stop"]);
+    assert!(stop.status.success(), "stop failed: {:?}", stderr_string(&stop));
+    assert!(stdout_string(&stop).to_lowercase().contains("stopped"));
+
+    assert!(h.wait_for_pidfile_gone(), "pidfile should be removed after stop");
+
+    let status = h.run(&["status"]);
+    let text = stdout_string(&status);
+    assert!(
+        text.to_lowercase().contains("not running"),
+        "expected 'not running' after stop, got: {text}"
+    );
+}
+
+#[test]
+fn stop_when_not_running_reports_no_daemon() {
+    let h = DaemonHarness::new();
+    let out = h.run(&["stop"]);
+    assert!(!out.status.success(), "stop on empty state should be non-zero");
+    let combined = format!("{}{}", stdout_string(&out), stderr_string(&out));
+    assert!(
+        combined.to_lowercase().contains("not running"),
+        "expected 'not running' message, got: {combined}"
+    );
+    // No panic / stack trace.
+    assert!(
+        !combined.contains("panicked") && !combined.contains("RUST_BACKTRACE"),
+        "stop should not panic, got: {combined}"
+    );
+}
+
+#[test]
+fn status_when_not_running_reports_no_daemon() {
+    let h = DaemonHarness::new();
+    let out = h.run(&["status"]);
+    let combined = format!("{}{}", stdout_string(&out), stderr_string(&out));
+    assert!(
+        combined.to_lowercase().contains("not running"),
+        "expected 'not running' from status, got: {combined}"
+    );
+}
+
+#[test]
+fn start_when_already_running_refuses() {
+    let mut h = DaemonHarness::new();
+    h.spawn_foreground(false);
+    let first_pid = h.wait_for_pidfile().expect("daemon should become ready");
+
+    // Try to start a second daemon.
+    let second = h.run(&["--foreground", "start"]);
+    assert!(
+        !second.status.success(),
+        "second start should fail when one is already running"
+    );
+    let combined = format!("{}{}", stdout_string(&second), stderr_string(&second));
+    assert!(
+        combined.to_lowercase().contains("already running"),
+        "expected 'already running' message, got: {combined}"
+    );
+
+    // First daemon must still be alive.
+    let status = h.run(&["status"]);
+    let text = stdout_string(&status);
+    assert!(
+        text.contains(&format!("pid {first_pid}")),
+        "first daemon should still be running, got: {text}"
+    );
+}
+
+#[test]
+fn stale_pid_file_is_cleaned_up_on_start() {
+    let mut h = DaemonHarness::new();
+    // Plant a stale PID file. PID 999_999 is overwhelmingly unlikely to be
+    // a live process — the OsProcessProbe will report it dead.
+    std::fs::write(&h.pidfile_path, "999999\n").unwrap();
+    assert!(h.pidfile_path.exists());
+
+    h.spawn_foreground(false);
+    let live_pid = h
+        .wait_for_pidfile()
+        .expect("daemon should start despite stale pidfile");
+    assert_ne!(live_pid, 999_999, "pidfile should be replaced, not reused");
+    assert!(live_pid > 0);
+}
+
+#[test]
+fn backgrounded_start_returns_quickly_and_keeps_running() {
+    let h = DaemonHarness::new();
+
+    let start = Instant::now();
+    let out = h.run(&["start"]);
+    let elapsed = start.elapsed();
+
+    assert!(out.status.success(), "backgrounded start failed: {:?}", stderr_string(&out));
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "backgrounded start should return quickly to the shell, took {elapsed:?}"
+    );
+
+    let pid = h
+        .wait_for_pidfile()
+        .expect("daemon should be running after backgrounded start");
+    assert!(pid > 0);
+
+    let stop = h.run(&["stop"]);
+    assert!(stop.status.success(), "stop failed: {:?}", stderr_string(&stop));
+}
+
+#[test]
+fn debug_flag_keeps_process_in_foreground() {
+    let mut h = DaemonHarness::new();
+    let child_pid = h.spawn_foreground(true).id();
+    let daemon_pid = h
+        .wait_for_pidfile()
+        .expect("daemon should become ready under --debug");
+    assert_eq!(
+        child_pid, daemon_pid,
+        "with --debug the spawned process should be the daemon (no fork); \
+         spawned={child_pid} pidfile={daemon_pid}"
+    );
+}

@@ -130,7 +130,8 @@ pub fn run(cli: Cli) -> String {
 /// Real dispatcher: routes subcommands to their actual implementations.
 /// The stub `run()` above remains for the STEP 01 test suite.
 pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    use crate::config::{self, store::FileConfigStore};
+    use crate::config::{self, OsEnv, ResolvedConfig, store::FileConfigStore};
+    use crate::daemon;
     use crate::tui::{self, InMemoryKeyringStore};
 
     match cli.command {
@@ -149,8 +150,14 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Start | Command::Stop | Command::Status => {
-            println!("{}", run(cli));
-            Ok(ExitCode::SUCCESS)
+            let file = config::load(cli.global.config.as_deref())?;
+            let resolved = ResolvedConfig::resolve(&cli.global, &OsEnv, Some(file))?;
+            match cli.command {
+                Command::Start => Ok(daemon::start(&resolved, cli.global.foreground)?),
+                Command::Stop => Ok(daemon::stop(&resolved)?),
+                Command::Status => Ok(daemon::status(&resolved)?),
+                Command::Configure => unreachable!(),
+            }
         }
     }
 }

@@ -27,7 +27,7 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 |  02 | ☑ | Configuration file + interactive TUI (`ranchero configure`) | [STEP-02-configuration.md](STEP-02-configuration.md) |
 | 02.1 | ☑ | TUI keybindings: vi mode (priority) + emacs mode; `~/.editrc` detection; ratatui 0.30 upgrade | [STEP-02.1-configuration-keybindings.md](STEP-02.1-configuration-keybindings.md) |
 | 02.2 | ☑ | Vi outer navigation: `j/k/h/l`, `i/a`, `:wq`/`:q!`/`ZZ`, vi-aware status bar and help | [STEP-02.2-vi-navigation.md](STEP-02.2-vi-navigation.md) |
-|  03 | ☐ | Daemon lifecycle (`start` / `stop` / `status`, PID file, foreground vs background) | [STEP-03-daemon-lifecycle.md](STEP-03-daemon-lifecycle.md) |
+|  03 | ☑ | Daemon lifecycle (`start` / `stop` / `status`, PID file, foreground vs background) | [STEP-03-daemon-lifecycle.md](done/STEP-03-daemon-lifecycle.md) |
 |  04 | ☐ | Structured logging & verbose/debug flags | [STEP-04-logging.md](STEP-04-logging.md) |
 |  05 | ☐ | Credential storage in OS keyring | [STEP-05-credentials.md](STEP-05-credentials.md) |
 |  06 | ☐ | `zwift-proto` crate — prost-build against `sauce4zwift/src/zwift.proto` | [STEP-06-proto-crate.md](STEP-06-proto-crate.md) |
