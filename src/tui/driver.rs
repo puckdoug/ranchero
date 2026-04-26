@@ -70,10 +70,27 @@ fn run_loop(
         terminal.draw(|f| render(model, f))?;
 
         let ev = event::read()?;
+
+        // Only process key-press events; skip Release/Repeat to avoid
+        // double-firing on terminals that emit them (e.g. kitty protocol).
+        if let crossterm::event::Event::Key(ref k) = ev
+            && k.kind != crossterm::event::KeyEventKind::Press {
+            continue;
+        }
+
         let action = model.update(ev);
 
         match action {
             Action::None => {}
+            Action::WriteOnly => {
+                // :w — write to disk, stay in the TUI
+                let cfg = model.to_config_file();
+                if let Err(e) = store.save(&cfg) {
+                    model.status = crate::tui::model::StatusBar::error(format!("Save failed: {e}"));
+                }
+                save_passwords(model, keyring);
+                model.dirty = false;
+            }
             Action::Save => {
                 let cfg = model.to_config_file();
                 if let Err(e) = store.save(&cfg) {
