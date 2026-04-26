@@ -5,3 +5,5 @@
 // proto tree (https://github.com/zoffline/zwift-offline).
 //
 // See docs/plans/STEP-06-proto-crate.md.
+
+include!(concat!(env!("OUT_DIR"), "/_.rs"));

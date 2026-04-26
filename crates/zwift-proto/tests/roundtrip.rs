@@ -9,8 +9,8 @@
 
 use prost::Message;
 use zwift_proto::{
-    ClientToServer, Event, EventSubgroup, LoginRequest, LoginResponse, PlayerLeftWorld,
-    PlayerState, RelayAddress, RelayAddressesVod, RideOn, Segment, SegmentResult, ServerToClient,
+    ClientToServer, Event, EventSubgroupProtobuf, LoginRequest, LoginResponse, PlayerLeftWorld,
+    PlayerState, RelayAddress, RelayAddressesVod, RideOn, SegmentResult, ServerToClient,
     TcpAddress, TcpConfig, UdpConfig, UdpConfigVod, WorldAttribute,
 };
 
@@ -103,10 +103,5 @@ fn event_roundtrips() {
 
 #[test]
 fn event_subgroup_roundtrips() {
-    assert_roundtrip(EventSubgroup::default());
-}
-
-#[test]
-fn segment_roundtrips() {
-    assert_roundtrip(Segment::default());
+    assert_roundtrip(EventSubgroupProtobuf::default());
 }
