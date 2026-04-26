@@ -131,15 +131,16 @@ pub fn run(cli: Cli) -> String {
 /// The stub `run()` above remains for the STEP 01 test suite.
 pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     use crate::config::{self, OsEnv, ResolvedConfig, store::FileConfigStore};
+    use crate::credentials::OsKeyringStore;
     use crate::daemon;
-    use crate::tui::{self, InMemoryKeyringStore};
+    use crate::tui;
 
     match cli.command {
         Command::Configure => {
             let config_path = cli.global.config.clone()
                 .unwrap_or_else(config::default_config_path);
             let mut store = FileConfigStore::new(config_path);
-            let mut keyring = InMemoryKeyringStore::default();
+            let mut keyring = OsKeyringStore::new();
             let saved = tui::run_configure(&mut store, &mut keyring)
                 .map_err(|e| format!("{e}"))?;
             if saved {

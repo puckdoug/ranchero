@@ -107,13 +107,96 @@ fn drive_save_stores_passwords_in_keyring_only() {
     let mut keyring = InMemoryKeyringStore::default();
     ranchero::tui::driver::save_passwords(&model, &mut keyring);
 
-    let entry = keyring.get("main").expect("keyring should have main entry");
+    let entry = keyring.get("main").unwrap().expect("keyring should have main entry");
     assert_eq!(entry.password, "hunter2");
 
     // TOML serialization must not contain the password value
     let saved_cfg = model.to_config_file();
     let toml_str = toml::to_string_pretty(&saved_cfg).unwrap();
     assert!(!toml_str.contains("hunter2"), "password must not appear in TOML: {toml_str}");
+}
+
+#[test]
+fn load_passwords_pre_populates_password_fields_from_keyring() {
+    use ranchero::tui::model::FieldId;
+    // Simulate a second `ranchero configure` run: config file has the
+    // emails, and the keyring already holds the passwords from the
+    // previous save. The TUI must show those passwords on startup.
+    let cfg = {
+        let mut c = ConfigFile::default();
+        c.accounts.main.email    = Some("r@test.com".to_string());
+        c.accounts.monitor.email = Some("mon@test.com".to_string());
+        c
+    };
+    let mut model = Model::new(cfg);
+
+    let mut keyring = InMemoryKeyringStore::default();
+    keyring.set("main",    "r@test.com",   "main-pw").unwrap();
+    keyring.set("monitor", "mon@test.com", "monitor-pw").unwrap();
+
+    ranchero::tui::driver::load_passwords(&mut model, &keyring);
+
+    assert_eq!(model.fields.text(FieldId::MainPassword),    "main-pw");
+    assert_eq!(model.fields.text(FieldId::MonitorPassword), "monitor-pw");
+}
+
+#[test]
+fn load_passwords_with_empty_keyring_leaves_fields_blank() {
+    use ranchero::tui::model::FieldId;
+    let cfg = ConfigFile::default();
+    let mut model = Model::new(cfg);
+
+    let keyring = InMemoryKeyringStore::default();
+    ranchero::tui::driver::load_passwords(&mut model, &keyring);
+
+    assert_eq!(model.fields.text(FieldId::MainPassword),    "");
+    assert_eq!(model.fields.text(FieldId::MonitorPassword), "");
+}
+
+#[test]
+fn load_passwords_does_not_mark_model_dirty() {
+    // Loading passwords from the keyring is initialisation, not a user
+    // edit; the model must not start out dirty (otherwise plain `:q`
+    // would trigger the discard-confirm flow on every launch).
+    let cfg = ConfigFile::default();
+    let mut model = Model::new(cfg);
+    assert!(!model.dirty, "freshly constructed model should be clean");
+
+    let mut keyring = InMemoryKeyringStore::default();
+    keyring.set("main", "u@x", "pw").unwrap();
+    ranchero::tui::driver::load_passwords(&mut model, &keyring);
+
+    assert!(!model.dirty, "load_passwords must not dirty the model");
+}
+
+#[test]
+fn load_passwords_makes_esc_revert_to_loaded_password() {
+    // After load_passwords seeds a password, entering edit mode and
+    // pressing Esc must revert to the loaded value, not to "".
+    use ranchero::config::EditingModeConfig;
+    use ranchero::tui::model::FieldId;
+    let mut cfg = ConfigFile::default();
+    cfg.tui.editing_mode = EditingModeConfig::Emacs; // Esc means revert
+    let mut model = Model::new(cfg);
+
+    let mut keyring = InMemoryKeyringStore::default();
+    keyring.set("main", "u@x", "loaded-pw").unwrap();
+    ranchero::tui::driver::load_passwords(&mut model, &keyring);
+
+    // Focus MainPassword (Down once from MainEmail) and enter edit mode.
+    model.update(key(KeyCode::Down));
+    assert_eq!(model.focus, FieldId::MainPassword);
+    model.update(key(KeyCode::Enter));
+    // Type extra characters then Esc to revert.
+    for c in "junk".chars() {
+        model.update(key(KeyCode::Char(c)));
+    }
+    model.update(key(KeyCode::Esc));
+
+    assert_eq!(
+        model.fields.text(FieldId::MainPassword), "loaded-pw",
+        "Esc should revert to the loaded password, not to blank",
+    );
 }
 
 #[test]

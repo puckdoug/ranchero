@@ -45,6 +45,7 @@ pub fn run_configure(
 ) -> Result<bool, ConfigureError> {
     let initial = store.load()?.unwrap_or_default();
     let mut model = Model::new(initial);
+    load_passwords(&mut model, keyring);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -118,6 +119,20 @@ pub fn save_passwords(model: &Model, keyring: &mut dyn KeyringStore) {
     let monitor_password = model.fields.text(FieldId::MonitorPassword);
     if !monitor_email.is_empty() && !monitor_password.is_empty() {
         let _ = keyring.set("monitor", &monitor_email, &monitor_password);
+    }
+}
+
+/// Seed password fields from any credentials already present in the
+/// keyring so a second `ranchero configure` run shows them in the TUI.
+/// Backend errors are silently swallowed: a startup-time keychain hiccup
+/// must not block configure from running.
+pub fn load_passwords(model: &mut Model, keyring: &dyn KeyringStore) {
+    use crate::tui::model::FieldId;
+    if let Ok(Some(entry)) = keyring.get("main") {
+        model.set_initial_password(FieldId::MainPassword, &entry.password);
+    }
+    if let Ok(Some(entry)) = keyring.get("monitor") {
+        model.set_initial_password(FieldId::MonitorPassword, &entry.password);
     }
 }
 

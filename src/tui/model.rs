@@ -271,6 +271,18 @@ struct UndoEntry {
 // ---------------------------------------------------------------------------
 
 impl Model {
+    /// Seed a password field with a value loaded from the keyring at
+    /// startup. Updates both the visible editor and the initial-text
+    /// snapshot so Esc-revert returns to the loaded password (not blank).
+    pub fn set_initial_password(&mut self, field: FieldId, text: &str) {
+        debug_assert!(
+            field.is_password(),
+            "set_initial_password is only valid for password fields, got {field:?}",
+        );
+        self.fields.set_text(field, text);
+        self.initial_texts.insert(field, text.to_string());
+    }
+
     pub fn new(cfg: ConfigFile) -> Self {
         let editing_mode = match cfg.tui.editing_mode {
             crate::config::EditingModeConfig::Vi    => EditingMode::Vi,
