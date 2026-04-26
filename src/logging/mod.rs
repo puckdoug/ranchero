@@ -1,14 +1,15 @@
 //! Structured logging configuration for ranchero.
 //!
-//! STEP 04 surface, ahead of implementation. Three pure helpers form the
-//! testable core; a future `install()` wraps them and registers the
-//! global `tracing_subscriber`. All bodies currently `todo!()`; the
-//! tests at the bottom of this file capture the contract and will fail
-//! red until implementation lands.
+//! Three pure helpers form the testable core; [`install`] wires them
+//! into the global `tracing_subscriber` and returns a guard that flushes
+//! the non-blocking appender on drop. Callers must keep the guard alive
+//! for the duration of the process — dropping it stops the writer.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
+
+pub use tracing_appender::non_blocking::WorkerGuard;
 
 /// Inputs that influence the EnvFilter directive choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -22,32 +23,84 @@ pub struct LogOpts {
 pub enum LogSink {
     /// Foreground mode: write to stderr.
     Stderr,
-    /// Background mode: write to a rolling file at this path.
+    /// Background mode: write to a file at this path (append-mode).
     File(PathBuf),
 }
 
-/// Compute the EnvFilter directive given `--verbose` / `--debug` and the
-/// `RUST_LOG` environment value, if any. `RUST_LOG` wins verbatim if set
-/// and non-empty.
+/// Compute the EnvFilter directive given `--verbose` / `--debug`, the
+/// foreground bit, and the `RUST_LOG` environment value, if any. A
+/// non-empty `RUST_LOG` wins verbatim.
 ///
-/// - neither flag, no env → `"warn"`
-/// - `--verbose` → `"warn,ranchero=info"`
+/// Defaults differ by sink so backgrounded daemons always record their
+/// lifecycle events to the configured logfile, regardless of `-v`:
+///
+/// - foreground, no flags → `"warn"` (clean stderr)
+/// - background, no flags → `"warn,ranchero=info"` (lifecycle in file)
+/// - `--verbose` → `"warn,ranchero=info"` (same on either sink)
 /// - `--debug` → `"info,ranchero=debug"`
-/// - `RUST_LOG=X` (non-empty) → `X` regardless of flags
-pub fn filter_directive(_opts: LogOpts, _rust_log: Option<&str>) -> String {
-    todo!("STEP-04: filter_directive implementation pending")
+/// - `RUST_LOG=X` (non-empty) → `X` regardless of flags or sink
+pub fn filter_directive(opts: LogOpts, foreground: bool, rust_log: Option<&str>) -> String {
+    if let Some(s) = rust_log
+        && !s.is_empty()
+    {
+        return s.to_string();
+    }
+    if opts.debug {
+        "info,ranchero=debug".to_string()
+    } else if opts.verbose || !foreground {
+        "warn,ranchero=info".to_string()
+    } else {
+        "warn".to_string()
+    }
 }
 
 /// Pick where logs should be written. Foreground → stderr; background →
 /// the configured `log_file` path.
-pub fn select_sink(_foreground: bool, _log_file: &Path) -> LogSink {
-    todo!("STEP-04: select_sink implementation pending")
+pub fn select_sink(foreground: bool, log_file: &Path) -> LogSink {
+    if foreground {
+        LogSink::Stderr
+    } else {
+        LogSink::File(log_file.to_path_buf())
+    }
 }
 
 /// Open `path` for appending, creating parent directories as needed.
 /// Existing contents are preserved.
-pub fn open_log_for_append(_path: &Path) -> io::Result<File> {
-    todo!("STEP-04: open_log_for_append implementation pending")
+pub fn open_log_for_append(path: &Path) -> io::Result<File> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    OpenOptions::new().create(true).append(true).open(path)
+}
+
+/// Install the global tracing subscriber and return its non-blocking
+/// writer guard.
+///
+/// **Fork warning:** the non-blocking appender spawns a worker thread
+/// that does not survive `fork(2)`. Callers that daemonize must invoke
+/// `install` *after* the final fork, in the long-running child.
+pub fn install(opts: LogOpts, foreground: bool, log_file: &Path) -> io::Result<WorkerGuard> {
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+
+    let rust_log = std::env::var("RUST_LOG").ok();
+    let directive = filter_directive(opts, foreground, rust_log.as_deref());
+    let env_filter =
+        EnvFilter::try_new(&directive).unwrap_or_else(|_| EnvFilter::new("warn"));
+
+    let (non_blocking, guard) = match select_sink(foreground, log_file) {
+        LogSink::Stderr => tracing_appender::non_blocking(std::io::stderr()),
+        LogSink::File(path) => {
+            let file = open_log_for_append(&path)?;
+            tracing_appender::non_blocking(file)
+        }
+    };
+
+    let layer = fmt::layer().with_writer(non_blocking).with_ansi(false);
+    let subscriber = tracing_subscriber::registry().with(env_filter).with(layer);
+    let _ = tracing::subscriber::set_global_default(subscriber);
+    Ok(guard)
 }
 
 // ---------------------------------------------------------------------------
@@ -61,21 +114,37 @@ mod tests {
 
     // -- filter_directive ---------------------------------------------------
 
+    const FG: bool = true;
+    const BG: bool = false;
+
     #[test]
-    fn defaults_to_warn() {
-        let dir = filter_directive(LogOpts::default(), None);
+    fn foreground_defaults_to_warn() {
+        let dir = filter_directive(LogOpts::default(), FG, None);
         assert_eq!(
             dir, "warn",
-            "no flags + no RUST_LOG should produce a bare `warn` directive, got {dir:?}"
+            "no flags + foreground + no RUST_LOG should be bare `warn`, got {dir:?}"
+        );
+    }
+
+    #[test]
+    fn background_defaults_promote_ranchero_to_info() {
+        // Lifecycle events (info!) must reach the configured logfile
+        // even without -v; this is the regression for an empty logfile
+        // after `ranchero start; ranchero stop` with default flags.
+        let dir = filter_directive(LogOpts::default(), BG, None);
+        assert!(
+            dir.contains("ranchero=info"),
+            "backgrounded daemon default must let ranchero=info through, got {dir:?}"
+        );
+        assert!(
+            dir.contains("warn"),
+            "deps should still be at warn for backgrounded default, got {dir:?}"
         );
     }
 
     #[test]
     fn subscriber_respects_verbose_flag() {
-        let dir = filter_directive(
-            LogOpts { verbose: true, debug: false },
-            None,
-        );
+        let dir = filter_directive(LogOpts { verbose: true, debug: false }, FG, None);
         assert!(
             dir.contains("ranchero=info"),
             "verbose should set ranchero=info, got {dir:?}"
@@ -92,10 +161,7 @@ mod tests {
 
     #[test]
     fn subscriber_respects_debug_flag() {
-        let dir = filter_directive(
-            LogOpts { verbose: false, debug: true },
-            None,
-        );
+        let dir = filter_directive(LogOpts { verbose: false, debug: true }, FG, None);
         assert!(
             dir.contains("ranchero=debug"),
             "debug should set ranchero=debug, got {dir:?}"
@@ -109,10 +175,7 @@ mod tests {
     #[test]
     fn debug_overrides_verbose_when_both_set() {
         // --debug takes precedence; ranchero=debug, deps at info.
-        let dir = filter_directive(
-            LogOpts { verbose: true, debug: true },
-            None,
-        );
+        let dir = filter_directive(LogOpts { verbose: true, debug: true }, FG, None);
         assert!(
             dir.contains("ranchero=debug"),
             "debug should win over verbose, got {dir:?}"
@@ -124,15 +187,24 @@ mod tests {
         // Even with both flags set, a non-empty RUST_LOG passes through verbatim.
         let dir = filter_directive(
             LogOpts { verbose: true, debug: true },
+            FG,
             Some("trace"),
         );
         assert_eq!(dir, "trace", "RUST_LOG should be returned verbatim");
     }
 
     #[test]
+    fn rust_log_env_wins_for_background_too() {
+        // RUST_LOG overrides even the lifecycle-friendly background default.
+        let dir = filter_directive(LogOpts::default(), BG, Some("error"));
+        assert_eq!(dir, "error");
+    }
+
+    #[test]
     fn rust_log_env_wins_with_complex_directive() {
         let dir = filter_directive(
             LogOpts::default(),
+            FG,
             Some("hyper=warn,ranchero=trace"),
         );
         assert_eq!(dir, "hyper=warn,ranchero=trace");
@@ -141,10 +213,7 @@ mod tests {
     #[test]
     fn empty_rust_log_falls_back_to_flags() {
         // An empty RUST_LOG should be treated as unset, not as the directive "".
-        let dir = filter_directive(
-            LogOpts { verbose: true, debug: false },
-            Some(""),
-        );
+        let dir = filter_directive(LogOpts { verbose: true, debug: false }, FG, Some(""));
         assert!(
             dir.contains("ranchero=info"),
             "empty RUST_LOG must not silence flag-derived directives, got {dir:?}"

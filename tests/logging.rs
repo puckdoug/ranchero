@@ -95,7 +95,13 @@ impl LogHarness {
 
     fn spawn_foreground(&mut self, flags: &[&str]) -> &mut Child {
         let mut cmd = Command::new(binary_path());
-        cmd.args(self.config_args()).args(flags).arg("start");
+        cmd.args(self.config_args());
+        // Force foreground unless the caller already passed -D / --debug
+        // (which implies --foreground via GlobalOpts::finalize).
+        if !flags.iter().any(|&f| f == "-D" || f == "--debug") {
+            cmd.arg("--foreground");
+        }
+        cmd.args(flags).arg("start");
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -282,9 +288,13 @@ fn rust_log_env_overrides_default_filter() {
 }
 
 #[test]
-fn backgrounded_daemon_writes_lifecycle_to_logfile() {
+fn backgrounded_daemon_writes_lifecycle_to_logfile_without_flags() {
+    // Regression: a plain `ranchero start` (no -v, no -D) must still
+    // record startup and shutdown to the configured logfile. Lifecycle
+    // events are operational, not diagnostic, and shouldn't be gated
+    // behind a verbosity flag.
     let h = LogHarness::new();
-    let out = h.run(&["-v", "start"]);
+    let out = h.run(&["start"]);
     assert!(
         out.status.success(),
         "backgrounded start failed: {:?}",
@@ -296,15 +306,14 @@ fn backgrounded_daemon_writes_lifecycle_to_logfile() {
     assert!(stop.status.success(), "stop failed: {:?}", stderr_string(&stop));
     h.wait_for_pidfile_gone();
 
-    // Wait up to 3s for the non-blocking appender to flush "stopped".
     let log = read_log_until(&h.logfile_path, "stopped");
     assert!(
         log.to_lowercase().contains("started"),
-        "logfile should contain the startup event, got: {log}"
+        "logfile should contain the startup event under default flags, got: {log}"
     );
     assert!(
         log.to_lowercase().contains("stopped"),
-        "logfile should contain the shutdown event, got: {log}"
+        "logfile should contain the shutdown event under default flags, got: {log}"
     );
 }
 
@@ -312,8 +321,8 @@ fn backgrounded_daemon_writes_lifecycle_to_logfile() {
 fn logfile_is_appended_across_two_runs() {
     let h = LogHarness::new();
 
-    // First cycle.
-    let out1 = h.run(&["-v", "start"]);
+    // First cycle, no flags — relies on the default backgrounded filter.
+    let out1 = h.run(&["start"]);
     assert!(out1.status.success(), "first start failed: {:?}", stderr_string(&out1));
     h.wait_for_pidfile().expect("first daemon should start");
     let stop1 = h.run(&["stop"]);
@@ -322,14 +331,13 @@ fn logfile_is_appended_across_two_runs() {
     let _ = read_log_until(&h.logfile_path, "stopped");
 
     // Second cycle on the same logfile.
-    let out2 = h.run(&["-v", "start"]);
+    let out2 = h.run(&["start"]);
     assert!(out2.status.success(), "second start failed: {:?}", stderr_string(&out2));
     h.wait_for_pidfile().expect("second daemon should start");
     let stop2 = h.run(&["stop"]);
     assert!(stop2.status.success(), "second stop failed: {:?}", stderr_string(&stop2));
     h.wait_for_pidfile_gone();
 
-    // Wait for the second run's "stopped" event before counting.
     let log = read_log_until(&h.logfile_path, "stopped");
     let started_count = log.to_lowercase().matches("started").count();
     assert_eq!(

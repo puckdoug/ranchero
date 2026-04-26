@@ -16,6 +16,7 @@ use super::pidfile::Pidfile;
 use super::probe::{OsProcessProbe, ProcessProbe};
 use super::{DaemonError, DaemonPaths};
 use crate::config::ResolvedConfig;
+use crate::logging::{self, LogOpts};
 
 const STARTED_PREFIX: &str = "ranchero started";
 const STOPPED_LINE: &str = "ranchero stopped";
@@ -26,7 +27,11 @@ const SHUTDOWN_POLL: Duration = Duration::from_millis(20);
 // CLI entry points
 // ---------------------------------------------------------------------------
 
-pub fn start(cfg: &ResolvedConfig, foreground: bool) -> Result<ExitCode, DaemonError> {
+pub fn start(
+    cfg: &ResolvedConfig,
+    foreground: bool,
+    log_opts: LogOpts,
+) -> Result<ExitCode, DaemonError> {
     let paths = DaemonPaths::from_config(cfg);
     preflight(&paths, &OsProcessProbe)?;
 
@@ -41,9 +46,15 @@ pub fn start(cfg: &ResolvedConfig, foreground: bool) -> Result<ExitCode, DaemonE
         }
     }
 
+    // Install the tracing subscriber *after* any fork: the non-blocking
+    // appender's worker thread does not survive across `fork(2)`.
+    let _log_guard = logging::install(log_opts, foreground, &cfg.log_file)?;
+
     let pid = std::process::id();
     let pidfile = Pidfile::new(paths.pidfile.clone());
     pidfile.write(pid)?;
+
+    tracing::info!(pid, "ranchero started");
 
     if foreground {
         println!("{STARTED_PREFIX} (pid {pid})");
@@ -53,6 +64,8 @@ pub fn start(cfg: &ResolvedConfig, foreground: bool) -> Result<ExitCode, DaemonE
         .enable_all()
         .build()?;
     let result = rt.block_on(run_daemon(paths.clone()));
+
+    tracing::info!("ranchero stopped");
 
     let _ = pidfile.remove();
     let _ = std::fs::remove_file(&paths.socket);
@@ -253,6 +266,7 @@ async fn handle_unix_connection(
         Ok(r) => r,
         Err(_) => return,
     };
+    tracing::debug!(?req, "control request received");
     match req {
         ControlRequest::Status => {
             let resp = ControlResponse::Status(StatusResponse {

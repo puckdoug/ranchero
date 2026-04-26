@@ -23,6 +23,7 @@ pub use pidfile::Pidfile;
 pub use probe::{OsProcessProbe, ProcessProbe};
 
 use crate::config::ResolvedConfig;
+use crate::logging::LogOpts;
 
 /// Errors returned from daemon operations to the CLI dispatcher.
 #[derive(Debug)]
@@ -81,8 +82,12 @@ impl DaemonPaths {
 }
 
 /// `ranchero start` entry point.
-pub fn start(cfg: &ResolvedConfig, foreground: bool) -> Result<ExitCode, DaemonError> {
-    runtime::start(cfg, foreground)
+pub fn start(
+    cfg: &ResolvedConfig,
+    foreground: bool,
+    log_opts: LogOpts,
+) -> Result<ExitCode, DaemonError> {
+    runtime::start(cfg, foreground, log_opts)
 }
 
 /// `ranchero stop` entry point.

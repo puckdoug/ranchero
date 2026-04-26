@@ -21,6 +21,9 @@ ratatui = "0.30"
 crossterm = "0.29"
 edtui = { version = "0.11", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "macros", "time", "io-util", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process", "fs"] }

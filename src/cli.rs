@@ -153,7 +153,13 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let file = config::load(cli.global.config.as_deref())?;
             let resolved = ResolvedConfig::resolve(&cli.global, &OsEnv, Some(file))?;
             match cli.command {
-                Command::Start => Ok(daemon::start(&resolved, cli.global.foreground)?),
+                Command::Start => {
+                    let log_opts = crate::logging::LogOpts {
+                        verbose: cli.global.verbose,
+                        debug: cli.global.debug,
+                    };
+                    Ok(daemon::start(&resolved, cli.global.foreground, log_opts)?)
+                }
                 Command::Stop => Ok(daemon::stop(&resolved)?),
                 Command::Status => Ok(daemon::status(&resolved)?),
                 Command::Configure => unreachable!(),
