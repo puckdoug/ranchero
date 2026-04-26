@@ -30,7 +30,7 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 |  03 | ☑ | Daemon lifecycle (`start` / `stop` / `status`, PID file, foreground vs background) | [STEP-03-daemon-lifecycle.md](done/STEP-03-daemon-lifecycle.md) |
 |  04 | ☐ | Structured logging & verbose/debug flags | [STEP-04-logging.md](STEP-04-logging.md) |
 |  05 | ☐ | Credential storage in OS keyring | [STEP-05-credentials.md](STEP-05-credentials.md) |
-|  06 | ☐ | `zwift-proto` crate — prost-build against `sauce4zwift/src/zwift.proto` | [STEP-06-proto-crate.md](STEP-06-proto-crate.md) |
+|  06 | ☐ | `zwift-proto` crate — prost-build against vendored `crates/zwift-proto/proto/zwift.proto` | [STEP-06-proto-crate.md](STEP-06-proto-crate.md) |
 |  07 | ☐ | `zwift-api` — OAuth2 password grant + token refresh + REST client | [STEP-07-auth-and-rest.md](STEP-07-auth-and-rest.md) |
 |  08 | ☐ | `zwift-relay` codec — header flags, `RelayIv`, AES-128-GCM-4 wire format | [STEP-08-relay-codec.md](STEP-08-relay-codec.md) |
 |  09 | ☐ | Relay login (`/api/users/login`) + session refresh supervisor | [STEP-09-relay-session.md](STEP-09-relay-session.md) |

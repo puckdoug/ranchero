@@ -14,8 +14,12 @@ Pull the whole pipeline together and verify spec §7.11:
 4. **Metric parity.** Feed a recorded `ServerToClient` trace through
    both engines; compare published metrics per tick. ≤ 1e-6 drift on
    sums, exact match on counts/zones.
-5. **WebSocket parity.** Point an unmodified sauce4zwift widget page at
-   the Rust daemon; widgets render correctly (smoke + golden-snapshot).
+5. **WebSocket parity.** Point ranchero's vendored widget pages (the
+   `pages/` tree copied in at the time of the port) at the Rust
+   daemon; widgets render correctly (smoke + golden-snapshot). The
+   golden snapshots are captured once against the original JS server
+   during the port and then frozen in ranchero's repo — the test must
+   not require a live sauce4zwift checkout.
 
 ## Tests-first outline
 

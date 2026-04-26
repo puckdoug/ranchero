@@ -13,8 +13,10 @@ serve the exact JSON protocol widgets expect (spec §6.3 / §7.9).
   ← { "type":"event",    "uid":<subId>, "success":true, "data": <...> }
   ```
 - `/pages/*` — static file server rooted at a configurable path
-  (default: `./pages` relative to binary, copied or symlinked from
-  sauce4zwift).
+  (default: `./pages` relative to binary). The widget tree is
+  vendored once from sauce4zwift's `pages/` into ranchero and
+  maintained in-tree thereafter; the server must not resolve through
+  any path that points back at the sauce4zwift checkout.
 - Bind to `server.bind:server.port` from config (default
   `127.0.0.1:1080`).
 - HTTPS auto-enables if `./https/{key,cert}.pem` exists.

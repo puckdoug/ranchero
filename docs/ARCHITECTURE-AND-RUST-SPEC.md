@@ -794,7 +794,7 @@ zwift-stats/        # rolling windows, power.rs, pace.rs, geo.rs
 zwift-api/          # REST client (profiles, events, segments)
 zwift-routes/       # static Zwift world/route tables (port of shared/routes.mjs, curves.mjs)
 zwift-daemon/       # binary: wires them together, runs HTTP+WS server
-zwift-proto/        # prost-generated types from src/zwift.proto
+zwift-proto/        # prost-generated types from a vendored copy of zwift.proto (proto/zwift.proto)
 ```
 
 ### 7.3 Dependencies (Rust)
@@ -805,7 +805,7 @@ zwift-proto/        # prost-generated types from src/zwift.proto
 | HTTP client | `reqwest` with `rustls-tls`. |
 | HTTP server | `axum` (or `hyper` + `tower`). |
 | WebSocket | `tokio-tungstenite` / `axum`'s ws. |
-| Protobuf | `prost` + `prost-build` against `src/zwift.proto`. |
+| Protobuf | `prost` + `prost-build` against `crates/zwift-proto/proto/zwift.proto`, vendored once from sauce4zwift and maintained in-tree thereafter (no runtime reference to the sauce4zwift checkout). |
 | AES-GCM | `aes-gcm` (RustCrypto) — must support 4-byte tag (`Aes128Gcm` accepts any tag via `aead::generic_array` … use `aes-gcm`'s `Aes128Gcm::new_from_slice` plus `aead::AeadInPlace` with explicit `Tag<Aes128Gcm>` of size `U4`, or implement GCM over `aes` primitive directly). |
 | JSON | `serde`, `serde_json`. |
 | SQLite | `rusqlite` (bundled) with WAL. |
@@ -1018,8 +1018,11 @@ that unmodified browser widgets continue to work. The simplest route
 is: port `_formatAthleteData{,V2}` verbatim into Rust with the same
 field casing.
 
-Serve `/pages/*` as static files pointed at the existing
-`sauce4zwift/pages/` tree (shipped alongside the Rust binary or vendored).
+Serve `/pages/*` as static files from a vendored widget tree shipped
+alongside the Rust binary. The widgets are copied once from
+sauce4zwift's `pages/` tree into ranchero (target location: `pages/`
+under the workspace root) and then maintained in-tree — no runtime
+reference to the sauce4zwift checkout.
 
 ### 7.10 Persistence
 
@@ -1078,8 +1081,8 @@ Before declaring a Rust port done, verify:
 
 ## 8. Appendix A — Key protobuf messages
 
-All definitions live in `src/zwift.proto`. The ones a Rust port *must*
-decode correctly are:
+The full schema is vendored at `crates/zwift-proto/proto/zwift.proto`.
+The messages a Rust port *must* decode correctly are:
 
 - `LoginRequest`, `LoginResponse` (§878-884) — relay handshake.
 - `ClientToServer` (§1803) — every outbound packet.
