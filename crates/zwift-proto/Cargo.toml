@@ -1,0 +1,12 @@
+[package]
+name = "zwift-proto"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Rust types for the Zwift relay protobuf schema (vendored from zwift-offline)."
+
+[dependencies]
+prost = "0.13"
+
+[build-dependencies]
+prost-build = "0.13"

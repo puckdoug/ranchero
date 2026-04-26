@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/*"]
+default-members = [".", "crates/*"]
+
 [package]
 name = "ranchero"
 version = "0.1.0"
