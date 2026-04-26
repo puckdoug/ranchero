@@ -794,7 +794,7 @@ zwift-stats/        # rolling windows, power.rs, pace.rs, geo.rs
 zwift-api/          # REST client (profiles, events, segments)
 zwift-routes/       # static Zwift world/route tables (port of shared/routes.mjs, curves.mjs)
 zwift-daemon/       # binary: wires them together, runs HTTP+WS server
-zwift-proto/        # prost-generated types from a vendored copy of zwift.proto (proto/zwift.proto)
+zwift-proto/        # prost-generated types from vendored zwift-offline proto tree (proto/*.proto, proto2)
 ```
 
 ### 7.3 Dependencies (Rust)
@@ -805,7 +805,7 @@ zwift-proto/        # prost-generated types from a vendored copy of zwift.proto 
 | HTTP client | `reqwest` with `rustls-tls`. |
 | HTTP server | `axum` (or `hyper` + `tower`). |
 | WebSocket | `tokio-tungstenite` / `axum`'s ws. |
-| Protobuf | `prost` + `prost-build` against `crates/zwift-proto/proto/zwift.proto`, vendored once from sauce4zwift and maintained in-tree thereafter (no runtime reference to the sauce4zwift checkout). |
+| Protobuf | `prost` + `prost-build` against `crates/zwift-proto/proto/*.proto`, vendored from upstream [`zoffline/zwift-offline`](https://github.com/zoffline/zwift-offline) (AGPL-3.0, proto2, multi-file). Maintained in-tree; no runtime/build reference to sauce4zwift or to the upstream checkout. |
 | AES-GCM | `aes-gcm` (RustCrypto) — must support 4-byte tag (`Aes128Gcm` accepts any tag via `aead::generic_array` … use `aes-gcm`'s `Aes128Gcm::new_from_slice` plus `aead::AeadInPlace` with explicit `Tag<Aes128Gcm>` of size `U4`, or implement GCM over `aes` primitive directly). |
 | JSON | `serde`, `serde_json`. |
 | SQLite | `rusqlite` (bundled) with WAL. |
@@ -1081,21 +1081,33 @@ Before declaring a Rust port done, verify:
 
 ## 8. Appendix A — Key protobuf messages
 
-The full schema is vendored at `crates/zwift-proto/proto/zwift.proto`.
+The schema is vendored at `crates/zwift-proto/proto/*.proto`, sourced
+from upstream `zoffline/zwift-offline` (proto2, multi-file). Names
+below are upstream's; sauce4zwift's renamed equivalents from its
+single-file proto3 fork are noted in parentheses where they differ.
+
 The messages a Rust port *must* decode correctly are:
 
-- `LoginRequest`, `LoginResponse` (§878-884) — relay handshake.
-- `ClientToServer` (§1803) — every outbound packet.
-- `ServerToClient` (§222) — every inbound packet.
-- `PlayerState` (§4) — per-rider telemetry.
-- `WorldUpdate` + `WorldUpdatePayloadType` — event envelope + tag enum.
-- `TCPServer`, `UDPServer`, `TCPConfig`, `UDPConfig`, `UDPConfigVOD`,
-  `UDPServerVODPool` — server pool records.
-- `SegmentResult`, `RideOn`, `PlayerJoinedWorld`, `PlayerLeftWorld`,
-  `Event`, `EventSubgroup`, `Segment` — payloads of interest.
+- `LoginRequest`, `LoginResponse` (in `login.proto`) — relay handshake.
+- `ClientToServer` (in `udp-node-msgs.proto`) — every outbound packet.
+- `ServerToClient` (in `udp-node-msgs.proto`) — every inbound packet.
+- `PlayerState` (in `udp-node-msgs.proto`) — per-rider telemetry.
+- `WorldAttribute` + `WA_TYPE` (sauce4zwift: `WorldUpdate` +
+  `WorldUpdatePayloadType`, in `udp-node-msgs.proto`) — event envelope
+  + tag enum.
+- `TcpAddress`, `TcpConfig` (sauce4zwift: `TCPServer`, `TCPConfig`, in
+  `per-session-info.proto`); `RelayAddress`, `UdpConfig`,
+  `RelayAddressesVOD`, `UdpConfigVOD` (sauce4zwift: `UDPServer`,
+  `UDPConfig`, `UDPServerVODPool`, `UDPConfigVOD`, in
+  `udp-node-msgs.proto`) — server pool records.
+- `SegmentResult` (`segment-result.proto`), `RideOn`, `PlayerLeftWorld`
+  (both `udp-node-msgs.proto`), `Event`, `EventSubgroup`
+  (`events.proto`), `Segment` — payloads of interest. (sauce4zwift's
+  `PlayerJoinedWorld` does not appear by that name upstream; verify
+  the corresponding upstream payload during STEP 06 elaboration.)
 
-Everything else in the proto is useful but not load-bearing for the
-live-data core.
+Everything else in the upstream tree is useful but not load-bearing for
+the live-data core; vendor only the files needed (see STEP-06).
 
 ## 9. Appendix B — Runtime knobs
 
