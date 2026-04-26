@@ -36,6 +36,7 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 |  09 | ☐ | Relay login (`/api/users/login`) + session refresh supervisor | [STEP-09-relay-session.md](STEP-09-relay-session.md) |
 |  10 | ☐ | UDP channel with 25-shot hello handshake and world-time offset sync | [STEP-10-udp-channel.md](STEP-10-udp-channel.md) |
 |  11 | ☐ | TCP channel with exponential backoff reconnect and watchdog | [STEP-11-tcp-channel.md](STEP-11-tcp-channel.md) |
+| 11.5 | ☐ | Wire capture & replay — `ranchero start --capture <path>` + `ranchero replay`; produces the fixtures STEPS 08/18/19 consume | [STEP-11.5-wire-capture.md](STEP-11.5-wire-capture.md) |
 |  12 | ☐ | GameMonitor orchestration — server pool selection, watched-athlete routing | [STEP-12-game-monitor.md](STEP-12-game-monitor.md) |
 |  13 | ☐ | `zwift-stats` rolling primitives — `RollingAverage`, `RollingPower`, NP, TSS | [STEP-13-rolling-stats.md](STEP-13-rolling-stats.md) |
 |  14 | ☐ | Per-athlete `AthleteData` + `DataBucket`/`DataCollector` + peak periods | [STEP-14-athlete-data.md](STEP-14-athlete-data.md) |
