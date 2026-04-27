@@ -4,14 +4,16 @@
 // (post-decrypt for inbound, proto-bytes-only for outbound) so
 // captures don't leak the AES session key. See
 // `docs/plans/STEP-11.5-wire-capture.md` for the full design.
-//
-// This file currently exposes the public surface as stubs so
-// `tests/capture.rs` (and the channel-tap tests) compile.
-// Behavior lands in green state.
 
+use std::io::Read as _;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use tokio::io::AsyncWriteExt as _;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 
 // --- format constants ---------------------------------------------
 
@@ -33,6 +35,14 @@ pub const RECORD_HEADER_LEN: usize = 15;
 /// future protocols, but production payloads never exceed this.
 pub const MAX_PAYLOAD_LEN: usize = 65_535;
 
+/// Default channel capacity between the channel hot path and the
+/// writer task. Sized so a few hundred ms of disk stall doesn't drop
+/// records under steady-state UDP load (~1 Hz outbound + a few Hz
+/// inbound). Tests can override via [`CaptureWriter::open_with_capacity`].
+const DEFAULT_CHANNEL_CAPACITY: usize = 4096;
+
+const FLAG_HELLO: u8 = 0x01;
+
 // --- record + supporting POD types --------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +52,6 @@ pub enum Direction {
 }
 
 impl Direction {
-    /// Wire-format byte value (`0` = Inbound, `1` = Outbound).
     pub fn as_byte(self) -> u8 {
         match self {
             Direction::Inbound => 0,
@@ -66,7 +75,6 @@ pub enum TransportKind {
 }
 
 impl TransportKind {
-    /// Wire-format byte value (`0` = Udp, `1` = Tcp).
     pub fn as_byte(self) -> u8 {
         match self {
             TransportKind::Udp => 0,
@@ -85,13 +93,9 @@ impl TransportKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureRecord {
-    /// Unix-epoch nanoseconds at the moment of capture.
     pub ts_unix_ns: u64,
     pub direction: Direction,
     pub transport: TransportKind,
-    /// Outbound-TCP-only: the original hello byte (`true` =
-    /// `[2, 0, …]`, `false` = `[2, 1, …]`). Ignored for other
-    /// (direction, transport) combinations on read.
     pub hello: bool,
     pub payload: Vec<u8>,
 }
@@ -125,63 +129,96 @@ pub enum CaptureError {
 /// drains a bounded channel and writes to disk. The hot-path
 /// [`Self::record`] is sync and non-blocking — capture must never
 /// affect live network behavior.
-///
-/// Cheap to clone? Wrap in `Arc` at the channel-config layer so
-/// multiple channels (UDP + TCP, plus future per-course UDP pools)
-/// share one writer.
 #[derive(Debug)]
 pub struct CaptureWriter {
-    #[allow(dead_code)]
-    sender: tokio::sync::mpsc::Sender<CaptureRecord>,
-    #[allow(dead_code)]
+    sender: mpsc::Sender<CaptureRecord>,
     dropped_count: Arc<AtomicU64>,
-    // The background writer task's JoinHandle lives here so
-    // `flush_and_close` can await it.
-    #[allow(dead_code)]
-    writer_task: Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+    writer_task: Option<JoinHandle<std::io::Result<()>>>,
 }
 
 impl CaptureWriter {
-    /// Open `path` for writing, write the file header, spawn the
-    /// background writer task. Default channel capacity tuned for
-    /// production (see green-state implementation); tests that need
-    /// to force the drop-on-saturation path use
-    /// [`Self::open_with_capacity`].
     pub async fn open(path: impl AsRef<Path>) -> std::io::Result<Self> {
-        let _ = path;
-        unimplemented!("STEP-11.5: open file, write header, spawn writer task")
+        Self::open_with_capacity(path, DEFAULT_CHANNEL_CAPACITY).await
     }
 
-    /// Test-only opener with an explicit channel capacity, used by
-    /// drop-on-saturation tests. Production callers use [`Self::open`].
     pub async fn open_with_capacity(
         path: impl AsRef<Path>,
         capacity: usize,
     ) -> std::io::Result<Self> {
-        let _ = (path, capacity);
-        unimplemented!("STEP-11.5: same as open() but with caller-supplied channel capacity")
+        let mut file = tokio::fs::File::create(path.as_ref()).await?;
+        let mut header = [0u8; FILE_HEADER_LEN];
+        header[0..8].copy_from_slice(MAGIC);
+        header[8..10].copy_from_slice(&VERSION.to_le_bytes());
+        file.write_all(&header).await?;
+
+        let (sender, receiver) = mpsc::channel::<CaptureRecord>(capacity);
+        let writer_task = tokio::spawn(writer_task(file, receiver));
+
+        Ok(Self {
+            sender,
+            dropped_count: Arc::new(AtomicU64::new(0)),
+            writer_task: Some(writer_task),
+        })
     }
 
-    /// Buffer `record` for write. **Non-blocking; never awaits.**
-    /// If the internal channel is full (slow disk), drop the record
-    /// and bump [`Self::dropped_count`]. Safe to call from any task
-    /// on any thread.
     pub fn record(&self, record: CaptureRecord) {
-        let _ = record;
-        unimplemented!("STEP-11.5: try_send; on full, increment dropped_count")
+        if self.sender.try_send(record).is_err() {
+            // Either Full (slow disk) or Closed (writer task died).
+            // Either way, count it as dropped — capture must never
+            // backpressure the channel hot path.
+            self.dropped_count.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
-    /// Cumulative count of records dropped due to channel saturation
-    /// since [`Self::open`]. Never reset.
     pub fn dropped_count(&self) -> u64 {
-        unimplemented!("STEP-11.5: load dropped_count atomically")
+        self.dropped_count.load(Ordering::Relaxed)
     }
 
-    /// Flush pending records, fsync, close the file. Awaits the
-    /// background writer task to drain.
-    pub async fn flush_and_close(self) -> std::io::Result<()> {
-        unimplemented!("STEP-11.5: drop sender, await writer task, return io::Result")
+    pub async fn flush_and_close(mut self) -> std::io::Result<()> {
+        // Drop the sender so the writer task sees `recv() -> None` and
+        // exits cleanly.
+        let CaptureWriter {
+            sender,
+            writer_task,
+            ..
+        } = &mut self;
+        drop(std::mem::replace(sender, mpsc::channel(1).0));
+        if let Some(handle) = writer_task.take() {
+            match handle.await {
+                Ok(result) => result,
+                Err(join_err) => Err(std::io::Error::other(format!(
+                    "capture writer task panicked: {join_err}"
+                ))),
+            }
+        } else {
+            Ok(())
+        }
     }
+}
+
+async fn writer_task(
+    mut file: tokio::fs::File,
+    mut rx: mpsc::Receiver<CaptureRecord>,
+) -> std::io::Result<()> {
+    while let Some(record) = rx.recv().await {
+        write_record(&mut file, &record).await?;
+    }
+    file.flush().await?;
+    file.sync_all().await?;
+    Ok(())
+}
+
+async fn write_record(file: &mut tokio::fs::File, record: &CaptureRecord) -> std::io::Result<()> {
+    let mut header = [0u8; RECORD_HEADER_LEN];
+    header[0..8].copy_from_slice(&record.ts_unix_ns.to_le_bytes());
+    header[8] = record.direction.as_byte();
+    header[9] = record.transport.as_byte();
+    header[10] = if record.hello { FLAG_HELLO } else { 0 };
+    let len = u32::try_from(record.payload.len()).unwrap_or(u32::MAX);
+    header[11..15].copy_from_slice(&len.to_le_bytes());
+    file.write_all(&header).await?;
+    file.write_all(&record.payload).await?;
+    Ok(())
 }
 
 // --- reader --------------------------------------------------------
@@ -190,22 +227,31 @@ impl CaptureWriter {
 /// read-once, sequential; sync API keeps the common case simple.
 #[derive(Debug)]
 pub struct CaptureReader {
-    #[allow(dead_code)]
     version: u16,
-    // Sync File handle + buffered reader live here in the
-    // green-state implementation.
+    reader: std::io::BufReader<std::fs::File>,
 }
 
 impl CaptureReader {
-    /// Open `path`, validate the file header, return an iterator over
-    /// the records.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, CaptureError> {
-        let _ = path;
-        unimplemented!("STEP-11.5: open + read magic + read version + return iterator")
+        let file = std::fs::File::open(path.as_ref())?;
+        let mut reader = std::io::BufReader::new(file);
+        let mut header = [0u8; FILE_HEADER_LEN];
+        let n = read_partial(&mut reader, &mut header)?;
+        if n < FILE_HEADER_LEN {
+            // Empty or truncated header: treat as bad magic so the
+            // caller doesn't have to special-case empty files.
+            return Err(CaptureError::BadMagic);
+        }
+        if &header[0..8] != MAGIC {
+            return Err(CaptureError::BadMagic);
+        }
+        let version = u16::from_le_bytes([header[8], header[9]]);
+        if version != VERSION {
+            return Err(CaptureError::UnsupportedVersion(version));
+        }
+        Ok(Self { version, reader })
     }
 
-    /// Format version from the file header (currently always
-    /// [`VERSION`]).
     pub fn version(&self) -> u16 {
         self.version
     }
@@ -215,6 +261,122 @@ impl Iterator for CaptureReader {
     type Item = Result<CaptureRecord, CaptureError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        unimplemented!("STEP-11.5: read RECORD_HEADER_LEN + payload, return Some(record) or None on EOF")
+        let mut header = [0u8; RECORD_HEADER_LEN];
+        let n = match read_partial(&mut self.reader, &mut header) {
+            Ok(n) => n,
+            Err(e) => return Some(Err(CaptureError::Io(e))),
+        };
+        if n == 0 {
+            // Clean EOF at a record boundary.
+            return None;
+        }
+        if n < RECORD_HEADER_LEN {
+            return Some(Err(CaptureError::Truncated {
+                needed: RECORD_HEADER_LEN,
+                got: n,
+            }));
+        }
+
+        let ts_unix_ns = u64::from_le_bytes(header[0..8].try_into().unwrap());
+        let direction = match Direction::from_byte(header[8]) {
+            Ok(d) => d,
+            Err(e) => return Some(Err(e)),
+        };
+        let transport = match TransportKind::from_byte(header[9]) {
+            Ok(t) => t,
+            Err(e) => return Some(Err(e)),
+        };
+        let flags = header[10];
+        let hello = (flags & FLAG_HELLO) != 0;
+        let len = u32::from_le_bytes(header[11..15].try_into().unwrap()) as usize;
+
+        let mut payload = vec![0u8; len];
+        let got = match read_partial(&mut self.reader, &mut payload) {
+            Ok(n) => n,
+            Err(e) => return Some(Err(CaptureError::Io(e))),
+        };
+        if got < len {
+            return Some(Err(CaptureError::Truncated {
+                needed: len,
+                got,
+            }));
+        }
+
+        Some(Ok(CaptureRecord {
+            ts_unix_ns,
+            direction,
+            transport,
+            hello,
+            payload,
+        }))
+    }
+}
+
+/// Read up to `buf.len()` bytes from `reader`, returning the actual
+/// count. Distinguishes "clean EOF" (returns 0) from "partial read"
+/// (returns 0 < n < buf.len()) so the iterator can surface
+/// `Truncated` errors precisely.
+fn read_partial(
+    reader: &mut std::io::BufReader<std::fs::File>,
+    buf: &mut [u8],
+) -> std::io::Result<usize> {
+    let mut total = 0;
+    while total < buf.len() {
+        match reader.read(&mut buf[total..]) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(total)
+}
+
+// --- channel-tap helpers (called from `udp.rs` and `tcp.rs`) ------
+
+/// Unix-epoch nanoseconds, the timestamp source captures use.
+pub fn now_unix_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
+}
+
+/// Record an inbound packet's plaintext (after decrypt, before proto
+/// decode). No-op when `capture` is `None`.
+pub fn record_inbound(
+    capture: Option<&Arc<CaptureWriter>>,
+    transport: TransportKind,
+    plaintext: &[u8],
+) {
+    if let Some(cap) = capture {
+        cap.record(CaptureRecord {
+            ts_unix_ns: now_unix_ns(),
+            direction: Direction::Inbound,
+            transport,
+            hello: false,
+            payload: plaintext.to_vec(),
+        });
+    }
+}
+
+/// Record an outbound packet's proto bytes (after `encode_to_vec`,
+/// before envelope wrap). `hello` is meaningful only for outbound TCP
+/// (the channel passes `false` for UDP). No-op when `capture` is
+/// `None`.
+pub fn record_outbound(
+    capture: Option<&Arc<CaptureWriter>>,
+    transport: TransportKind,
+    hello: bool,
+    proto_bytes: &[u8],
+) {
+    if let Some(cap) = capture {
+        cap.record(CaptureRecord {
+            ts_unix_ns: now_unix_ns(),
+            direction: Direction::Outbound,
+            transport,
+            hello,
+            payload: proto_bytes.to_vec(),
+        });
     }
 }

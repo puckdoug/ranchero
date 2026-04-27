@@ -545,11 +545,9 @@ async fn udp_channel_with_capture_records_inbound_packets() {
     }
     let (channel, _events) = task.await.expect("task").expect("converged");
 
-    channel.shutdown();
+    channel.shutdown_and_wait().await;
     drop(channel);
 
-    // The Arc may still have the recv task holding a ref; close
-    // through the test handle.
     let writer = std::sync::Arc::try_unwrap(writer)
         .expect("only the test owns the writer once the channel drops it");
     writer.flush_and_close().await.expect("flush");
@@ -607,7 +605,7 @@ async fn udp_channel_with_capture_records_outbound_player_state() {
         let _ = handle.outbound_receiver.recv().await;
     }
 
-    channel.shutdown();
+    channel.shutdown_and_wait().await;
     drop(channel);
 
     let writer = std::sync::Arc::try_unwrap(writer).expect("only test owner");

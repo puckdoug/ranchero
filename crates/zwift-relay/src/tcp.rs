@@ -13,6 +13,9 @@ use tokio::sync::{Mutex, Notify, broadcast};
 use tokio::task::JoinHandle;
 
 use crate::CodecError;
+use crate::capture::{
+    CaptureWriter, TransportKind, record_inbound, record_outbound,
+};
 use crate::consts::CHANNEL_TIMEOUT;
 use crate::frame::{frame_tcp, next_tcp_frame, tcp_plaintext};
 use crate::header::{Header, HeaderFlags, decode_header};
@@ -151,6 +154,7 @@ pub struct TcpChannel<T: TcpTransport> {
     aes_key: [u8; 16],
     conn_id: u16,
     relay_id: u32,
+    capture: Option<Arc<CaptureWriter>>,
 }
 
 impl<T: TcpTransport> TcpChannel<T> {
@@ -176,6 +180,7 @@ impl<T: TcpTransport> TcpChannel<T> {
         let relay_id = session.relay_id;
         let conn_id = config.conn_id;
         let watchdog_timeout = config.watchdog_timeout;
+        let capture_for_recv = config.capture.clone();
 
         let handle = tokio::spawn(async move {
             // Emit Established from the spawned task so subscribers
@@ -190,6 +195,7 @@ impl<T: TcpTransport> TcpChannel<T> {
                 relay_id,
                 conn_id,
                 watchdog_timeout,
+                capture_for_recv,
             )
             .await;
         });
@@ -204,6 +210,7 @@ impl<T: TcpTransport> TcpChannel<T> {
                 aes_key,
                 conn_id,
                 relay_id: session.relay_id,
+                capture: config.capture,
             },
             events_rx,
         ))
@@ -221,6 +228,7 @@ impl<T: TcpTransport> TcpChannel<T> {
             let mut send = self.send_state.lock().expect("send_state mutex");
 
             let proto_bytes = payload.encode_to_vec();
+            record_outbound(self.capture.as_ref(), TransportKind::Tcp, hello, &proto_bytes);
             let plaintext = tcp_plaintext(&proto_bytes, hello);
 
             let header = if hello {
@@ -267,25 +275,39 @@ impl<T: TcpTransport> TcpChannel<T> {
 
     /// Cancel the recv loop / watchdog. Notifies the recv task,
     /// which emits `TcpChannelEvent::Shutdown` and exits cleanly.
+    /// Does **not** await the task's exit; use
+    /// [`Self::shutdown_and_wait`] for synchronous teardown.
     pub fn shutdown(&self) {
         self.shutdown_notify.notify_one();
         let _ = self.recv_handle.lock().expect("recv_handle mutex").take();
+    }
+
+    /// Like [`Self::shutdown`] but awaits the recv task's exit so
+    /// the channel's references (transport, capture writer) are
+    /// fully released by the time this returns.
+    pub async fn shutdown_and_wait(&self) {
+        self.shutdown_notify.notify_one();
+        let handle = self.recv_handle.lock().expect("recv_handle mutex").take();
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
     }
 }
 
 // --- internals -----------------------------------------------------
 
 /// Decode header → validate relay_id → update recv IV state →
-/// decrypt → decode `ServerToClient`. Inbound TCP plaintext is just
-/// the proto bytes (no `[2, hello?, …]` envelope), per
-/// `zwift.mjs:1285-1286`.
+/// decrypt → return the **plaintext bytes** (no proto decode).
+/// Caller decodes as `ServerToClient` after passing the plaintext
+/// to the capture tap. Inbound TCP plaintext is just the proto
+/// bytes (no `[2, hello?, …]` envelope), per `zwift.mjs:1285-1286`.
 fn process_inbound(
     bytes: &[u8],
     aes_key: &[u8; 16],
     expected_relay_id: u32,
     recv_iv_conn_id: &mut u16,
     recv_iv_seqno: &mut u32,
-) -> Result<zwift_proto::ServerToClient, Error> {
+) -> Result<Vec<u8>, Error> {
     let parsed = decode_header(bytes)?;
     let aad = &bytes[..parsed.consumed];
     let cipher = &bytes[parsed.consumed..];
@@ -312,9 +334,8 @@ fn process_inbound(
         seqno: *recv_iv_seqno,
     };
     let plaintext = decrypt(aes_key, &iv.to_bytes(), aad, cipher)?;
-    let stc = zwift_proto::ServerToClient::decode(plaintext.as_slice())?;
     *recv_iv_seqno = recv_iv_seqno.wrapping_add(1);
-    Ok(stc)
+    Ok(plaintext)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -326,6 +347,7 @@ async fn recv_loop<T: TcpTransport>(
     relay_id: u32,
     conn_id_init: u16,
     watchdog_timeout: Duration,
+    capture: Option<Arc<CaptureWriter>>,
 ) {
     let mut buffer: Vec<u8> = Vec::with_capacity(4096);
     let mut recv_iv_conn_id: u16 = conn_id_init;
@@ -371,8 +393,16 @@ async fn recv_loop<T: TcpTransport>(
                         &mut recv_iv_conn_id,
                         &mut recv_iv_seqno,
                     ) {
-                        Ok(stc) => {
-                            let _ = events_tx.send(TcpChannelEvent::Inbound(stc));
+                        Ok(plaintext) => {
+                            record_inbound(capture.as_ref(), TransportKind::Tcp, &plaintext);
+                            match zwift_proto::ServerToClient::decode(plaintext.as_slice()) {
+                                Ok(stc) => {
+                                    let _ = events_tx.send(TcpChannelEvent::Inbound(stc));
+                                }
+                                Err(e) => {
+                                    let _ = events_tx.send(TcpChannelEvent::RecvError(e.to_string()));
+                                }
+                            }
                         }
                         Err(e) => {
                             let _ = events_tx.send(TcpChannelEvent::RecvError(e.to_string()));

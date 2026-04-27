@@ -15,6 +15,9 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use crate::CodecError;
+use crate::capture::{
+    CaptureWriter, TransportKind, record_inbound, record_outbound,
+};
 use crate::consts::{CHANNEL_TIMEOUT, MAX_HELLOS, MIN_SYNC_SAMPLES};
 use crate::frame::udp_plaintext;
 use crate::header::{Header, HeaderFlags, decode_header};
@@ -208,6 +211,7 @@ pub struct UdpChannel<T: UdpTransport> {
     conn_id: u16,
     athlete_id: i64,
     latency_ms: i64,
+    capture: Option<Arc<CaptureWriter>>,
 }
 
 impl<T: UdpTransport> UdpChannel<T> {
@@ -235,6 +239,7 @@ impl<T: UdpTransport> UdpChannel<T> {
             let hello_iv_seqno = send_iv_seqno;
             let cts = build_hello(config.athlete_id, hello_app_seqno);
             let proto_bytes = cts.encode_to_vec();
+            record_outbound(config.capture.as_ref(), TransportKind::Udp, false, &proto_bytes);
             let plaintext = udp_plaintext(&proto_bytes);
 
             let header = build_send_header(
@@ -275,13 +280,15 @@ impl<T: UdpTransport> UdpChannel<T> {
                     biased;
                     result = transport.recv() => {
                         let bytes = result?;
-                        let stc = process_inbound_packet(
+                        let plaintext = process_inbound_packet(
                             &bytes,
                             &session.aes_key,
                             session.relay_id,
                             &mut recv_iv_conn_id,
                             &mut recv_iv_seqno,
                         )?;
+                        record_inbound(config.capture.as_ref(), TransportKind::Udp, &plaintext);
+                        let stc = zwift_proto::ServerToClient::decode(plaintext.as_slice())?;
 
                         if let Some(ack) = stc.seqno {
                             // ack is i32; client's app_seqno is u32.
@@ -328,6 +335,7 @@ impl<T: UdpTransport> UdpChannel<T> {
         let aes_key = session.aes_key;
         let relay_id = session.relay_id;
         let watchdog_timeout = config.watchdog_timeout;
+        let capture_for_recv = config.capture.clone();
 
         let handle = tokio::spawn(async move {
             // Emit Established as the first event from this task,
@@ -344,6 +352,7 @@ impl<T: UdpTransport> UdpChannel<T> {
                 recv_iv_conn_id,
                 recv_iv_seqno,
                 watchdog_timeout,
+                capture_for_recv,
             )
             .await;
         });
@@ -359,6 +368,7 @@ impl<T: UdpTransport> UdpChannel<T> {
                 conn_id: config.conn_id,
                 athlete_id: config.athlete_id,
                 latency_ms,
+                capture: config.capture,
             },
             events_rx,
         ))
@@ -379,6 +389,7 @@ impl<T: UdpTransport> UdpChannel<T> {
                 ..Default::default()
             };
             let proto_bytes = cts.encode_to_vec();
+            record_outbound(self.capture.as_ref(), TransportKind::Udp, false, &proto_bytes);
             let plaintext = udp_plaintext(&proto_bytes);
 
             // Steady-state header: SEQNO only (CONN_ID and RELAY_ID
@@ -419,12 +430,25 @@ impl<T: UdpTransport> UdpChannel<T> {
     }
 
     /// Cancel the recv-loop / watchdog. Notifies the recv task,
-    /// which emits `ChannelEvent::Shutdown` and exits cleanly.
+    /// which emits `ChannelEvent::Shutdown` and exits cleanly. Does
+    /// **not** await the task's exit; use [`Self::shutdown_and_wait`]
+    /// when the caller needs synchronous teardown (e.g. when the
+    /// capture writer must be flushed before the channel's clone of
+    /// it can be dropped).
     pub fn shutdown(&self) {
         self.shutdown_notify.notify_one();
-        // Drop our copy of the handle; the recv task will exit on
-        // its next `select!` poll.
         let _ = self.recv_handle.lock().expect("recv_handle mutex").take();
+    }
+
+    /// Like [`Self::shutdown`] but awaits the recv task's exit so
+    /// the channel's references (transport, capture writer) are
+    /// fully released by the time this returns.
+    pub async fn shutdown_and_wait(&self) {
+        self.shutdown_notify.notify_one();
+        let handle = self.recv_handle.lock().expect("recv_handle mutex").take();
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
     }
 }
 
@@ -465,15 +489,17 @@ fn build_send_header(hello_idx: u32, relay_id: u32, conn_id: u16, iv_seqno: u32)
 }
 
 /// Decode header → validate relay_id → update recv IV state →
-/// decrypt → decode `ServerToClient`. The recv plaintext is *just*
-/// the proto bytes (no version envelope), per `zwift.mjs:1427`.
+/// decrypt → return the **plaintext bytes** (no proto decode).
+/// Caller decodes as `ServerToClient` after passing the plaintext to
+/// the capture tap. The recv plaintext is just the proto bytes (no
+/// version envelope), per `zwift.mjs:1427`.
 fn process_inbound_packet(
     bytes: &[u8],
     aes_key: &[u8; 16],
     expected_relay_id: u32,
     recv_iv_conn_id: &mut u16,
     recv_iv_seqno: &mut u32,
-) -> Result<zwift_proto::ServerToClient, Error> {
+) -> Result<Vec<u8>, Error> {
     let parsed = decode_header(bytes)?;
     let aad = &bytes[..parsed.consumed];
     let cipher = &bytes[parsed.consumed..];
@@ -500,9 +526,8 @@ fn process_inbound_packet(
         seqno: *recv_iv_seqno,
     };
     let plaintext = decrypt(aes_key, &iv.to_bytes(), aad, cipher)?;
-    let stc = zwift_proto::ServerToClient::decode(plaintext.as_slice())?;
     *recv_iv_seqno = recv_iv_seqno.wrapping_add(1);
-    Ok(stc)
+    Ok(plaintext)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -515,6 +540,7 @@ async fn recv_loop<T: UdpTransport>(
     mut recv_iv_conn_id: u16,
     mut recv_iv_seqno: u32,
     watchdog_timeout: Duration,
+    capture: Option<Arc<CaptureWriter>>,
 ) {
     loop {
         tokio::select! {
@@ -533,8 +559,16 @@ async fn recv_loop<T: UdpTransport>(
                             &mut recv_iv_conn_id,
                             &mut recv_iv_seqno,
                         ) {
-                            Ok(stc) => {
-                                let _ = events_tx.send(ChannelEvent::Inbound(stc));
+                            Ok(plaintext) => {
+                                record_inbound(capture.as_ref(), TransportKind::Udp, &plaintext);
+                                match zwift_proto::ServerToClient::decode(plaintext.as_slice()) {
+                                    Ok(stc) => {
+                                        let _ = events_tx.send(ChannelEvent::Inbound(stc));
+                                    }
+                                    Err(e) => {
+                                        let _ = events_tx.send(ChannelEvent::RecvError(e.to_string()));
+                                    }
+                                }
                             }
                             Err(e) => {
                                 let _ = events_tx.send(ChannelEvent::RecvError(e.to_string()));

@@ -199,10 +199,9 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             print_auth_check(&resolved, &keyring);
             Ok(ExitCode::SUCCESS)
         }
-        Command::Replay { path: _, verbose: _ } => {
-            // STEP-11.5 green state: open a CaptureReader, iterate,
-            // print summary or per-record listing.
-            unimplemented!("STEP-11.5 green state: open CaptureReader and print summary/verbose")
+        Command::Replay { path, verbose } => {
+            print_replay(&path, verbose)?;
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
@@ -310,4 +309,77 @@ fn print_auth_check(
 
     println!("OK — credentials and endpoint config look reachable.");
     println!("(Run `cargo test -p zwift-api` to exercise the actual HTTP flow against a mock server.)");
+}
+
+/// Iterate a wire-capture file (STEP 11.5). Default mode prints a
+/// summary (record counts by direction/transport, time range, total
+/// bytes); `--verbose` prints one line per record. Surfaces any
+/// `CaptureError` to the caller via `?`.
+fn print_replay(path: &PathBuf, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use zwift_relay::capture::{CaptureReader, Direction, TransportKind};
+
+    let reader = CaptureReader::open(path)?;
+    println!("ranchero replay {}", path.display());
+    println!("Format version: {}", reader.version());
+    println!();
+
+    if verbose {
+        for (idx, result) in reader.enumerate() {
+            let r = result?;
+            let dir = match r.direction {
+                Direction::Inbound => "in ",
+                Direction::Outbound => "out",
+            };
+            let xport = match r.transport {
+                TransportKind::Udp => "UDP",
+                TransportKind::Tcp => "TCP",
+            };
+            let hello = if r.hello { " hello" } else { "" };
+            println!(
+                "  #{idx:>6}  {dir} {xport}  ts={}ns  len={:>5}{hello}",
+                r.ts_unix_ns,
+                r.payload.len(),
+            );
+        }
+        return Ok(());
+    }
+
+    let mut counts = [[0u64; 2]; 2]; // [direction][transport]
+    let mut total_bytes: u64 = 0;
+    let mut min_ts = u64::MAX;
+    let mut max_ts = 0u64;
+    for result in reader {
+        let r = result?;
+        counts[r.direction.as_byte() as usize][r.transport.as_byte() as usize] += 1;
+        total_bytes += r.payload.len() as u64;
+        min_ts = min_ts.min(r.ts_unix_ns);
+        max_ts = max_ts.max(r.ts_unix_ns);
+    }
+
+    let inbound_udp = counts[Direction::Inbound.as_byte() as usize]
+        [TransportKind::Udp.as_byte() as usize];
+    let inbound_tcp = counts[Direction::Inbound.as_byte() as usize]
+        [TransportKind::Tcp.as_byte() as usize];
+    let outbound_udp = counts[Direction::Outbound.as_byte() as usize]
+        [TransportKind::Udp.as_byte() as usize];
+    let outbound_tcp = counts[Direction::Outbound.as_byte() as usize]
+        [TransportKind::Tcp.as_byte() as usize];
+    let total = inbound_udp + inbound_tcp + outbound_udp + outbound_tcp;
+
+    println!("Records by (direction, transport):");
+    println!("  inbound  UDP: {inbound_udp:>8}");
+    println!("  inbound  TCP: {inbound_tcp:>8}");
+    println!("  outbound UDP: {outbound_udp:>8}");
+    println!("  outbound TCP: {outbound_tcp:>8}");
+    println!("  total:        {total:>8}");
+    println!();
+    println!("Total payload bytes: {total_bytes}");
+    if total > 0 {
+        let span_ms = (max_ts.saturating_sub(min_ts)) / 1_000_000;
+        println!(
+            "Time range: {min_ts} ns .. {max_ts} ns  (span ~{span_ms} ms)",
+        );
+    }
+
+    Ok(())
 }

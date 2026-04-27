@@ -567,7 +567,7 @@ async fn tcp_channel_with_capture_records_inbound_packets() {
             .expect("event");
     }
 
-    channel.shutdown();
+    channel.shutdown_and_wait().await;
     drop(channel);
 
     let writer = std::sync::Arc::try_unwrap(writer)
@@ -619,7 +619,7 @@ async fn tcp_channel_with_capture_records_outbound_packets_with_hello_flag() {
     let _ = handle.outbound_receiver.recv().await;
     let _ = handle.outbound_receiver.recv().await;
 
-    channel.shutdown();
+    channel.shutdown_and_wait().await;
     drop(channel);
 
     let writer = std::sync::Arc::try_unwrap(writer).expect("only test owner");
