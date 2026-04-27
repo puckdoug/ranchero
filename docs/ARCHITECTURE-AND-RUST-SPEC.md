@@ -206,8 +206,13 @@ Tokens themselves are kept in memory on `ZwiftAPI` instances; only
 All authenticated requests go to the Zwift game API host
 `us-or-rly101.zwift.com` (zwift.mjs:468) over HTTPS with
 `Authorization: Bearer <access_token>`. Headers also include
-`Source: Sauce for Zwift` and `User-Agent: CNL/4.2.0 (...)` consistent with
-a Zwift game client.
+`Source: Game Client` and `User-Agent: CNL/4.2.0 (...)` consistent with
+a Zwift game client. (sauce4zwift sends the same `Source: Game Client`
+verbatim at `zwift.mjs:458`; an earlier draft of this spec mistakenly
+documented `Source: Sauce for Zwift`. ranchero defaults to game-client
+mimicry — `zwift_api::DEFAULT_SOURCE` — and exposes `Config::source`
+for honest self-identification once Zwift's tolerance has been
+confirmed against real servers.)
 
 Observed endpoints (non-exhaustive):
 

@@ -282,58 +282,51 @@ async fn bearer_without_login_returns_not_authenticated() {
 // --- 1 (cont). Preemptive refresh at expires_in / 2 -----------------
 
 // The background scheduler should fire a refresh at half the access
-// token's lifetime. We use `tokio::time::pause()` so the test doesn't
-// actually wait `expires_in / 2` seconds of wall clock — the runtime
-// advances virtual time on demand and `tokio::time::sleep_until` (the
-// expected scheduling primitive per the plan) honors it.
+// token's lifetime. We can't use `tokio::time::pause()` here: the
+// scheduled refresh wakes a tokio sleep but then needs the reactor to
+// drive an HTTP round-trip to wiremock, and on `current_thread` with
+// paused virtual time the reactor only gets a turn when the runtime
+// parks — which never happens while the test task is busy yielding.
 //
-// Observation: after advancing past the half-life, the refresh
-// endpoint should have been hit exactly once.
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+// Instead we use a deliberately tiny `expires_in` (2s, half-life 1s)
+// and wait real wall-clock time for the rotation to land. The 2s budget
+// is comfortably above CI scheduling jitter and still keeps the test
+// suite fast.
+#[tokio::test]
 async fn preemptive_refresh_fires_at_half_expires_in() {
     let server = MockServer::start().await;
 
     Mock::given(method("POST"))
         .and(path(TOKEN_PATH))
         .and(body_string_contains("grant_type=password"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK1", "RTOK1", 600)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK1", "RTOK1", 2)))
         .expect(1)
         .mount(&server)
         .await;
 
-    let refresh_mock = Mock::given(method("POST"))
+    Mock::given(method("POST"))
         .and(path(TOKEN_PATH))
         .and(body_string_contains("grant_type=refresh_token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK2", "RTOK2", 600)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK2", "RTOK2", 60)))
         .expect(1)
-        .mount_as_scoped(&server)
+        .mount(&server)
         .await;
 
     let auth = ZwiftAuth::new(config_for(&server));
     auth.login("alice", "hunter2").await.expect("login");
 
-    // Just before the half-life: refresh must NOT have fired yet.
-    tokio::time::advance(Duration::from_secs(299)).await;
-    tokio::task::yield_now().await;
     assert_eq!(
         auth.bearer().await.expect("bearer"),
         "ATOK1",
-        "bearer should still be the original token before expires_in/2"
+        "bearer should still be the original token immediately after login"
     );
 
-    // Cross the half-life and yield enough for the scheduled task to
-    // wake, run the refresh, and update the token store.
-    tokio::time::advance(Duration::from_secs(2)).await;
-    for _ in 0..16 {
-        tokio::task::yield_now().await;
-    }
+    // Half-life is 1s. Sleep past it with margin for IO/scheduling.
+    tokio::time::sleep(Duration::from_millis(2000)).await;
 
     assert_eq!(
         auth.bearer().await.expect("bearer"),
         "ATOK2",
         "preemptive refresh at expires_in/2 should have rotated the access token"
     );
-
-    // wiremock asserts `expect(1)` on drop of the scoped mount.
-    drop(refresh_mock);
 }

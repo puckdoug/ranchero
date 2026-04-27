@@ -1,55 +1,50 @@
 //! STEP-05 credential storage tests.
 //!
 //! These describe the behaviour of `ranchero::credentials`:
-//!   - the on-disk JSON blob format must be byte-identical to what
-//!     sauce4zwift's `JSON.stringify({username, password})` produces
-//!     (`src/secrets.mjs`), so an existing sauce install's keychain entries
-//!     are picked up unchanged;
+//!   - the on-disk JSON blob format (`{"username":"…","password":"…"}`,
+//!     no whitespace, fields in insertion order);
 //!   - the trait surface (`KeyringStore`) and an in-memory fake;
-//!   - the role -> sauce account-name mapping (`main` -> `zwift-login`,
-//!     `monitor` -> `zwift-monitor-login`, matching `sauce4zwift/src/main.mjs`);
+//!   - the role -> keychain account-name mapping (`main` -> `zwift-login`,
+//!     `monitor` -> `zwift-monitor-login`);
 //!   - the real OS-keychain backend (`OsKeyringStore`), gated by
 //!     `#[cfg(target_os = ...)]` and `#[ignore]` so a plain `cargo test`
 //!     does not touch the user's keychain.
 
 use ranchero::credentials::{
-    InMemoryKeyringStore, KeyringError, KeyringStore, SAUCE_SERVICE_NAME,
-    parse_credentials, sauce_account_name, serialize_credentials,
+    InMemoryKeyringStore, KeyringError, KeyringStore, SERVICE_NAME,
+    account_name, parse_credentials, serialize_credentials,
 };
 
 // ---------------------------------------------------------------------------
-// Service name constant — must match sauce4zwift exactly.
+// Service name constant — ranchero-isolated (does not share with other apps).
 // ---------------------------------------------------------------------------
 
 #[test]
-fn service_name_matches_sauce4zwift_exactly() {
-    // Defined in sauce4zwift/src/secrets.mjs:3 as
-    //   const service = 'Zwift Credentials - Sauce for Zwift';
-    assert_eq!(SAUCE_SERVICE_NAME, "Zwift Credentials - Sauce for Zwift");
+fn service_name_is_ranchero() {
+    assert_eq!(SERVICE_NAME, "ranchero");
 }
 
 // ---------------------------------------------------------------------------
-// Role -> sauce account-name mapping.
+// Role -> keychain account-name mapping.
 //
 // The KeyringStore trait talks in clean role IDs ("main", "monitor"); the
-// real backend translates those to the sauce4zwift account names
-// ("zwift-login", "zwift-monitor-login") so the OS keychain layout is
-// identical to what sauce4zwift writes.
+// real backend translates those to descriptive account names so a
+// keychain inspector can tell what each entry is for.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn role_main_maps_to_zwift_login() {
-    assert_eq!(sauce_account_name("main").unwrap(), "zwift-login");
+    assert_eq!(account_name("main").unwrap(), "zwift-login");
 }
 
 #[test]
 fn role_monitor_maps_to_zwift_monitor_login() {
-    assert_eq!(sauce_account_name("monitor").unwrap(), "zwift-monitor-login");
+    assert_eq!(account_name("monitor").unwrap(), "zwift-monitor-login");
 }
 
 #[test]
 fn unknown_role_is_rejected() {
-    let err = sauce_account_name("admin").unwrap_err();
+    let err = account_name("admin").unwrap_err();
     assert!(
         matches!(&err, KeyringError::UnknownRole(s) if s == "admin"),
         "expected UnknownRole(\"admin\"), got {err:?}",
@@ -57,18 +52,15 @@ fn unknown_role_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Sauce-shaped JSON blob format.
+// JSON blob format.
 //
-// JavaScript's `JSON.stringify({username, password})` produces:
+// Compact JSON, no whitespace, fields in insertion order:
 //
 //   {"username":"<u>","password":"<p>"}
-//
-// — no whitespace, fields in insertion order, default JSON string escaping.
-// We must produce byte-identical output and accept the same on parse.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn serialize_matches_javascript_json_stringify_format() {
+fn serialize_produces_compact_json_blob() {
     let blob = serialize_credentials("rider@example.com", "hunter2").unwrap();
     assert_eq!(
         blob,
@@ -78,9 +70,6 @@ fn serialize_matches_javascript_json_stringify_format() {
 
 #[test]
 fn serialize_field_order_is_username_then_password() {
-    // sauce4zwift's `Secrets.set(ident, {username, password})` results in
-    // username appearing before password in the serialized JSON. We must
-    // preserve that ordering so the blobs are byte-identical.
     let blob = serialize_credentials("u", "p").unwrap();
     let u_idx = blob.find("\"username\"").unwrap();
     let p_idx = blob.find("\"password\"").unwrap();
@@ -88,7 +77,7 @@ fn serialize_field_order_is_username_then_password() {
 }
 
 #[test]
-fn serialize_escapes_special_characters_like_json_stringify() {
+fn serialize_escapes_special_characters() {
     let blob = serialize_credentials("a\"b", "c\\d").unwrap();
     assert_eq!(blob, r#"{"username":"a\"b","password":"c\\d"}"#);
 }
@@ -110,18 +99,9 @@ fn parse_round_trip() {
 }
 
 #[test]
-fn parse_accepts_existing_sauce_blob_byte_for_byte() {
-    // Exactly what an existing sauce4zwift install has written today.
-    let sauce_blob = r#"{"username":"sauce@example.com","password":"shhh"}"#;
-    let entry = parse_credentials(sauce_blob).unwrap();
-    assert_eq!(entry.username, "sauce@example.com");
-    assert_eq!(entry.password, "shhh");
-}
-
-#[test]
 fn parse_tolerates_extra_fields_for_forward_compat() {
-    // If sauce (or some future ranchero version) starts writing extra
-    // fields, we must still recover the two we care about.
+    // If a future ranchero version writes extra fields, we must still
+    // recover the two we care about today.
     let blob = r#"{"username":"u","password":"p","captured_at":"2026-01-01"}"#;
     let entry = parse_credentials(blob).unwrap();
     assert_eq!(entry.username, "u");
@@ -186,8 +166,6 @@ fn in_memory_delete_removes_entry() {
 
 #[test]
 fn in_memory_delete_missing_is_idempotent() {
-    // sauce4zwift's `Secrets.remove(...).catch(...)` swallows misses;
-    // matching that behaviour keeps reset flows uncomplicated.
     let mut store = InMemoryKeyringStore::default();
     store.delete("monitor").unwrap();
 }
@@ -214,15 +192,14 @@ fn in_memory_main_and_monitor_are_independent() {
 //   - require a host that provides one (macOS Keychain, Windows Credential
 //     Manager, libsecret on Linux);
 //   - on macOS specifically, may prompt the user to allow keychain access,
-//     which would block a non-interactive `cargo test` run;
-//   - must not stomp on real sauce4zwift entries belonging to the developer.
+//     which would block a non-interactive `cargo test` run.
 //
 // They are therefore gated by both `#[cfg(target_os = ...)]` (compile only
 // on supported platforms) and `#[ignore]` (require explicit
 // `cargo test -- --ignored` to run, presumably from CI). They write under
 // a `OsKeyringStore::with_service_name(...)` instance using a unique,
-// disposable service name so they cannot collide with the real Sauce
-// keychain entries.
+// disposable service name so they cannot collide with the user's real
+// ranchero entries.
 // ---------------------------------------------------------------------------
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -231,7 +208,7 @@ mod os_backend {
     use ranchero::credentials::OsKeyringStore;
 
     /// A unique, disposable service name keeps test entries from colliding
-    /// with the user's real sauce4zwift credentials and from leaking across
+    /// with the user's real ranchero credentials and from leaking across
     /// test runs.
     fn unique_service() -> String {
         let nanos = std::time::SystemTime::now()
@@ -282,42 +259,5 @@ mod os_backend {
         let mon = store.get("monitor").unwrap().expect("monitor preserved");
         assert_eq!(mon.username, "mon@x");
         store.delete("monitor").unwrap();
-    }
-
-    /// Compatibility test: a sauce4zwift install that stored credentials
-    /// using `Secrets.set('zwift-login', {username, password})` against the
-    /// service `Zwift Credentials - Sauce for Zwift` must be readable by
-    /// `OsKeyringStore::new()` (which uses the production service name)
-    /// under role `"main"`, with the sauce-shaped JSON blob round-tripped
-    /// faithfully. Same for `'zwift-monitor-login'` / role `"monitor"`.
-    ///
-    /// Uses the production service name, so the test is double-gated:
-    /// an `#[ignore]` and an env-var opt-in (`RANCHERO_TEST_SAUCE_COMPAT=1`)
-    /// to make absolutely sure a casual `--ignored` run does not write
-    /// under the real Sauce service name.
-    #[test]
-    #[ignore = "writes under real sauce4zwift service name; opt in with RANCHERO_TEST_SAUCE_COMPAT=1"]
-    fn os_uses_sauce_service_and_account_names_in_production() {
-        if std::env::var_os("RANCHERO_TEST_SAUCE_COMPAT").is_none() {
-            return;
-        }
-
-        let mut store = OsKeyringStore::new();
-        // Use values unlikely to clobber a real install; if the user has
-        // these exact credentials they have bigger problems.
-        let probe_user = "ranchero-compat-probe@example.invalid";
-        let probe_pass = "ranchero-compat-probe-password";
-
-        store.set("main", probe_user, probe_pass).unwrap();
-        let got = store.get("main").unwrap().expect("just-set entry");
-        assert_eq!(got.username, probe_user);
-        assert_eq!(got.password, probe_pass);
-
-        // The store should be reading from the very same (service, account)
-        // pair that sauce4zwift writes to.
-        assert_eq!(SAUCE_SERVICE_NAME, "Zwift Credentials - Sauce for Zwift");
-        assert_eq!(sauce_account_name("main").unwrap(), "zwift-login");
-
-        store.delete("main").unwrap();
     }
 }

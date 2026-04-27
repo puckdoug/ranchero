@@ -45,6 +45,12 @@ fn parses_configure_subcommand() {
     assert_eq!(cli.command, Command::Configure);
 }
 
+#[test]
+fn parses_auth_check_subcommand() {
+    let cli = parse(&["ranchero", "auth-check"]);
+    assert_eq!(cli.command, Command::AuthCheck);
+}
+
 // -- global flag parsing --------------------------------------------------
 
 #[test]
@@ -207,6 +213,12 @@ fn dispatch_stop_stub() {
 fn dispatch_status_stub() {
     let cli = parse(&["ranchero", "status"]);
     assert!(run(cli).contains("status"));
+}
+
+#[test]
+fn dispatch_auth_check_stub() {
+    let cli = parse(&["ranchero", "auth-check"]);
+    assert!(run(cli).contains("auth-check"));
 }
 
 #[test]

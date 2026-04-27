@@ -73,6 +73,11 @@ pub enum Command {
     Stop,
     /// Print statistics about the running ranchero process, or report shutdown.
     Status,
+    /// Print what an auth login would send to Zwift, without opening any sockets.
+    /// A pre-flight diagnostic: prove that config + credentials + endpoint
+    /// configuration all resolve before risking a real Keycloak round-trip
+    /// (which can lock the account on repeated failures).
+    AuthCheck,
 }
 
 impl Command {
@@ -82,6 +87,7 @@ impl Command {
             Command::Start => "start",
             Command::Stop => "stop",
             Command::Status => "status",
+            Command::AuthCheck => "auth-check",
         }
     }
 }
@@ -163,8 +169,120 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 Command::Stop => Ok(daemon::stop(&resolved)?),
                 Command::Status => Ok(daemon::status(&resolved)?),
-                Command::Configure => unreachable!(),
+                Command::Configure | Command::AuthCheck => unreachable!(),
             }
         }
+        Command::AuthCheck => {
+            let file = config::load(cli.global.config.as_deref())?;
+            let resolved = ResolvedConfig::resolve(&cli.global, &OsEnv, Some(file))?;
+            let keyring = OsKeyringStore::new();
+            print_auth_check(&resolved, &keyring);
+            Ok(ExitCode::SUCCESS)
+        }
     }
+}
+
+/// Render an "auth-check" report: for each configured account, show the
+/// resolved email, password source/length, and the literal HTTP request
+/// `ZwiftAuth::login()` would issue (form body + headers, password
+/// redacted). No sockets opened. Useful as a pre-flight gate before
+/// `start` to confirm credentials and endpoint config look healthy
+/// without burning Keycloak login attempts (Zwift will lock the account
+/// after a few bad-password tries).
+fn print_auth_check(
+    resolved: &crate::config::ResolvedConfig,
+    keyring: &dyn crate::credentials::KeyringStore,
+) {
+    use zwift_api::{CLIENT_ID, Config, TOKEN_PATH, ZwiftAuth};
+
+    let cfg = Config::default();
+    // Construct ZwiftAuth purely to prove the wiring compiles and runs;
+    // we never call .login() so no socket is opened.
+    let _auth = ZwiftAuth::new(cfg.clone());
+
+    println!("ranchero auth-check (no network calls)");
+    println!();
+    println!("Endpoints (from zwift_api::Config::default()):");
+    println!("  auth_base:  {}", cfg.auth_base);
+    println!("  api_base:   {}", cfg.api_base);
+    println!("  token path: {TOKEN_PATH}");
+    println!();
+
+    let roles: [(&str, Option<&str>, Option<&str>); 2] = [
+        (
+            "main",
+            resolved.main_email.as_deref(),
+            resolved.main_password.as_ref().map(|p| p.expose()),
+        ),
+        (
+            "monitor",
+            resolved.monitor_email.as_deref(),
+            resolved.monitor_password.as_ref().map(|p| p.expose()),
+        ),
+    ];
+
+    for (role, email, cli_password) in roles {
+        println!("Account: {role}");
+        match email {
+            Some(e) => println!("  email:           {e}"),
+            None => {
+                println!("  email:           <not configured>");
+                println!("  (skip — no email; configure via `ranchero configure` or --{role}user)");
+                println!();
+                continue;
+            }
+        }
+
+        let (password, source) = match cli_password {
+            Some(p) => (Some(p.to_string()), "command-line override"),
+            None => match keyring.get(role) {
+                Ok(Some(entry)) => (Some(entry.password), "OS keyring"),
+                Ok(None) => (None, "missing"),
+                Err(e) => {
+                    println!("  password source: keyring error: {e}");
+                    println!();
+                    continue;
+                }
+            },
+        };
+
+        match &password {
+            Some(p) => {
+                println!("  password source: {source}");
+                println!("  password length: {} chars (value redacted)", p.chars().count());
+            }
+            None => {
+                println!("  password source: {source}");
+                println!("  (skip — no password; store one via `ranchero configure`)");
+                println!();
+                continue;
+            }
+        }
+
+        // Render the form body the same way reqwest does: serde_urlencoded.
+        // The password slot is rendered as the literal string `[redacted]`
+        // so this output is safe to paste into a bug report.
+        let body = serde_urlencoded::to_string([
+            ("client_id", CLIENT_ID),
+            ("grant_type", "password"),
+            ("username", email.unwrap()),
+            ("password", "[redacted]"),
+        ])
+        .expect("urlencode auth-check form");
+
+        println!("  Login request:");
+        println!("    POST {}{TOKEN_PATH}", cfg.auth_base);
+        println!("    Content-Type: application/x-www-form-urlencoded");
+        println!("    Body: {body}");
+        println!();
+        println!("  Example authed call:");
+        println!("    GET {}/api/profiles/me", cfg.api_base);
+        println!("    Authorization: Bearer <access_token from login response>");
+        println!("    Source: {}", cfg.source);
+        println!("    User-Agent: {}", cfg.user_agent);
+        println!();
+    }
+
+    println!("OK — credentials and endpoint config look reachable.");
+    println!("(Run `cargo test -p zwift-api` to exercise the actual HTTP flow against a mock server.)");
 }

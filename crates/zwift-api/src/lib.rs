@@ -5,15 +5,11 @@
 // Ported from sauce4zwift `src/zwift.mjs` (`ZwiftAPI` class, lines
 // ~327-500). See docs/plans/STEP-07-auth-and-rest.md and
 // docs/ARCHITECTURE-AND-RUST-SPEC.md §3 / §7.5 for the contract.
-//
-// This file currently exposes the public API surface as stubs so the
-// `tests/auth.rs` suite compiles. Behavior is implemented in a later
-// pass; until then every method panics via `unimplemented!()` and the
-// tests will fail loudly. This is the TDD scaffold, not the
-// implementation.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 
 /// Default Keycloak host used for token issuance and refresh.
 pub const DEFAULT_AUTH_HOST: &str = "secure.zwift.com";
@@ -22,14 +18,31 @@ pub const DEFAULT_AUTH_HOST: &str = "secure.zwift.com";
 pub const DEFAULT_API_HOST: &str = "us-or-rly101.zwift.com";
 
 /// Keycloak `client_id`. The literal space is intentional and is what
-/// Zwift's first-party game client sends; serde_urlencoded will encode
-/// it as `Zwift+Game+Client` in the form body.
+/// Zwift's first-party game client sends; serde_urlencoded encodes it
+/// as `Zwift+Game+Client` in the form body.
 pub const CLIENT_ID: &str = "Zwift Game Client";
 
-/// `Source` header value sent on every authenticated REST call.
-pub const DEFAULT_SOURCE: &str = "Sauce for Zwift";
+/// Default `Source` header sent on every authenticated REST call.
+///
+/// We mimic a real Zwift desktop client (matching sauce4zwift's
+/// `zwift.mjs:458`, which sends the same value) because Zwift's API
+/// is suspected to inspect this header and may reject requests that
+/// identify themselves as a third-party tool. The architecture spec
+/// §3.3 mistakenly documented `"Sauce for Zwift"`; the actual
+/// upstream code — and the value real game clients send — is
+/// `"Game Client"`.
+///
+/// Override via [`Config::source`] when you want to identify
+/// honestly (e.g. once Zwift's tolerance has been confirmed against
+/// real servers, or when targeting a self-hosted `zwift-offline`
+/// instance that doesn't care).
+pub const DEFAULT_SOURCE: &str = "Game Client";
 
-/// `User-Agent` header value sent on every authenticated REST call.
+/// Default `User-Agent` header sent on every authenticated REST call.
+///
+/// Same rationale as [`DEFAULT_SOURCE`]: mimics a real Zwift game
+/// client. Override via [`Config::user_agent`] for honest
+/// self-identification when the API is known to tolerate it.
 pub const DEFAULT_USER_AGENT: &str = "CNL/4.2.0";
 
 /// Path of the Keycloak token endpoint (used for both `password` and
@@ -105,7 +118,7 @@ impl Default for Config {
 /// token inline.
 ///
 /// Cloning is cheap: the inner state is `Arc`-wrapped so multiple tasks
-/// (e.g. main + monitor accounts elsewhere; a background refresh task
+/// (e.g. main + monitor accounts elsewhere; the background refresh task
 /// here) share the same token store.
 #[derive(Clone)]
 pub struct ZwiftAuth {
@@ -113,12 +126,13 @@ pub struct ZwiftAuth {
 }
 
 struct Inner {
-    #[allow(dead_code)]
     http: reqwest::Client,
-    #[allow(dead_code)]
     config: Config,
-    #[allow(dead_code)]
     tokens: RwLock<Option<Tokens>>,
+    /// Handle to the in-flight preemptive-refresh task, if any.
+    /// `std::sync::Mutex` is fine here: the critical section is just a
+    /// `take`/`replace` and never crosses an `.await`.
+    refresh_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl ZwiftAuth {
@@ -140,6 +154,7 @@ impl ZwiftAuth {
                 http,
                 config,
                 tokens: RwLock::new(None),
+                refresh_task: Mutex::new(None),
             }),
         }
     }
@@ -147,15 +162,39 @@ impl ZwiftAuth {
     /// Perform the OAuth2 password grant against the Keycloak token
     /// endpoint. On success, stores the resulting tokens and schedules
     /// a background refresh at `expires_in / 2` seconds from now.
-    pub async fn login(&self, _username: &str, _password: &str) -> Result<()> {
-        unimplemented!("STEP-07: implement Keycloak password-grant login")
+    pub async fn login(&self, username: &str, password: &str) -> Result<()> {
+        let url = format!("{}{}", self.inner.config.auth_base, TOKEN_PATH);
+        let resp = self
+            .inner
+            .http
+            .post(&url)
+            .form(&[
+                ("client_id", CLIENT_ID),
+                ("grant_type", "password"),
+                ("username", username),
+                ("password", password),
+            ])
+            .send()
+            .await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            let body = String::from_utf8_lossy(&bytes).to_string();
+            return Err(Error::AuthFailed(body));
+        }
+        let tokens: Tokens = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?;
+        let expires_in = tokens.expires_in;
+        *self.inner.tokens.write().await = Some(tokens);
+        Inner::schedule_refresh(self.inner.clone(), Duration::from_secs(expires_in / 2));
+        Ok(())
     }
 
     /// Use the current `refresh_token` to obtain a fresh `access_token`
     /// from the Keycloak token endpoint. Reschedules the next preemptive
     /// refresh on success.
     pub async fn refresh(&self) -> Result<()> {
-        unimplemented!("STEP-07: implement Keycloak refresh_token grant")
+        Inner::do_refresh(self.inner.clone()).await
     }
 
     /// Snapshot of the current tokens, if any. Returns `None` before
@@ -164,17 +203,110 @@ impl ZwiftAuth {
         self.inner.tokens.read().await.clone()
     }
 
-    /// Return the current `access_token`, refreshing if it has aged
-    /// past 50% of its `expires_in`. Errors with `NotAuthenticated`
-    /// when no tokens are present.
+    /// Return the current `access_token`. Errors with
+    /// `NotAuthenticated` when no tokens are present.
+    ///
+    /// Note: this method does not itself trigger a refresh; the
+    /// background scheduler handles preemptive refresh at half-life,
+    /// and `fetch()` handles the 401 fallback.
     pub async fn bearer(&self) -> Result<String> {
-        unimplemented!("STEP-07: return access_token, refreshing at half-life if needed")
+        self.inner
+            .tokens
+            .read()
+            .await
+            .as_ref()
+            .map(|t| t.access_token.clone())
+            .ok_or(Error::NotAuthenticated)
     }
 
     /// Issue a GET against the API host with `Authorization: Bearer …`,
     /// `Source`, and `User-Agent` set. On a 401 response, transparently
     /// trigger a token refresh and retry the request once.
-    pub async fn fetch(&self, _urn: &str) -> Result<reqwest::Response> {
-        unimplemented!("STEP-07: implement authed fetch with 401-refresh-retry")
+    pub async fn fetch(&self, urn: &str) -> Result<reqwest::Response> {
+        let url = format!("{}{}", self.inner.config.api_base, urn);
+        let bearer = self.bearer().await?;
+        let resp = self
+            .inner
+            .http
+            .get(&url)
+            .bearer_auth(&bearer)
+            .header("Source", &self.inner.config.source)
+            .header("User-Agent", &self.inner.config.user_agent)
+            .send()
+            .await?;
+        if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(resp);
+        }
+        // Drop the 401 response (and its body) before refreshing so we
+        // don't tie up the connection during the token round-trip.
+        drop(resp);
+        self.refresh().await?;
+        let bearer = self.bearer().await?;
+        let retry = self
+            .inner
+            .http
+            .get(&url)
+            .bearer_auth(&bearer)
+            .header("Source", &self.inner.config.source)
+            .header("User-Agent", &self.inner.config.user_agent)
+            .send()
+            .await?;
+        Ok(retry)
+    }
+}
+
+impl Inner {
+    /// Replace any in-flight scheduled refresh with a fresh one that
+    /// fires after `delay`. Aborting the previous handle is safe even
+    /// when called from inside that very task: `JoinHandle::abort()`
+    /// only sets a cancellation flag, checked at the next await point,
+    /// which the calling task no longer reaches.
+    fn schedule_refresh(self: Arc<Self>, delay: Duration) {
+        let mut slot = self.refresh_task.lock().expect("refresh_task mutex");
+        if let Some(prev) = slot.take() {
+            prev.abort();
+        }
+        let inner = self.clone();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            if let Err(e) = Inner::do_refresh(inner).await {
+                tracing::warn!(error = %e, "scheduled token refresh failed");
+            }
+        });
+        *slot = Some(handle);
+    }
+
+    async fn do_refresh(self: Arc<Self>) -> Result<()> {
+        let refresh_token = {
+            let guard = self.tokens.read().await;
+            guard
+                .as_ref()
+                .ok_or(Error::NotAuthenticated)?
+                .refresh_token
+                .clone()
+        };
+        let url = format!("{}{}", self.config.auth_base, TOKEN_PATH);
+        let resp = self
+            .http
+            .post(&url)
+            .form(&[
+                ("client_id", CLIENT_ID),
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh_token.as_str()),
+            ])
+            .send()
+            .await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            let body = String::from_utf8_lossy(&bytes).to_string();
+            return Err(Error::RefreshFailed(body));
+        }
+        let tokens: Tokens = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?;
+        let expires_in = tokens.expires_in;
+        *self.tokens.write().await = Some(tokens);
+        Inner::schedule_refresh(self, Duration::from_secs(expires_in / 2));
+        Ok(())
     }
 }

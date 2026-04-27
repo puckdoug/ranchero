@@ -1,20 +1,21 @@
-//! OS-keychain credential storage, sauce4zwift-compatible.
+//! OS-keychain credential storage for ranchero.
 //!
-//! sauce4zwift's `src/secrets.mjs` stores Zwift credentials in the OS
-//! keychain under service name `"Zwift Credentials - Sauce for Zwift"`,
-//! keyed by `"zwift-login"` (main account) and `"zwift-monitor-login"`
-//! (monitor account), with each value a `JSON.stringify({username,
-//! password})` blob. ranchero uses the same service name, account names,
-//! and JSON format so an existing sauce install's keychain entries are
-//! picked up unchanged.
+//! Zwift account credentials (`{username, password}` pairs for the main
+//! and monitor accounts) are persisted in the OS-native secret store —
+//! macOS Keychain, Windows Credential Manager, libsecret on Linux —
+//! under the service name [`SERVICE_NAME`] (`"ranchero"`). Entries are
+//! isolated to ranchero and intentionally do *not* share storage with
+//! sauce4zwift or any other tool: an existing sauce install on the same
+//! machine keeps its own keychain entries; ranchero stores its own
+//! independently and the user enters credentials once via
+//! `ranchero configure`.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-/// OS keychain service name used by sauce4zwift's `src/secrets.mjs`.
-/// Sharing it lets ranchero pick up existing sauce installs unchanged.
-pub const SAUCE_SERVICE_NAME: &str = "Zwift Credentials - Sauce for Zwift";
+/// OS-keychain service name used by all ranchero keyring entries.
+pub const SERVICE_NAME: &str = "ranchero";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyringEntry {
@@ -41,9 +42,12 @@ impl std::fmt::Display for KeyringError {
 
 impl std::error::Error for KeyringError {}
 
-/// Translate a domain role ID to the OS-keychain account name sauce4zwift
-/// uses. `"main"` -> `"zwift-login"`, `"monitor"` -> `"zwift-monitor-login"`.
-pub fn sauce_account_name(role: &str) -> Result<&'static str, KeyringError> {
+/// Translate a domain role ID to the OS-keychain account name used to
+/// scope entries within [`SERVICE_NAME`]. `"main"` -> `"zwift-login"`,
+/// `"monitor"` -> `"zwift-monitor-login"`. The account names are
+/// descriptive of *what* the credential is, not whose, so we reuse the
+/// names a Zwift-aware reader would recognise.
+pub fn account_name(role: &str) -> Result<&'static str, KeyringError> {
     match role {
         "main"    => Ok("zwift-login"),
         "monitor" => Ok("zwift-monitor-login"),
@@ -51,9 +55,10 @@ pub fn sauce_account_name(role: &str) -> Result<&'static str, KeyringError> {
     }
 }
 
-/// Serialize a credential pair to the same compact JSON sauce4zwift's
-/// `JSON.stringify({username, password})` produces:
-/// `{"username":"<u>","password":"<p>"}`.
+/// Serialize a credential pair to a compact `{username, password}` JSON
+/// blob (no whitespace, fields in insertion order). One value per
+/// keychain entry; this is what the OS secret store sees as the
+/// "password" field.
 pub fn serialize_credentials(username: &str, password: &str) -> Result<String, KeyringError> {
     #[derive(Serialize)]
     struct Wire<'a> {
@@ -64,7 +69,7 @@ pub fn serialize_credentials(username: &str, password: &str) -> Result<String, K
         .map_err(|e| KeyringError::Serialization(e.to_string()))
 }
 
-/// Parse a sauce-shaped JSON credential blob. Tolerates extra fields;
+/// Parse a `{username, password}` JSON blob. Tolerates extra fields;
 /// rejects malformed JSON or missing `username`/`password`.
 pub fn parse_credentials(blob: &str) -> Result<KeyringEntry, KeyringError> {
     #[derive(Deserialize)]
@@ -114,21 +119,21 @@ pub struct OsKeyringStore {
 }
 
 impl OsKeyringStore {
-    /// Production constructor — uses the sauce4zwift service name. All
-    /// non-test code paths must use this.
+    /// Production constructor — uses [`SERVICE_NAME`]. All non-test code
+    /// paths must use this.
     pub fn new() -> Self {
-        Self { service: SAUCE_SERVICE_NAME.to_string() }
+        Self { service: SERVICE_NAME.to_string() }
     }
 
     /// Test-only constructor letting callers write under a disposable
     /// service name so test entries cannot collide with the user's real
-    /// sauce4zwift credentials.
+    /// ranchero credentials.
     pub fn with_service_name(service: &str) -> Self {
         Self { service: service.to_string() }
     }
 
     fn entry_for(&self, role: &str) -> Result<keyring::Entry, KeyringError> {
-        let account = sauce_account_name(role)?;
+        let account = account_name(role)?;
         keyring::Entry::new(&self.service, account)
             .map_err(|e| KeyringError::Backend(e.to_string()))
     }
