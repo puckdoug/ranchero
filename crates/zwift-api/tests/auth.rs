@@ -114,6 +114,44 @@ async fn login_sends_password_grant_form_body_with_literal_client_id() {
 }
 
 #[tokio::test]
+async fn authed_post_includes_bearer_source_and_user_agent_headers() {
+    // STEP-09 needs POST with a body for the relay endpoints. This
+    // pins the same auth + Source + User-Agent + Content-Type
+    // contract `fetch()` honors for GETs, against POST.
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/users/login"))
+        .and(header("authorization", "Bearer ATOK"))
+        .and(header("source", DEFAULT_SOURCE))
+        .and(header("user-agent", DEFAULT_USER_AGENT))
+        .and(header("content-type", "application/x-protobuf-lite"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"server-reply".to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+
+    let resp = auth
+        .post(
+            "/api/users/login",
+            "application/x-protobuf-lite",
+            b"client-body".to_vec(),
+        )
+        .await
+        .expect("authed post should succeed");
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
 async fn authed_fetch_sends_bearer_source_and_user_agent_headers() {
     let server = MockServer::start().await;
 

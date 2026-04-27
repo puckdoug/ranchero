@@ -7,6 +7,31 @@ pub const IV_LEN: usize = 12;
 pub const TAG_LEN: usize = 4;
 pub const KEY_LEN: usize = 16;
 
+// --- relay session (STEP 09) ----------------------------------------
+
+/// Default relay-API host. Production: `us-or-rly101.zwift.com`.
+pub const DEFAULT_RELAY_HOST: &str = "us-or-rly101.zwift.com";
+
+/// Path of the relay login endpoint (POST `LoginRequest` →
+/// `LoginResponse`).
+pub const LOGIN_PATH: &str = "/api/users/login";
+
+/// Path of the relay session refresh endpoint
+/// (POST `RelaySessionRefreshRequest` → `RelaySessionRefreshResponse`).
+pub const SESSION_REFRESH_PATH: &str = "/relay/session/refresh";
+
+/// `Content-Type` Zwift's relay endpoints expect for protobuf bodies.
+pub const PROTOBUF_CONTENT_TYPE: &str = "application/x-protobuf-lite";
+
+/// Refresh fires at this fraction of the session's announced
+/// lifetime. Matches `zwift.mjs:1926`
+/// (`refreshDelay = (expires - now) * 0.90`).
+pub const SESSION_REFRESH_FRACTION: f64 = 0.90;
+
+/// Lower bound on refresh attempt cadence (back-off floor on
+/// repeated failures). Spec §7.4.
+pub const MIN_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Plaintext envelope version byte for TCP. Followed by a `hello?0:1`
 /// byte and then the `ClientToServer` proto bytes.
 pub const TCP_VERSION: u8 = 2;

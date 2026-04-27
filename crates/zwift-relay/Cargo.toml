@@ -3,12 +3,12 @@ name = "zwift-relay"
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-only"
-description = "Pure no-I/O codec for the Zwift relay protocol (AES-128-GCM-4, RelayIV, header, TCP/UDP framing)."
+description = "Zwift relay protocol: AES-128-GCM-4 codec (no-I/O) plus async session login + refresh supervisor."
 
 [dependencies]
-# `aes-gcm` 0.10 caps tag size at 12-16 bytes (RFC 5288). Zwift uses
-# 4-byte tags (`authTagLength: 4` in Node), so we compose GCM ourselves
-# from the audited `aes` + `ghash` primitives. `subtle` gives us the
+# Codec layer (no I/O). `aes-gcm` 0.10 caps tag size at 12-16 bytes
+# (RFC 5288); Zwift uses 4-byte tags, so we compose GCM ourselves from
+# the audited `aes` + `ghash` primitives. `subtle` gives us the
 # constant-time tag comparison.
 aes = { version = "0.8", default-features = false }
 bitflags = "2"
@@ -16,7 +16,18 @@ ghash = { version = "0.5", default-features = false }
 subtle = { version = "2", default-features = false }
 thiserror = "1"
 
+# Session layer (HTTPS login + refresh supervisor — STEP 09).
+prost = "0.13"
+rand = { version = "0.8", default-features = false, features = ["std", "std_rng", "getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tracing = "0.1"
+zwift-api = { path = "../zwift-api" }
+zwift-proto = { path = "../zwift-proto" }
+
 [dev-dependencies]
 hex-literal = "0.4"
-prost = "0.13"
-zwift-proto = { path = "../zwift-proto" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "time", "macros", "rt", "rt-multi-thread", "test-util"] }
+wiremock = "0.6"

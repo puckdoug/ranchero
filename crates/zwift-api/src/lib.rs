@@ -219,6 +219,21 @@ impl ZwiftAuth {
             .ok_or(Error::NotAuthenticated)
     }
 
+    /// POST `body` to `{api_base}{urn}` with the supplied
+    /// `Content-Type`. Includes `Authorization: Bearer …`, `Source`,
+    /// and `User-Agent` exactly like [`Self::fetch`]. On a 401 response,
+    /// transparently triggers a token refresh and retries the request
+    /// once. Used by `zwift-relay` for the protobuf POSTs to
+    /// `/api/users/login` and `/relay/session/refresh`.
+    pub async fn post(
+        &self,
+        _urn: &str,
+        _content_type: &str,
+        _body: Vec<u8>,
+    ) -> Result<reqwest::Response> {
+        unimplemented!("STEP-09: POST with body + auth/Source/User-Agent + 401-retry")
+    }
+
     /// Issue a GET against the API host with `Authorization: Bearer …`,
     /// `Source`, and `User-Agent` set. On a 401 response, transparently
     /// trigger a token refresh and retry the request once.

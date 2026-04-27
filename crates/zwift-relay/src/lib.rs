@@ -1,23 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// `zwift-relay` — pure no-I/O codec for the Zwift relay protocol.
+// `zwift-relay` — Zwift relay protocol.
 //
-// Public API surface lives across small modules and is re-exported
-// here so callers `use zwift_relay::{…}` without navigating internal
-// paths. This file currently exposes the surface as stubs so the
-// `tests/*.rs` suites compile; behavior is implemented in a later
-// pass. Until then every entry point panics via `unimplemented!()`
-// and tests fail loudly. This is the TDD scaffold, not the
-// implementation. See `docs/plans/STEP-08-relay-codec.md`.
+// - Codec layer (no I/O): `RelayIv`, `Header`, AES-128-GCM-4,
+//   TCP/UDP frame wrapping. STEP 08; implemented.
+// - Session layer (HTTPS, async): `RelaySession` POD,
+//   `login`/`refresh` single-shots, `RelaySessionSupervisor` long-
+//   running task. STEP 09; currently stubs.
+//
+// Every public item is re-exported from this file so callers
+// `use zwift_relay::{…}` without navigating internal module paths.
 
 mod consts;
 mod crypto;
 mod frame;
 mod header;
 mod iv;
+mod session;
 
 pub use consts::{
-    ChannelType, DeviceType, IV_LEN, KEY_LEN, TAG_LEN, TCP_VERSION, UDP_VERSION,
+    ChannelType, DEFAULT_RELAY_HOST, DeviceType, IV_LEN, KEY_LEN, LOGIN_PATH,
+    MIN_REFRESH_INTERVAL, PROTOBUF_CONTENT_TYPE, SESSION_REFRESH_FRACTION, SESSION_REFRESH_PATH,
+    TAG_LEN, TCP_VERSION, UDP_VERSION,
 };
 pub use crypto::{decrypt, encrypt};
 pub use frame::{
@@ -26,6 +30,10 @@ pub use frame::{
 };
 pub use header::{Header, HeaderFlags, ParsedHeader, decode_header};
 pub use iv::RelayIv;
+pub use session::{
+    Error as SessionError, RelaySession, RelaySessionConfig, RelaySessionSupervisor,
+    Result as SessionResult, SessionEvent, TcpServer, login, refresh,
+};
 
 #[derive(thiserror::Error, Debug, PartialEq, Eq)]
 pub enum CodecError {
