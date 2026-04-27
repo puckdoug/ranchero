@@ -8,13 +8,20 @@
 // `tests/session.rs` compiles. Behavior lands in the green-state
 // implementation. See `docs/plans/STEP-09-relay-session.md`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use prost::Message;
+use rand::RngCore;
 use tokio::sync::{RwLock, broadcast};
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
+use zwift_proto::{LoginRequest, LoginResponse, RelaySessionRefreshResponse};
 
-use crate::consts::{DEFAULT_RELAY_HOST, MIN_REFRESH_INTERVAL, SESSION_REFRESH_FRACTION};
+use crate::consts::{
+    LOGIN_PATH, MIN_REFRESH_INTERVAL, PROTOBUF_CONTENT_TYPE, SESSION_REFRESH_FRACTION,
+    SESSION_REFRESH_PATH,
+};
 use zwift_api::{DEFAULT_SOURCE, DEFAULT_USER_AGENT};
 
 // --- POD types ----------------------------------------------------
@@ -50,9 +57,6 @@ pub struct RelaySession {
 
 #[derive(Debug, Clone)]
 pub struct RelaySessionConfig {
-    /// Base URL (with scheme). Production default
-    /// `https://us-or-rly101.zwift.com`. Tests inject a wiremock URI.
-    pub api_base: String,
     pub source: String,
     pub user_agent: String,
     pub min_refresh_interval: Duration,
@@ -63,16 +67,25 @@ pub struct RelaySessionConfig {
     /// seconds of wall clock per scenario; production callers should
     /// leave it at the default unless they have a reason.
     pub refresh_fraction: f64,
+    /// Sleep performed at the end of `login()` to let the relay
+    /// servers stabilize before subsequent traffic. From sauce's
+    /// `zwift.mjs:1651`:
+    ///
+    /// > "No joke this is required (100ms works about 50% of the time)"
+    ///
+    /// Production default 1 s. Tests against a wiremock can safely
+    /// set this to `Duration::ZERO`.
+    pub post_login_settle: Duration,
 }
 
 impl Default for RelaySessionConfig {
     fn default() -> Self {
         Self {
-            api_base: format!("https://{DEFAULT_RELAY_HOST}"),
             source: DEFAULT_SOURCE.to_string(),
             user_agent: DEFAULT_USER_AGENT.to_string(),
             min_refresh_interval: MIN_REFRESH_INTERVAL,
             refresh_fraction: SESSION_REFRESH_FRACTION,
+            post_login_settle: Duration::from_secs(1),
         }
     }
 }
@@ -118,66 +131,247 @@ pub type Result<T> = std::result::Result<T, Error>;
 // --- single-shot async functions ----------------------------------
 
 /// Generate a fresh AES key, POST `LoginRequest` to the relay host,
-/// decode the response into a `RelaySession`. Includes the sauce
-/// `await sleep(1000)` after login (spec §4.1; see STEP-09 plan
-/// "Open verification points" §4).
+/// decode the response into a `RelaySession`. Honors
+/// `config.post_login_settle` after the response is parsed (spec §4.1;
+/// see STEP-09 plan "Open verification points" §4).
 pub async fn login(
-    _auth: &zwift_api::ZwiftAuth,
-    _config: &RelaySessionConfig,
+    auth: &zwift_api::ZwiftAuth,
+    config: &RelaySessionConfig,
 ) -> Result<RelaySession> {
-    unimplemented!("STEP-09: relay login (16-byte AES key + LoginRequest POST + LoginResponse decode)")
+    let mut aes_key = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut aes_key);
+
+    let req = LoginRequest {
+        properties: None,
+        key: aes_key.to_vec(),
+    };
+    let body = req.encode_to_vec();
+
+    let resp = auth.post(LOGIN_PATH, PROTOBUF_CONTENT_TYPE, body).await?;
+    let status = resp.status();
+    let bytes = resp.bytes().await?;
+    if !status.is_success() {
+        return Err(Error::Status {
+            status: status.as_u16(),
+            body: String::from_utf8_lossy(&bytes).to_string(),
+        });
+    }
+    let parsed = LoginResponse::decode(bytes.as_ref())?;
+    let relay_id = parsed
+        .relay_session_id
+        .ok_or(Error::MissingField("relay_session_id"))?;
+    let expiration_min = parsed.expiration.ok_or(Error::MissingField("expiration"))?;
+    let server_time_ms = parsed.info.time;
+
+    let tcp_servers: Vec<TcpServer> = parsed
+        .info
+        .nodes
+        .map(|cfg| cfg.nodes)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|n| n.lb_realm.unwrap_or(0) == 0 && n.lb_course.unwrap_or(0) == 0)
+        .filter_map(|n| {
+            Some(TcpServer {
+                ip: n.ip?,
+                port: u16::try_from(n.port?).ok()?,
+            })
+        })
+        .collect();
+
+    if !config.post_login_settle.is_zero() {
+        // sauce4zwift `zwift.mjs:1651`:
+        //   "No joke this is required (100ms works about 50% of the time)"
+        // Configurable so tests against a wiremock pay no settle cost.
+        tokio::time::sleep(config.post_login_settle).await;
+    }
+
+    Ok(RelaySession {
+        aes_key,
+        relay_id,
+        tcp_servers,
+        expires_at: Instant::now() + Duration::from_secs(u64::from(expiration_min) * 60),
+        server_time_ms,
+    })
 }
 
 /// POST `RelaySessionRefreshRequest { relay_session_id: relay_id }` to
 /// the relay host. Returns the new `expiration` (minutes) on success.
 pub async fn refresh(
-    _auth: &zwift_api::ZwiftAuth,
+    auth: &zwift_api::ZwiftAuth,
     _config: &RelaySessionConfig,
-    _relay_id: u32,
+    relay_id: u32,
 ) -> Result<u32> {
-    unimplemented!("STEP-09: POST RelaySessionRefreshRequest, decode RelaySessionRefreshResponse")
+    // `RelaySessionRefreshRequest` is missing from the vendored
+    // upstream proto (sauce has it, zoffline/zwift-offline doesn't —
+    // see STEP-09 plan "Open verification points" §1). The body is a
+    // single varint field: tag = (1 << 3) | wire_type_varint(0) = 0x08,
+    // then the varint-encoded relay_session_id.
+    let mut body = Vec::with_capacity(6);
+    prost::encoding::encode_key(1, prost::encoding::WireType::Varint, &mut body);
+    prost::encoding::encode_varint(u64::from(relay_id), &mut body);
+
+    let resp = auth
+        .post(SESSION_REFRESH_PATH, PROTOBUF_CONTENT_TYPE, body)
+        .await?;
+    let status = resp.status();
+    let bytes = resp.bytes().await?;
+    if !status.is_success() {
+        return Err(Error::Status {
+            status: status.as_u16(),
+            body: String::from_utf8_lossy(&bytes).to_string(),
+        });
+    }
+    let parsed = RelaySessionRefreshResponse::decode(bytes.as_ref())?;
+    Ok(parsed.expiration)
 }
 
 // --- supervisor ---------------------------------------------------
 
-/// Owns the periodic refresh task. Cheap to clone? No — clients use
+/// Owns the periodic refresh task. Not `Clone` — clients use
 /// `current()` (snapshot) + `events()` (broadcast subscription).
 pub struct RelaySessionSupervisor {
-    #[allow(dead_code)]
     inner: Arc<SupervisorInner>,
 }
 
-#[allow(dead_code)]
 struct SupervisorInner {
     auth: zwift_api::ZwiftAuth,
     config: RelaySessionConfig,
     current: RwLock<Arc<RelaySession>>,
     events_tx: broadcast::Sender<SessionEvent>,
+    refresh_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl RelaySessionSupervisor {
     /// Performs the initial login synchronously, then spawns a
-    /// background task that drives subsequent refreshes.
+    /// background task that drives subsequent refreshes. The initial
+    /// `LoggedIn` event fires on the spawned task (after `start`
+    /// returns) so that callers have a chance to subscribe via
+    /// [`Self::events`] before it lands.
     pub async fn start(
-        _auth: zwift_api::ZwiftAuth,
-        _config: RelaySessionConfig,
+        auth: zwift_api::ZwiftAuth,
+        config: RelaySessionConfig,
     ) -> Result<Self> {
-        unimplemented!("STEP-09: initial login + spawn refresh-supervisor task")
+        let session = login(&auth, &config).await?;
+        let (events_tx, _) = broadcast::channel(64);
+        let inner = Arc::new(SupervisorInner {
+            auth,
+            config,
+            current: RwLock::new(Arc::new(session)),
+            events_tx,
+            refresh_task: Mutex::new(None),
+        });
+
+        let inner_for_task = inner.clone();
+        let handle = tokio::spawn(async move {
+            // Emit the initial LoggedIn from the spawned task. On a
+            // current-thread runtime (which is what `#[tokio::test]`
+            // gives us), this guarantees `start()` has returned and
+            // the test has had its turn to subscribe via `events()`
+            // before the event lands.
+            let snapshot: RelaySession = {
+                let arc = inner_for_task.current.read().await.clone();
+                (*arc).clone()
+            };
+            let _ = inner_for_task
+                .events_tx
+                .send(SessionEvent::LoggedIn(snapshot));
+            refresh_loop(inner_for_task).await;
+        });
+        *inner.refresh_task.lock().expect("refresh_task mutex") = Some(handle);
+
+        Ok(Self { inner })
     }
 
     /// Snapshot of the currently-active session.
     pub async fn current(&self) -> RelaySession {
-        unimplemented!("STEP-09: clone the inner session via RwLock<Arc<RelaySession>>")
+        let arc = self.inner.current.read().await.clone();
+        (*arc).clone()
     }
 
-    /// Subscribe to lifecycle events.
+    /// Subscribe to lifecycle events. Subscribers attached after a
+    /// transition fires miss it; tests should subscribe before the
+    /// event of interest is expected.
     pub fn events(&self) -> broadcast::Receiver<SessionEvent> {
-        unimplemented!("STEP-09: broadcast::Sender::subscribe")
+        self.inner.events_tx.subscribe()
     }
 
     /// Cancels the background refresh task. The current snapshot
     /// remains readable until the supervisor is dropped.
     pub fn shutdown(&self) {
-        unimplemented!("STEP-09: abort the refresh task")
+        if let Some(handle) = self
+            .inner
+            .refresh_task
+            .lock()
+            .expect("refresh_task mutex")
+            .take()
+        {
+            handle.abort();
+        }
+    }
+}
+
+async fn refresh_loop(inner: Arc<SupervisorInner>) {
+    let mut attempt: u32 = 0;
+    loop {
+        // Compute the next refresh deadline from the current session.
+        let session_arc = inner.current.read().await.clone();
+        let now = Instant::now();
+        let remaining = session_arc.expires_at.saturating_duration_since(now);
+        let scheduled =
+            Duration::from_secs_f64(remaining.as_secs_f64() * inner.config.refresh_fraction);
+        let delay = scheduled.max(inner.config.min_refresh_interval);
+        tokio::time::sleep(delay).await;
+
+        match refresh(&inner.auth, &inner.config, session_arc.relay_id).await {
+            Ok(new_expiration_min) => {
+                let new_expires_at =
+                    Instant::now() + Duration::from_secs(u64::from(new_expiration_min) * 60);
+                let next = RelaySession {
+                    expires_at: new_expires_at,
+                    ..(*session_arc).clone()
+                };
+                let relay_id = next.relay_id;
+                *inner.current.write().await = Arc::new(next);
+                let _ = inner.events_tx.send(SessionEvent::Refreshed {
+                    relay_id,
+                    new_expires_at,
+                });
+                attempt = 0;
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "relay session refresh failed; falling back to re-login");
+                let _ = inner
+                    .events_tx
+                    .send(SessionEvent::RefreshFailed(e.to_string()));
+            }
+        }
+
+        // Refresh failed — fall back to a full re-login, with
+        // exponential backoff on consecutive failures.
+        loop {
+            match login(&inner.auth, &inner.config).await {
+                Ok(new_session) => {
+                    *inner.current.write().await = Arc::new(new_session.clone());
+                    let _ = inner.events_tx.send(SessionEvent::LoggedIn(new_session));
+                    attempt = 0;
+                    break;
+                }
+                Err(e) => {
+                    attempt += 1;
+                    tracing::error!(attempt, error = %e, "relay session re-login failed");
+                    let _ = inner.events_tx.send(SessionEvent::LoginFailed {
+                        attempt,
+                        error: e.to_string(),
+                    });
+                    // Exponential backoff capped to keep the supervisor
+                    // responsive after long outages. Cap exponent at 10
+                    // to avoid runaway sleeps.
+                    let shift = attempt.min(10);
+                    let backoff = inner.config.min_refresh_interval * (1u32 << shift);
+                    tokio::time::sleep(backoff).await;
+                }
+            }
+        }
     }
 }

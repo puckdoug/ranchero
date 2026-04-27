@@ -38,11 +38,14 @@ fn auth_config_for(server: &MockServer) -> AuthConfig {
     }
 }
 
-fn relay_config_for(server: &MockServer) -> RelaySessionConfig {
+fn relay_config_for(_server: &MockServer) -> RelaySessionConfig {
+    // The relay host comes from the `ZwiftAuth` config (which the
+    // `auth_config_for` helper points at the same wiremock); the
+    // session config no longer carries `api_base`. We zero the
+    // post-login settle so login tests don't pay 1 s of wall clock
+    // per scenario.
     RelaySessionConfig {
-        api_base: server.uri(),
-        // refresh_fraction left at default (0.9); supervisor tests
-        // override it to keep wall-clock test cost low.
+        post_login_settle: Duration::ZERO,
         ..RelaySessionConfig::default()
     }
 }
@@ -369,18 +372,18 @@ async fn refresh_returns_new_expiration_minutes() {
 
 // --- supervisor helpers --------------------------------------------
 
-fn fast_relay_config_for(server: &MockServer) -> RelaySessionConfig {
+fn fast_relay_config_for(_server: &MockServer) -> RelaySessionConfig {
     // Tighten the refresh schedule so supervisor tests don't pay 54 s
     // of wall clock per scenario. With expiration = 1 minute (60 s)
     // and refresh_fraction = 0.05, the next refresh fires at 3 s —
     // tolerable in CI without the multi-thread + paused-time
-    // gymnastics that STEP 07 §20.1 ran into.
+    // gymnastics STEP 07 §20.1 ran into.
     RelaySessionConfig {
-        api_base: server.uri(),
         source: DEFAULT_SOURCE.to_string(),
         user_agent: DEFAULT_USER_AGENT.to_string(),
         min_refresh_interval: Duration::from_millis(50),
         refresh_fraction: 0.05,
+        post_login_settle: Duration::ZERO,
     }
 }
 

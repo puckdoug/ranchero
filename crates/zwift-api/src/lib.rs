@@ -227,11 +227,41 @@ impl ZwiftAuth {
     /// `/api/users/login` and `/relay/session/refresh`.
     pub async fn post(
         &self,
-        _urn: &str,
-        _content_type: &str,
-        _body: Vec<u8>,
+        urn: &str,
+        content_type: &str,
+        body: Vec<u8>,
     ) -> Result<reqwest::Response> {
-        unimplemented!("STEP-09: POST with body + auth/Source/User-Agent + 401-retry")
+        let url = format!("{}{}", self.inner.config.api_base, urn);
+        let bearer = self.bearer().await?;
+        let resp = self
+            .inner
+            .http
+            .post(&url)
+            .bearer_auth(&bearer)
+            .header("Source", &self.inner.config.source)
+            .header("User-Agent", &self.inner.config.user_agent)
+            .header("Content-Type", content_type)
+            .body(body.clone())
+            .send()
+            .await?;
+        if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(resp);
+        }
+        drop(resp);
+        self.refresh().await?;
+        let bearer = self.bearer().await?;
+        let retry = self
+            .inner
+            .http
+            .post(&url)
+            .bearer_auth(&bearer)
+            .header("Source", &self.inner.config.source)
+            .header("User-Agent", &self.inner.config.user_agent)
+            .header("Content-Type", content_type)
+            .body(body)
+            .send()
+            .await?;
+        Ok(retry)
     }
 
     /// Issue a GET against the API host with `Authorization: Bearer …`,
