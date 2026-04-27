@@ -19,7 +19,7 @@ mod iv;
 pub use consts::{
     ChannelType, DeviceType, IV_LEN, KEY_LEN, TAG_LEN, TCP_VERSION, UDP_VERSION,
 };
-pub use crypto::{Aes128Gcm4, decrypt, encrypt};
+pub use crypto::{decrypt, encrypt};
 pub use frame::{
     TcpPlain, UdpPlain, frame_tcp, next_tcp_frame, parse_tcp_plaintext, parse_udp_plaintext,
     tcp_plaintext, udp_plaintext,

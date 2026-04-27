@@ -37,12 +37,75 @@ impl Header {
     /// Encode `flags` byte then the present fields in order
     /// `relay_id` (BE u32) → `conn_id` (BE u16) → `seqno` (BE u32).
     pub fn encode(&self) -> Vec<u8> {
-        unimplemented!("STEP-08: encode flags + present fields per zwift.mjs:1112-1135")
+        let mut out = Vec::with_capacity(11);
+        out.push(self.flags.bits());
+        if self.flags.contains(HeaderFlags::RELAY_ID) {
+            out.extend_from_slice(&self.relay_id.unwrap_or(0).to_be_bytes());
+        }
+        if self.flags.contains(HeaderFlags::CONN_ID) {
+            out.extend_from_slice(&self.conn_id.unwrap_or(0).to_be_bytes());
+        }
+        if self.flags.contains(HeaderFlags::SEQNO) {
+            out.extend_from_slice(&self.seqno.unwrap_or(0).to_be_bytes());
+        }
+        out
     }
 }
 
 /// Parse a header from the front of `bytes`. Returns the structured
 /// header plus how many bytes it consumed (the AAD length).
-pub fn decode_header(_bytes: &[u8]) -> Result<ParsedHeader, CodecError> {
-    unimplemented!("STEP-08: decode flags + walk fields per zwift.mjs:1071-1090")
+pub fn decode_header(bytes: &[u8]) -> Result<ParsedHeader, CodecError> {
+    if bytes.is_empty() {
+        return Err(CodecError::TooShort {
+            needed: 1,
+            got: 0,
+        });
+    }
+    let flag_byte = bytes[0];
+    // `from_bits` returns None if any unknown bit is set; surface the
+    // raw value so callers can see what they got.
+    let flags = HeaderFlags::from_bits(flag_byte).ok_or(CodecError::UnknownFlagBits(flag_byte))?;
+
+    let mut offset = 1usize;
+    let mut header = Header {
+        flags,
+        relay_id: None,
+        conn_id: None,
+        seqno: None,
+    };
+
+    fn need(bytes: &[u8], end: usize) -> Result<(), CodecError> {
+        if end > bytes.len() {
+            Err(CodecError::TooShort {
+                needed: end,
+                got: bytes.len(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    if flags.contains(HeaderFlags::RELAY_ID) {
+        let end = offset + 4;
+        need(bytes, end)?;
+        header.relay_id = Some(u32::from_be_bytes(bytes[offset..end].try_into().unwrap()));
+        offset = end;
+    }
+    if flags.contains(HeaderFlags::CONN_ID) {
+        let end = offset + 2;
+        need(bytes, end)?;
+        header.conn_id = Some(u16::from_be_bytes(bytes[offset..end].try_into().unwrap()));
+        offset = end;
+    }
+    if flags.contains(HeaderFlags::SEQNO) {
+        let end = offset + 4;
+        need(bytes, end)?;
+        header.seqno = Some(u32::from_be_bytes(bytes[offset..end].try_into().unwrap()));
+        offset = end;
+    }
+
+    Ok(ParsedHeader {
+        header,
+        consumed: offset,
+    })
 }

@@ -25,6 +25,11 @@ impl RelayIv {
     /// offset 8-11: seqno   BE u32
     /// ```
     pub fn to_bytes(&self) -> [u8; IV_LEN] {
-        unimplemented!("STEP-08: build the 12-byte GCM IV per spec §7.4 / zwift.mjs:1019")
+        let mut out = [0u8; IV_LEN];
+        out[2..4].copy_from_slice(&(self.device as u16).to_be_bytes());
+        out[4..6].copy_from_slice(&(self.channel as u16).to_be_bytes());
+        out[6..8].copy_from_slice(&self.conn_id.to_be_bytes());
+        out[8..12].copy_from_slice(&self.seqno.to_be_bytes());
+        out
     }
 }

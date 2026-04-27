@@ -6,10 +6,15 @@ license = "AGPL-3.0-only"
 description = "Pure no-I/O codec for the Zwift relay protocol (AES-128-GCM-4, RelayIV, header, TCP/UDP framing)."
 
 [dependencies]
-aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+# `aes-gcm` 0.10 caps tag size at 12-16 bytes (RFC 5288). Zwift uses
+# 4-byte tags (`authTagLength: 4` in Node), so we compose GCM ourselves
+# from the audited `aes` + `ghash` primitives. `subtle` gives us the
+# constant-time tag comparison.
+aes = { version = "0.8", default-features = false }
 bitflags = "2"
+ghash = { version = "0.5", default-features = false }
+subtle = { version = "2", default-features = false }
 thiserror = "1"
-typenum = "1"
 
 [dev-dependencies]
 hex-literal = "0.4"
