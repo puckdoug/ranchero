@@ -32,6 +32,35 @@ pub const SESSION_REFRESH_FRACTION: f64 = 0.90;
 /// repeated failures). Spec §7.4.
 pub const MIN_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3);
 
+// --- UDP channel + time sync (STEP 10) ------------------------------
+
+/// Zwift's "world time" epoch, in milliseconds since Unix epoch
+/// (≈ 2014-10-22 19:34:34 UTC). All `worldTime` proto fields are
+/// milliseconds since this point. Spec §4.3 / `zwift.mjs:92`.
+pub const ZWIFT_EPOCH_MS: i64 = 1_414_016_074_400;
+
+/// UDP port the secure (AES-GCM-encrypted) telemetry channel uses.
+/// Spec §7.4.
+pub const UDP_PORT_SECURE: u16 = 3024;
+
+/// UDP port the plaintext telemetry channel would use. Not used by
+/// this client. Listed for symmetry with [`UDP_PORT_SECURE`].
+pub const UDP_PORT_PLAIN: u16 = 3022;
+
+/// Inbound-silence watchdog timeout. After this much quiet on the
+/// recv side, the channel emits a `Timeout` event so a supervisor
+/// (STEP 12) can decide to reconnect. Spec §7.4 (`CHANNEL_TIMEOUT`).
+pub const CHANNEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Hard cap on hello-loop attempts before declaring sync failure.
+/// Matches `zwift.mjs:1378`.
+pub const MAX_HELLOS: u32 = 25;
+
+/// Minimum SNTP-style samples required before the time-sync filter
+/// will *attempt* convergence. Matches sauce's `> 5` threshold at
+/// `zwift.mjs:1359` (collected count must exceed this value).
+pub const MIN_SYNC_SAMPLES: usize = 5;
+
 /// Plaintext envelope version byte for TCP. Followed by a `hello?0:1`
 /// byte and then the `ClientToServer` proto bytes.
 pub const TCP_VERSION: u8 = 2;
