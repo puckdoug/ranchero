@@ -1,0 +1,17 @@
+[package]
+name = "zwift-relay"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Pure no-I/O codec for the Zwift relay protocol (AES-128-GCM-4, RelayIV, header, TCP/UDP framing)."
+
+[dependencies]
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+bitflags = "2"
+thiserror = "1"
+typenum = "1"
+
+[dev-dependencies]
+hex-literal = "0.4"
+prost = "0.13"
+zwift-proto = { path = "../zwift-proto" }
