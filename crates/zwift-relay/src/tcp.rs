@@ -3,18 +3,22 @@
 // TCP channel — secure, length-framed AES-128-GCM-4 stream over
 // `TcpStream` to the chosen relay server's port 3025. Mirrors
 // `class TCPChannel` (`zwift.mjs:1201-1306`).
-//
-// Public API documented in `docs/plans/STEP-11-tcp-channel.md`.
-// This file currently exposes the surface as stubs so
-// `tests/tcp.rs` compiles. Implementation lands in green state.
 
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use tokio::sync::broadcast;
+use prost::Message as _;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::{Mutex, Notify, broadcast};
+use tokio::task::JoinHandle;
 
 use crate::CodecError;
 use crate::consts::CHANNEL_TIMEOUT;
+use crate::frame::{frame_tcp, next_tcp_frame, tcp_plaintext};
+use crate::header::{Header, HeaderFlags, decode_header};
+use crate::iv::RelayIv;
 use crate::session::RelaySession;
+use crate::{ChannelType, DeviceType, decrypt, encrypt};
 
 // --- TCP transport abstraction -------------------------------------
 
@@ -34,34 +38,55 @@ pub trait TcpTransport: Send + Sync + 'static {
     fn read_chunk(&self) -> impl std::future::Future<Output = std::io::Result<Vec<u8>>> + Send;
 }
 
-/// Production [`TcpTransport`]. Wraps a `tokio::net::TcpStream`.
+/// Production [`TcpTransport`]. Wraps a `tokio::net::TcpStream` split
+/// into owned read / write halves so concurrent read + write don't
+/// contend on a single mutex.
 pub struct TokioTcpTransport {
-    #[allow(dead_code)]
-    stream: tokio::net::TcpStream,
+    read_half: Mutex<tokio::net::tcp::OwnedReadHalf>,
+    write_half: Mutex<tokio::net::tcp::OwnedWriteHalf>,
 }
 
 impl TokioTcpTransport {
-    /// Connect to `addr` with `connect_timeout`. **Does not** call
-    /// `set_keepalive(true)` — the spec §7.12 footgun comes from a
-    /// Node-specific bug; in our case the application-level 1 Hz
-    /// `ClientToServer` heartbeat (UDP, supervisor-driven) is the
-    /// liveness signal. Tokio defaults keepalive to off; this
-    /// non-action is deliberate.
+    /// Connect to `addr` with `connect_timeout`. The 1 Hz UDP
+    /// `ClientToServer` heartbeat (supervisor-driven, STEP 12) is
+    /// the application-level liveness signal — we deliberately do
+    /// **not** call `set_keepalive(true)`. Tokio defaults keepalive
+    /// to off; the silence here is intentional. (Spec §7.12 footgun
+    /// is Node-specific but worth honoring on the Rust side too:
+    /// the heartbeat is what the server expects.)
     pub async fn connect(
-        _addr: std::net::SocketAddr,
-        _connect_timeout: Duration,
+        addr: std::net::SocketAddr,
+        connect_timeout: Duration,
     ) -> std::io::Result<Self> {
-        unimplemented!("STEP-11: TcpStream::connect wrapped in tokio::time::timeout")
+        let stream = tokio::time::timeout(connect_timeout, tokio::net::TcpStream::connect(addr))
+            .await
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "TCP connect timeout"))??;
+        let (r, w) = stream.into_split();
+        Ok(Self {
+            read_half: Mutex::new(r),
+            write_half: Mutex::new(w),
+        })
     }
 }
 
 impl TcpTransport for TokioTcpTransport {
-    async fn write_all(&self, _bytes: &[u8]) -> std::io::Result<()> {
-        unimplemented!("STEP-11: AsyncWriteExt::write_all on the stream")
+    async fn write_all(&self, bytes: &[u8]) -> std::io::Result<()> {
+        let mut w = self.write_half.lock().await;
+        w.write_all(bytes).await
     }
 
     async fn read_chunk(&self) -> std::io::Result<Vec<u8>> {
-        unimplemented!("STEP-11: read into a 64 KiB buffer + truncate")
+        let mut buf = vec![0u8; 65_536];
+        let mut r = self.read_half.lock().await;
+        let n = r.read(&mut buf).await?;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "TCP peer closed",
+            ));
+        }
+        buf.truncate(n);
+        Ok(buf)
     }
 }
 
@@ -108,8 +133,19 @@ pub enum Error {
     BadRelayId { expected: u32, got: u32 },
 }
 
+struct SendState {
+    iv_seqno: u32,
+}
+
 pub struct TcpChannel<T: TcpTransport> {
-    _phantom: std::marker::PhantomData<T>,
+    events_tx: broadcast::Sender<TcpChannelEvent>,
+    shutdown_notify: Arc<Notify>,
+    recv_handle: StdMutex<Option<JoinHandle<()>>>,
+    transport: Arc<T>,
+    send_state: Arc<StdMutex<SendState>>,
+    aes_key: [u8; 16],
+    conn_id: u16,
+    relay_id: u32,
 }
 
 impl<T: TcpTransport> TcpChannel<T> {
@@ -119,31 +155,231 @@ impl<T: TcpTransport> TcpChannel<T> {
     /// supervisor-tracked fields like
     /// `largestWorldAttributeTimestamp`.
     pub async fn establish(
-        _transport: T,
-        _session: &RelaySession,
-        _config: TcpChannelConfig,
+        transport: T,
+        session: &RelaySession,
+        config: TcpChannelConfig,
     ) -> Result<(Self, broadcast::Receiver<TcpChannelEvent>), Error> {
-        unimplemented!("STEP-11: spawn recv loop, emit Established as first event")
+        let transport = Arc::new(transport);
+        let (events_tx, events_rx) = broadcast::channel::<TcpChannelEvent>(64);
+        let shutdown_notify = Arc::new(Notify::new());
+        let send_state = Arc::new(StdMutex::new(SendState { iv_seqno: 0 }));
+
+        let transport_for_recv = transport.clone();
+        let events_tx_for_recv = events_tx.clone();
+        let shutdown_for_recv = shutdown_notify.clone();
+        let aes_key = session.aes_key;
+        let relay_id = session.relay_id;
+        let conn_id = config.conn_id;
+        let watchdog_timeout = config.watchdog_timeout;
+
+        let handle = tokio::spawn(async move {
+            // Emit Established from the spawned task so subscribers
+            // attached after `establish()` returns still see it (same
+            // trick STEPs 09 / 10 use).
+            let _ = events_tx_for_recv.send(TcpChannelEvent::Established);
+            recv_loop(
+                transport_for_recv,
+                events_tx_for_recv,
+                shutdown_for_recv,
+                aes_key,
+                relay_id,
+                conn_id,
+                watchdog_timeout,
+            )
+            .await;
+        });
+
+        Ok((
+            Self {
+                events_tx,
+                shutdown_notify,
+                recv_handle: StdMutex::new(Some(handle)),
+                transport,
+                send_state,
+                aes_key,
+                conn_id,
+                relay_id: session.relay_id,
+            },
+            events_rx,
+        ))
     }
 
-    /// Send one `ClientToServer` payload. `hello` controls:
-    /// - **header flags**: `RELAY_ID | CONN_ID | SEQNO` vs `SEQNO` only
-    /// - **plaintext envelope hello byte**: `[2, 0, …]` vs `[2, 1, …]`
+    /// Send one `ClientToServer` payload. `hello` controls the header
+    /// flags (`RELAY_ID|CONN_ID|SEQNO` vs `SEQNO` only) and the
+    /// plaintext envelope hello byte (`[2,0,…]` vs `[2,1,…]`).
     pub async fn send_packet(
         &self,
-        _payload: zwift_proto::ClientToServer,
-        _hello: bool,
+        payload: zwift_proto::ClientToServer,
+        hello: bool,
     ) -> Result<(), Error> {
-        unimplemented!("STEP-11: build header + envelope + encrypt + frame_tcp + write_all")
+        let (header_bytes, ciphertext) = {
+            let mut send = self.send_state.lock().expect("send_state mutex");
+
+            let proto_bytes = payload.encode_to_vec();
+            let plaintext = tcp_plaintext(&proto_bytes, hello);
+
+            let header = if hello {
+                Header {
+                    flags: HeaderFlags::RELAY_ID | HeaderFlags::CONN_ID | HeaderFlags::SEQNO,
+                    relay_id: Some(self.relay_id),
+                    conn_id: Some(self.conn_id),
+                    seqno: Some(send.iv_seqno),
+                }
+            } else {
+                Header {
+                    flags: HeaderFlags::SEQNO,
+                    relay_id: None,
+                    conn_id: None,
+                    seqno: Some(send.iv_seqno),
+                }
+            };
+            let header_bytes = header.encode();
+            let iv = RelayIv {
+                device: DeviceType::Relay,
+                channel: ChannelType::TcpClient,
+                conn_id: self.conn_id,
+                seqno: send.iv_seqno,
+            };
+            let ciphertext = encrypt(&self.aes_key, &iv.to_bytes(), &header_bytes, &plaintext);
+
+            send.iv_seqno = send.iv_seqno.wrapping_add(1);
+            // app_seqno is supervisor-supplied via `payload.seqno` —
+            // the channel does not override it. (Open verification
+            // point §2 in the plan: sauce auto-increments. Picked
+            // caller-owns here for simplicity; revisit if compat
+            // testing surfaces an issue.)
+            (header_bytes, ciphertext)
+        };
+
+        let wire = frame_tcp(&header_bytes, &ciphertext);
+        self.transport.write_all(&wire).await?;
+        Ok(())
     }
 
-    /// Subscribe an additional event consumer.
     pub fn subscribe(&self) -> broadcast::Receiver<TcpChannelEvent> {
-        unimplemented!("STEP-11: events_tx.subscribe()")
+        self.events_tx.subscribe()
     }
 
-    /// Cancel the recv loop / watchdog and emit `Shutdown`.
+    /// Cancel the recv loop / watchdog. Notifies the recv task,
+    /// which emits `TcpChannelEvent::Shutdown` and exits cleanly.
     pub fn shutdown(&self) {
-        unimplemented!("STEP-11: notify_one + drop recv handle")
+        self.shutdown_notify.notify_one();
+        let _ = self.recv_handle.lock().expect("recv_handle mutex").take();
+    }
+}
+
+// --- internals -----------------------------------------------------
+
+/// Decode header → validate relay_id → update recv IV state →
+/// decrypt → decode `ServerToClient`. Inbound TCP plaintext is just
+/// the proto bytes (no `[2, hello?, …]` envelope), per
+/// `zwift.mjs:1285-1286`.
+fn process_inbound(
+    bytes: &[u8],
+    aes_key: &[u8; 16],
+    expected_relay_id: u32,
+    recv_iv_conn_id: &mut u16,
+    recv_iv_seqno: &mut u32,
+) -> Result<zwift_proto::ServerToClient, Error> {
+    let parsed = decode_header(bytes)?;
+    let aad = &bytes[..parsed.consumed];
+    let cipher = &bytes[parsed.consumed..];
+
+    if let Some(rid) = parsed.header.relay_id {
+        if rid != expected_relay_id {
+            return Err(Error::BadRelayId {
+                expected: expected_relay_id,
+                got: rid,
+            });
+        }
+    }
+    if let Some(cid) = parsed.header.conn_id {
+        *recv_iv_conn_id = cid;
+    }
+    if let Some(sno) = parsed.header.seqno {
+        *recv_iv_seqno = sno;
+    }
+
+    let iv = RelayIv {
+        device: DeviceType::Relay,
+        channel: ChannelType::TcpServer,
+        conn_id: *recv_iv_conn_id,
+        seqno: *recv_iv_seqno,
+    };
+    let plaintext = decrypt(aes_key, &iv.to_bytes(), aad, cipher)?;
+    let stc = zwift_proto::ServerToClient::decode(plaintext.as_slice())?;
+    *recv_iv_seqno = recv_iv_seqno.wrapping_add(1);
+    Ok(stc)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn recv_loop<T: TcpTransport>(
+    transport: Arc<T>,
+    events_tx: broadcast::Sender<TcpChannelEvent>,
+    shutdown: Arc<Notify>,
+    aes_key: [u8; 16],
+    relay_id: u32,
+    conn_id_init: u16,
+    watchdog_timeout: Duration,
+) {
+    let mut buffer: Vec<u8> = Vec::with_capacity(4096);
+    let mut recv_iv_conn_id: u16 = conn_id_init;
+    let mut recv_iv_seqno: u32 = 0;
+
+    'outer: loop {
+        // Wait for either bytes from the transport (with a watchdog)
+        // or a shutdown notification.
+        tokio::select! {
+            biased;
+            _ = shutdown.notified() => {
+                let _ = events_tx.send(TcpChannelEvent::Shutdown);
+                return;
+            }
+            result = tokio::time::timeout(watchdog_timeout, transport.read_chunk()) => {
+                match result {
+                    Ok(Ok(chunk)) => buffer.extend_from_slice(&chunk),
+                    Ok(Err(io_err)) => {
+                        let _ = events_tx.send(TcpChannelEvent::RecvError(io_err.to_string()));
+                        let _ = events_tx.send(TcpChannelEvent::Shutdown);
+                        return;
+                    }
+                    Err(_elapsed) => {
+                        let _ = events_tx.send(TcpChannelEvent::Timeout);
+                        continue 'outer;
+                    }
+                }
+            }
+        }
+
+        // Drain every complete frame currently in the buffer.
+        loop {
+            match next_tcp_frame(&buffer) {
+                Ok(Some((payload, consumed))) => {
+                    // Copy the payload before draining: the slice is
+                    // borrowed from `buffer` and `drain` invalidates it.
+                    let payload_owned = payload.to_vec();
+                    buffer.drain(..consumed);
+                    match process_inbound(
+                        &payload_owned,
+                        &aes_key,
+                        relay_id,
+                        &mut recv_iv_conn_id,
+                        &mut recv_iv_seqno,
+                    ) {
+                        Ok(stc) => {
+                            let _ = events_tx.send(TcpChannelEvent::Inbound(stc));
+                        }
+                        Err(e) => {
+                            let _ = events_tx.send(TcpChannelEvent::RecvError(e.to_string()));
+                        }
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    let _ = events_tx.send(TcpChannelEvent::RecvError(e.to_string()));
+                    break;
+                }
+            }
+        }
     }
 }

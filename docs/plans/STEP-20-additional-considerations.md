@@ -64,6 +64,38 @@ suite slowdown — say >5 s aggregate — it's worth revisiting. Options:
 ~5 s, or (b) a flake appears tied to scheduling jitter on CI. Until
 then, status quo.
 
+### 20.2 — Shared inbound-decode helper between UDP and TCP channels (from STEP 11)
+
+**Where it came from.** STEP 11's plan recommended extracting
+`process_inbound` (header decode → relay_id validation → IV state
+mutation → AES-128-GCM-4 decrypt → `ServerToClient::decode`) into
+a private module shared by `udp.rs` and `tcp.rs`. The two copies of
+the function differ only in one constant — `ChannelType::UdpServer`
+vs `ChannelType::TcpServer` in the IV construction.
+
+**Current resolution.** Did not extract. Two near-identical copies
+of `process_inbound` live in `crates/zwift-relay/src/udp.rs` and
+`crates/zwift-relay/src/tcp.rs`. A shared helper parameterized on
+channel type would add one indirection (passing the channel type as
+a parameter, or generic) for one line of difference; not worth it
+yet.
+
+**Why this might come back.**
+
+- A third channel type appears (companion-app reverse channel is
+  spec §6 out-of-scope today, but listed there).
+- The two copies start to diverge — e.g. one channel adds inbound
+  envelope handling, error retry, metrics counters, or trace spans
+  the other doesn't need. At that point either the divergence is
+  real and the helper would have hidden it, or the divergence is a
+  bug introduced by editing one copy and forgetting the other.
+- A reviewer flags the duplication as a smell.
+
+**Decision rule.** Extract when (a) the two copies have diverged
+beyond the `ChannelType` constant in a way that would have been
+caught by a shared helper, or (b) a third channel type lands. Until
+then, the duplication is the cheaper choice.
+
 ---
 
 ## How to use this file
