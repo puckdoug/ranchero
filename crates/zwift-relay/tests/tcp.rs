@@ -88,6 +88,7 @@ fn test_config() -> TcpChannelConfig {
         athlete_id: TEST_ATHLETE_ID,
         conn_id: TEST_CONN_ID,
         watchdog_timeout: Duration::from_millis(200),
+        ..Default::default()
     }
 }
 
@@ -529,4 +530,117 @@ async fn shutdown_stops_recv_loop_and_emits_shutdown_event() {
 fn tcp_channel_event_is_clone_for_broadcast() {
     fn assert_clone<T: Clone>() {}
     assert_clone::<TcpChannelEvent>();
+}
+
+// --- capture tap (STEP 11.5) ---------------------------------------
+
+#[tokio::test]
+async fn tcp_channel_with_capture_records_inbound_packets() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path())
+        .await
+        .expect("capture writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, handle) = MockTcpTransport::new();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+
+    let (channel, mut events) = TcpChannel::establish(transport, &test_session(), config)
+        .await
+        .expect("establish");
+    let _ = events.recv().await.expect("Established");
+
+    // Push three frames.
+    for ack in 1..=3u32 {
+        let frame = build_inbound_tcp(ack - 1, &test_stc(ack as i32));
+        handle.inbound_sender.send(frame).expect("inject");
+    }
+
+    // Drain the three Inbound events.
+    for _ in 0..3 {
+        let _ = tokio::time::timeout(Duration::from_millis(500), events.recv())
+            .await
+            .expect("event")
+            .expect("event");
+    }
+
+    channel.shutdown();
+    drop(channel);
+
+    let writer = std::sync::Arc::try_unwrap(writer)
+        .expect("only the test owns the writer once the channel drops it");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let inbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Inbound && r.transport == TransportKind::Tcp)
+        .collect();
+    assert!(
+        inbound.len() >= 3,
+        "expected at least 3 inbound TCP captures, got {}",
+        inbound.len(),
+    );
+}
+
+#[tokio::test]
+async fn tcp_channel_with_capture_records_outbound_packets_with_hello_flag() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path())
+        .await
+        .expect("capture writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, mut handle) = MockTcpTransport::new();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+
+    let (channel, _events) = TcpChannel::establish(transport, &test_session(), config)
+        .await
+        .expect("establish");
+
+    // Send one hello + one steady packet.
+    channel
+        .send_packet(test_payload(0), /* hello */ true)
+        .await
+        .expect("send hello");
+    channel
+        .send_packet(test_payload(1), /* hello */ false)
+        .await
+        .expect("send steady");
+
+    // Drain outbound from mock so the channel doesn't block (it
+    // doesn't, but for cleanliness).
+    let _ = handle.outbound_receiver.recv().await;
+    let _ = handle.outbound_receiver.recv().await;
+
+    channel.shutdown();
+    drop(channel);
+
+    let writer = std::sync::Arc::try_unwrap(writer).expect("only test owner");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let outbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Tcp)
+        .collect();
+    assert_eq!(outbound.len(), 2, "expected exactly 2 outbound TCP captures");
+
+    // First was hello=true; the captured payload is proto-only (no
+    // `[2, 0]` envelope) and the `hello` flag round-trips.
+    assert!(outbound[0].hello, "first capture is the hello packet");
+    assert!(!outbound[1].hello, "second capture is steady-state");
+
+    // Both payloads decode as ClientToServer (proves no envelope
+    // bytes were captured).
+    let cts0 = ClientToServer::decode(outbound[0].payload.as_slice()).expect("CTS 0");
+    let cts1 = ClientToServer::decode(outbound[1].payload.as_slice()).expect("CTS 1");
+    assert_eq!(cts0.player_id, TEST_ATHLETE_ID);
+    assert_eq!(cts1.player_id, TEST_ATHLETE_ID);
 }

@@ -10,11 +10,14 @@
 // - UDP channel + time sync (async): `WorldTimer`, `UdpTransport`,
 //   `UdpChannel`. STEP 10; implemented.
 // - TCP channel (async): `TcpTransport`, `TcpChannel`.
-//   STEP 11; currently stubs.
+//   STEP 11; implemented.
+// - Wire capture / replay: `CaptureWriter`, `CaptureReader`.
+//   STEP 11.5; currently stubs.
 //
 // Every public item is re-exported from this file so callers
 // `use zwift_relay::{…}` without navigating internal module paths.
 
+pub mod capture;
 mod consts;
 mod crypto;
 mod frame;

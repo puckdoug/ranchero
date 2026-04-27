@@ -20,7 +20,7 @@ thiserror = "1"
 prost = "0.13"
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng", "getrandom"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-tokio = { version = "1", features = ["sync", "time", "rt", "macros", "net"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros", "net", "fs", "io-util"] }
 tracing = "0.1"
 zwift-api = { path = "../zwift-api" }
 zwift-proto = { path = "../zwift-proto" }
@@ -29,5 +29,6 @@ zwift-proto = { path = "../zwift-proto" }
 hex-literal = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = "3"
 tokio = { version = "1", features = ["sync", "time", "macros", "rt", "rt-multi-thread", "test-util"] }
 wiremock = "0.6"

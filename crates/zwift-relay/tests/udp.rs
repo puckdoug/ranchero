@@ -96,6 +96,7 @@ fn test_config() -> UdpChannelConfig {
         max_hellos: 6,
         min_sync_samples: 5,
         watchdog_timeout: Duration::from_millis(200),
+        ..Default::default()
     }
 }
 
@@ -510,4 +511,122 @@ async fn shutdown_stops_recv_loop_and_emits_shutdown_event() {
 fn channel_event_is_clone_for_broadcast() {
     fn assert_clone<T: Clone>() {}
     assert_clone::<ChannelEvent>();
+}
+
+// --- 13-14. capture tap (STEP 11.5) --------------------------------
+
+#[tokio::test]
+async fn udp_channel_with_capture_records_inbound_packets() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path())
+        .await
+        .expect("capture writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+    let clock = WorldTimer::new();
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, clock, config).await
+    });
+
+    // Drive sync to convergence with 6 replies.
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("seqno");
+        let reply = build_inbound(i, ack, 1_000_000 + i64::from(i) * 100);
+        handle.inbound_sender.send(reply).expect("reply");
+    }
+    let (channel, _events) = task.await.expect("task").expect("converged");
+
+    channel.shutdown();
+    drop(channel);
+
+    // The Arc may still have the recv task holding a ref; close
+    // through the test handle.
+    let writer = std::sync::Arc::try_unwrap(writer)
+        .expect("only the test owns the writer once the channel drops it");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let inbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Inbound && r.transport == TransportKind::Udp)
+        .collect();
+    assert!(
+        inbound.len() >= 6,
+        "expected at least 6 inbound captures (one per reply), got {}",
+        inbound.len(),
+    );
+}
+
+#[tokio::test]
+async fn udp_channel_with_capture_records_outbound_player_state() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path())
+        .await
+        .expect("capture writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+    let clock = WorldTimer::new();
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, clock, config).await
+    });
+
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("seqno");
+        let reply = build_inbound(i, ack, 1_000_000 + i64::from(i) * 100);
+        handle.inbound_sender.send(reply).expect("reply");
+    }
+    let (channel, _events) = task.await.expect("task").expect("converged");
+
+    // Steady-state sends.
+    for power in 100u32..=104 {
+        let state = PlayerState {
+            id: Some(TEST_ATHLETE_ID),
+            power: Some(power as i32),
+            ..Default::default()
+        };
+        channel.send_player_state(state).await.expect("send");
+        // Drain the outbound mock so the channel doesn't block.
+        let _ = handle.outbound_receiver.recv().await;
+    }
+
+    channel.shutdown();
+    drop(channel);
+
+    let writer = std::sync::Arc::try_unwrap(writer).expect("only test owner");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let outbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Udp)
+        .collect();
+    assert!(
+        outbound.len() >= 5,
+        "expected at least 5 outbound captures (steady-state sends), got {}",
+        outbound.len(),
+    );
+    // Captured payload is proto-only — no `[1]` envelope byte.
+    // Decode the last capture as ClientToServer to verify.
+    let last = outbound.last().expect("at least one");
+    let decoded = ClientToServer::decode(last.payload.as_slice()).expect("CTS decode");
+    assert_eq!(decoded.player_id, TEST_ATHLETE_ID);
+    assert_eq!(decoded.state.power, Some(104));
 }

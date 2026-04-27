@@ -51,6 +51,37 @@ fn parses_auth_check_subcommand() {
     assert_eq!(cli.command, Command::AuthCheck);
 }
 
+#[test]
+fn start_with_capture_flag_captures_path() {
+    let cli = parse(&["ranchero", "start", "--capture", "/tmp/x.cap"]);
+    assert_eq!(cli.command, Command::Start);
+    assert_eq!(
+        cli.global.capture.as_deref(),
+        Some(std::path::Path::new("/tmp/x.cap")),
+    );
+}
+
+#[test]
+fn parses_replay_subcommand() {
+    let cli = parse(&["ranchero", "replay", "/tmp/x.cap"]);
+    match cli.command {
+        Command::Replay { ref path, verbose } => {
+            assert_eq!(path, std::path::Path::new("/tmp/x.cap"));
+            assert!(!verbose, "verbose defaults to false");
+        }
+        other => panic!("expected Replay, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_replay_with_verbose() {
+    let cli = parse(&["ranchero", "replay", "/tmp/x.cap", "--verbose"]);
+    match cli.command {
+        Command::Replay { verbose, .. } => assert!(verbose),
+        other => panic!("expected Replay {{ verbose: true }}, got {other:?}"),
+    }
+}
+
 // -- global flag parsing --------------------------------------------------
 
 #[test]
@@ -213,6 +244,12 @@ fn dispatch_stop_stub() {
 fn dispatch_status_stub() {
     let cli = parse(&["ranchero", "status"]);
     assert!(run(cli).contains("status"));
+}
+
+#[test]
+fn dispatch_replay_stub() {
+    let cli = parse(&["ranchero", "replay", "/tmp/x.cap"]);
+    assert!(run(cli).contains("replay"));
 }
 
 #[test]

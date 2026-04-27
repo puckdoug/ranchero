@@ -53,6 +53,14 @@ pub struct GlobalOpts {
 
     #[arg(long, value_name = "PATH", global = true, help = "Alternate configuration file")]
     pub config: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        global = true,
+        help = "Write a wire-capture file alongside the live session (only meaningful with `start`)"
+    )]
+    pub capture: Option<PathBuf>,
 }
 
 impl GlobalOpts {
@@ -63,7 +71,7 @@ impl GlobalOpts {
     }
 }
 
-#[derive(Subcommand, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Subcommand, Debug, PartialEq, Eq, Clone)]
 pub enum Command {
     /// Open an interactive TUI to configure the application.
     Configure,
@@ -78,16 +86,26 @@ pub enum Command {
     /// configuration all resolve before risking a real Keycloak round-trip
     /// (which can lock the account on repeated failures).
     AuthCheck,
+    /// Print a summary of (or per-record listing of) a wire-capture file
+    /// previously written by `ranchero start --capture <path>`.
+    Replay {
+        /// Path to the capture file.
+        path: PathBuf,
+        /// Print one line per record instead of a summary.
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
 impl Command {
-    fn name(self) -> &'static str {
+    fn name(&self) -> &'static str {
         match self {
             Command::Configure => "configure",
             Command::Start => "start",
             Command::Stop => "stop",
             Command::Status => "status",
             Command::AuthCheck => "auth-check",
+            Command::Replay { .. } => "replay",
         }
     }
 }
@@ -169,7 +187,9 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 Command::Stop => Ok(daemon::stop(&resolved)?),
                 Command::Status => Ok(daemon::status(&resolved)?),
-                Command::Configure | Command::AuthCheck => unreachable!(),
+                Command::Configure | Command::AuthCheck | Command::Replay { .. } => {
+                    unreachable!()
+                }
             }
         }
         Command::AuthCheck => {
@@ -178,6 +198,11 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let keyring = OsKeyringStore::new();
             print_auth_check(&resolved, &keyring);
             Ok(ExitCode::SUCCESS)
+        }
+        Command::Replay { path: _, verbose: _ } => {
+            // STEP-11.5 green state: open a CaptureReader, iterate,
+            // print summary or per-record listing.
+            unimplemented!("STEP-11.5 green state: open CaptureReader and print summary/verbose")
         }
     }
 }

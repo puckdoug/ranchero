@@ -138,7 +138,7 @@ use self::sync::{Sample, SyncOutcome};
 
 // --- channel -------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct UdpChannelConfig {
     pub course_id: i32,
     pub athlete_id: i64,
@@ -146,6 +146,10 @@ pub struct UdpChannelConfig {
     pub max_hellos: u32,
     pub min_sync_samples: usize,
     pub watchdog_timeout: Duration,
+    /// Optional wire-capture tap. `None` means no overhead in the
+    /// channel hot path. Wired in by STEP 12 supervisor when the
+    /// user passes `--capture <path>` on `start`.
+    pub capture: Option<std::sync::Arc<crate::capture::CaptureWriter>>,
 }
 
 impl Default for UdpChannelConfig {
@@ -157,6 +161,7 @@ impl Default for UdpChannelConfig {
             max_hellos: MAX_HELLOS,
             min_sync_samples: MIN_SYNC_SAMPLES,
             watchdog_timeout: CHANNEL_TIMEOUT,
+            capture: None,
         }
     }
 }

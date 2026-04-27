@@ -92,11 +92,15 @@ impl TcpTransport for TokioTcpTransport {
 
 // --- channel -------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TcpChannelConfig {
     pub athlete_id: i64,
     pub conn_id: u16,
     pub watchdog_timeout: Duration,
+    /// Optional wire-capture tap. `None` means no overhead in the
+    /// channel hot path. Wired in by STEP 12 supervisor when the
+    /// user passes `--capture <path>` on `start`.
+    pub capture: Option<std::sync::Arc<crate::capture::CaptureWriter>>,
 }
 
 impl Default for TcpChannelConfig {
@@ -105,6 +109,7 @@ impl Default for TcpChannelConfig {
             athlete_id: 0,
             conn_id: 0,
             watchdog_timeout: CHANNEL_TIMEOUT,
+            capture: None,
         }
     }
 }
