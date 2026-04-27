@@ -24,24 +24,30 @@ fn sync_returns_need_more_below_threshold() {
 
 #[test]
 fn sync_picks_median_by_latency() {
-    // 6 distinct latencies; the floor-indexed middle of the
-    // sorted-by-latency list (sauce's `offsets[len / 2 | 0]`) is
-    // index 3 of `[10, 11, 12, 13, 14, 15]` → latency 13.
+    // 7 samples, 5 of them at the median latency, 2 outliers
+    // (`zwift.mjs:1361, 1365`). After sorting by latency the
+    // floor-indexed middle (`offsets[7 / 2] = offsets[3]`) lands on
+    // a `13`. The 5 valid samples after filtering carry the
+    // assertion.
     let samples = vec![
-        s(13, 100),
-        s(11, 100),
-        s(14, 100),
         s(10, 100),
-        s(15, 100),
-        s(12, 100),
+        s(13, 100),
+        s(13, 100),
+        s(13, 100),
+        s(13, 100),
+        s(13, 100),
+        s(16, 100),
     ];
     match compute_offset(&samples) {
         SyncOutcome::Converged {
             median_latency_ms, ..
         } => {
-            assert_eq!(median_latency_ms, 13, "median should be the floor-middle of sorted latencies");
+            assert_eq!(
+                median_latency_ms, 13,
+                "median should be the floor-middle of sorted latencies",
+            );
         }
-        SyncOutcome::NeedMore => panic!("expected Converged with all-tight samples"),
+        SyncOutcome::NeedMore => panic!("expected Converged with 5 valid samples after filter"),
     }
 }
 
@@ -88,23 +94,32 @@ fn sync_returns_need_more_when_too_few_valid_after_filter() {
 #[test]
 fn sync_known_vector() {
     // Hand-computed against the sauce algorithm:
-    //   samples = [(10, 5), (12, 7), (14, 9), (16, 11), (18, 13), (20, 15)]
+    //   samples (latency, offset):
+    //     (10, 5), (12, 7), (14, 9), (14, 11), (14, 13), (16, 15), (18, 17)
     //   sorted by latency: same order
-    //   mean_latency = (10+12+14+16+18+20)/6 = 15
-    //   variance per sample: (5², 3², 1², 1², 3², 5²) = (25, 9, 1, 1, 9, 25)
-    //   stddev = sqrt(70/6) ≈ 3.4156…
-    //   median (floor 6/2 = 3): samples[3].latency = 16
-    //   keep |latency - 16| < 3.4156 → keep latencies 14, 16, 18 (diffs 2, 0, 2)
-    //                                  drop latencies 10, 12, 20 (diffs 6, 4, 4)
-    //   valid offsets: 9, 11, 13 → mean = 11
-    let samples = vec![s(10, 5), s(12, 7), s(14, 9), s(16, 11), s(18, 13), s(20, 15)];
+    //   n = 7
+    //   mean_latency = (10+12+14+14+14+16+18) / 7 = 14
+    //   variance per sample: (16, 4, 0, 0, 0, 4, 16)
+    //   stddev = sqrt(40 / 7) ≈ 2.391
+    //   median = sorted[7/2] = sorted[3] = latency 14
+    //   keep |latency - 14| < 2.391 → drop {10, 18} (diff 4); keep {12,14,14,14,16}
+    //   valid offsets: 7, 9, 11, 13, 15 → mean = 11
+    let samples = vec![
+        s(10, 5),
+        s(12, 7),
+        s(14, 9),
+        s(14, 11),
+        s(14, 13),
+        s(16, 15),
+        s(18, 17),
+    ];
     match compute_offset(&samples) {
         SyncOutcome::Converged {
             mean_offset_ms,
             median_latency_ms,
         } => {
-            assert_eq!(median_latency_ms, 16, "floor-indexed median latency");
-            assert_eq!(mean_offset_ms, 11, "mean of {{9, 11, 13}}");
+            assert_eq!(median_latency_ms, 14, "floor-indexed median latency");
+            assert_eq!(mean_offset_ms, 11, "mean of {{7, 9, 11, 13, 15}}");
         }
         SyncOutcome::NeedMore => panic!("expected Converged"),
     }

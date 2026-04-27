@@ -15,15 +15,24 @@
 // state. See `docs/plans/STEP-10-udp-channel.md`.
 
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::consts::ZWIFT_EPOCH_MS;
 
 #[derive(Clone)]
 pub struct WorldTimer {
     inner: Arc<Mutex<State>>,
 }
 
-#[allow(dead_code)]
 struct State {
     offset_ms: i64,
+}
+
+fn unix_now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 impl WorldTimer {
@@ -36,27 +45,35 @@ impl WorldTimer {
     /// Milliseconds since the Zwift world-time epoch
     /// (`ZWIFT_EPOCH_MS`). What protocol `worldTime` fields use.
     pub fn now(&self) -> i64 {
-        unimplemented!("STEP-10: SystemTime::now() + offset - ZWIFT_EPOCH_MS")
+        unix_now_ms() + self.offset_ms() - ZWIFT_EPOCH_MS
     }
 
     /// Milliseconds since the Unix epoch, with the local offset
     /// applied. Useful for log timestamps that should reflect the
     /// corrected wall clock.
     pub fn server_now(&self) -> i64 {
-        unimplemented!("STEP-10: SystemTime::now() + offset")
+        unix_now_ms() + self.offset_ms()
     }
 
     /// Shift the cumulative offset by `diff_ms`. Logs a warning at
     /// `tracing::warn` if `|diff_ms| > 5000`, mirroring sauce's
     /// `zwift.mjs:119-121`.
-    pub fn adjust_offset(&self, _diff_ms: i64) {
-        unimplemented!("STEP-10: lock state, add diff to offset_ms, log if large")
+    pub fn adjust_offset(&self, diff_ms: i64) {
+        let mut state = self.inner.lock().expect("WorldTimer mutex poisoned");
+        state.offset_ms = state.offset_ms.saturating_add(diff_ms);
+        if diff_ms.unsigned_abs() > 5_000 {
+            tracing::warn!(
+                diff_ms,
+                total_offset_ms = state.offset_ms,
+                "shifted WorldTime offset by > 5 s",
+            );
+        }
     }
 
     /// Current cumulative offset in milliseconds (for tests /
     /// observability).
     pub fn offset_ms(&self) -> i64 {
-        unimplemented!("STEP-10: read offset_ms from state lock")
+        self.inner.lock().expect("WorldTimer mutex poisoned").offset_ms
     }
 }
 
