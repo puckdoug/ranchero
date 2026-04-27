@@ -8,7 +8,9 @@
 //   `login`/`refresh` single-shots, `RelaySessionSupervisor` long-
 //   running task. STEP 09; implemented.
 // - UDP channel + time sync (async): `WorldTimer`, `UdpTransport`,
-//   `UdpChannel`. STEP 10; currently stubs.
+//   `UdpChannel`. STEP 10; implemented.
+// - TCP channel (async): `TcpTransport`, `TcpChannel`.
+//   STEP 11; currently stubs.
 //
 // Every public item is re-exported from this file so callers
 // `use zwift_relay::{…}` without navigating internal module paths.
@@ -19,6 +21,7 @@ mod frame;
 mod header;
 mod iv;
 mod session;
+mod tcp;
 pub mod udp;
 mod world_timer;
 
@@ -38,6 +41,10 @@ pub use iv::RelayIv;
 pub use session::{
     Error as SessionError, RelaySession, RelaySessionConfig, RelaySessionSupervisor,
     Result as SessionResult, SessionEvent, TcpServer, login, refresh,
+};
+pub use tcp::{
+    Error as TcpError, TcpChannel, TcpChannelConfig, TcpChannelEvent, TcpTransport,
+    TokioTcpTransport,
 };
 pub use udp::{
     ChannelEvent, Error as UdpError, TokioUdpTransport, UdpChannel, UdpChannelConfig, UdpTransport,
