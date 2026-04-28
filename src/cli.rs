@@ -231,16 +231,29 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 }
 
-/// STEP-12.2 stub: tail a wire-capture file and print each record
-/// to standard output as it is written. The implementation lives
-/// in `docs/plans/STEP-12.2-follow-command.md`. Until that lands,
-/// this function panics with `unimplemented!()`.
-fn print_follow(
-    _path: &PathBuf,
+/// STEP-12.2: tail a wire-capture file and print each record to
+/// the supplied writer as text. This is the testable surface; the
+/// production dispatcher in [`dispatch`] wraps it with
+/// `std::io::stdout`. The implementation is described in
+/// `docs/plans/STEP-12.2-follow-command.md`; until it lands, every
+/// call panics with `unimplemented!()`.
+pub fn print_follow_to<W: std::io::Write>(
+    _out: W,
+    _path: &std::path::Path,
     _decode: bool,
-    _idle_timeout: Option<u64>,
+    _idle_timeout_secs: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    unimplemented!("STEP-12.2: print_follow")
+    unimplemented!("STEP-12.2: print_follow_to")
+}
+
+/// STEP-12.2 stub: dispatch arm wrapper. Forwards to
+/// [`print_follow_to`] with `std::io::stdout` as the destination.
+fn print_follow(
+    path: &PathBuf,
+    decode: bool,
+    idle_timeout: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    print_follow_to(std::io::stdout(), path.as_path(), decode, idle_timeout)
 }
 
 /// Render an "auth-check" report: for each configured account, show the

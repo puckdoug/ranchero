@@ -2225,6 +2225,7 @@ dependencies = [
  "edtui",
  "keyring",
  "nix",
+ "prost",
  "ratatui",
  "serde",
  "serde_json",
