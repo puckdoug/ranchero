@@ -399,3 +399,125 @@ fn tcp_channel_config_default_capture_is_none() {
         "default TcpChannelConfig must have no capture tap",
     );
 }
+
+// --- 6. follower (STEP-12.2 red state) ----------------------------
+//
+// These tests exercise `CaptureFollower`, the tailing reader added
+// by STEP-12.2. The implementation is a stub that panics on every
+// method call, so each test fails until STEP-12.2 lands.
+
+use std::time::Duration;
+use zwift_relay::capture::CaptureFollower;
+
+#[tokio::test]
+async fn follower_reads_records_as_they_are_written() {
+    // Spawn a CaptureWriter that pushes one record every 100 ms
+    // for 1 s. A CaptureFollower opened on the same file observes
+    // all ten records in order.
+    let path = NamedTempFile::new().expect("tempfile");
+    let _follower = CaptureFollower::open(path.path());
+    panic!(
+        "STEP-12.2 red state: CaptureFollower must observe all \
+         records that the writer appends after the follower opens",
+    );
+}
+
+#[tokio::test]
+async fn follower_resumes_after_truncated_record_at_eof() {
+    // Manually write a valid file header followed by partial bytes
+    // of a record header (5 of 15). CaptureFollower::next() does
+    // not return until the rest of the record has been written.
+    let path = NamedTempFile::new().expect("tempfile");
+    let _follower = CaptureFollower::open(path.path());
+    panic!(
+        "STEP-12.2 red state: CaptureFollower must wait and retry \
+         on a truncated record at end-of-file rather than returning \
+         an error",
+    );
+}
+
+#[tokio::test]
+async fn follower_idle_timeout_returns_none() {
+    // Open a follower with idle_timeout = Some(50 ms) on a file
+    // that contains the file header but no records. next()
+    // returns None after roughly the timeout elapses.
+    let path = NamedTempFile::new().expect("tempfile");
+    let _follower = CaptureFollower::open(path.path()).map(|f| {
+        f.with_idle_timeout(Some(Duration::from_millis(50)))
+    });
+    panic!(
+        "STEP-12.2 red state: CaptureFollower with idle_timeout \
+         must return None after the configured window without a \
+         new record",
+    );
+}
+
+#[tokio::test]
+async fn follower_no_idle_timeout_blocks_indefinitely() {
+    // Open a follower with no idle timeout on a file that
+    // contains the file header but no records. The follower
+    // continues polling; dropping it returns control to the
+    // caller.
+    let path = NamedTempFile::new().expect("tempfile");
+    let _follower = CaptureFollower::open(path.path());
+    panic!(
+        "STEP-12.2 red state: CaptureFollower with no idle_timeout \
+         must continue polling until dropped or until the writer \
+         signals end-of-stream",
+    );
+}
+
+#[test]
+fn follower_rejects_bad_magic() {
+    // A file written with non-magic bytes returns
+    // Err(BadMagic) from CaptureFollower::open, mirroring
+    // CaptureReader.
+    let mut path = NamedTempFile::new().expect("tempfile");
+    use std::io::Write;
+    path.write_all(b"NOTACAPS").expect("write magic");
+    path.write_all(&[0x01, 0x00]).expect("write version");
+    path.flush().expect("flush");
+
+    match CaptureFollower::open(path.path()) {
+        Err(CaptureError::BadMagic) => {}
+        other => panic!(
+            "STEP-12.2 red state: CaptureFollower::open must reject \
+             bad magic with Err(BadMagic); got {other:?}",
+        ),
+    }
+}
+
+#[test]
+fn follower_rejects_unsupported_version() {
+    // A file written with magic but version 2 returns
+    // Err(UnsupportedVersion(2)).
+    let mut path = NamedTempFile::new().expect("tempfile");
+    use std::io::Write;
+    path.write_all(MAGIC).expect("write magic");
+    path.write_all(&[0x02, 0x00]).expect("write version 2");
+    path.flush().expect("flush");
+
+    match CaptureFollower::open(path.path()) {
+        Err(CaptureError::UnsupportedVersion(2)) => {}
+        other => panic!(
+            "STEP-12.2 red state: CaptureFollower::open must reject \
+             unsupported versions with Err(UnsupportedVersion(_)); \
+             got {other:?}",
+        ),
+    }
+}
+
+#[tokio::test]
+async fn follower_with_poll_interval_respects_setting() {
+    // A follower with poll_interval = 5 ms retries faster than
+    // the default. An indirect test that observes the latency
+    // between writer-append and follower-emit.
+    let path = NamedTempFile::new().expect("tempfile");
+    let _follower = CaptureFollower::open(path.path()).map(|f| {
+        f.with_poll_interval(Duration::from_millis(5))
+    });
+    panic!(
+        "STEP-12.2 red state: CaptureFollower must use the \
+         configured poll_interval between end-of-file retries",
+    );
+}

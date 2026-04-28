@@ -9,7 +9,7 @@ use std::io::Read as _;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc;
@@ -378,5 +378,60 @@ pub fn record_outbound(
             hello,
             payload: proto_bytes.to_vec(),
         });
+    }
+}
+
+// --- follower (STEP-12.2 stub) ------------------------------------
+
+/// Tailing reader over a wire-capture file. Like
+/// [`CaptureReader`], but on end-of-file or a truncated-record
+/// condition, the iterator sleeps and retries rather than
+/// returning `None` or an error. Exits when the writer signals
+/// that no further records will arrive (the file is closed and a
+/// configured idle timeout elapses) or when the caller drops the
+/// iterator.
+///
+/// STEP-12.2 stub: every method panics with `unimplemented!()`.
+/// See `docs/plans/STEP-12.2-follow-command.md` for the design.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct CaptureFollower {
+    poll_interval: Duration,
+    idle_timeout: Option<Duration>,
+}
+
+impl CaptureFollower {
+    /// Open `path`, validate the file header, return a follower
+    /// with default tuning (`poll_interval = 100 ms`,
+    /// `idle_timeout = None`).
+    pub fn open(_path: impl AsRef<Path>) -> Result<Self, CaptureError> {
+        unimplemented!("STEP-12.2: CaptureFollower::open")
+    }
+
+    /// Override the polling interval used between end-of-file
+    /// retries.
+    pub fn with_poll_interval(mut self, interval: Duration) -> Self {
+        self.poll_interval = interval;
+        self
+    }
+
+    /// Set an idle timeout. When the follower has not observed a
+    /// new record for this duration, the iterator returns `None`.
+    pub fn with_idle_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.idle_timeout = timeout;
+        self
+    }
+
+    /// Format version from the file header (currently always 1).
+    pub fn version(&self) -> u16 {
+        unimplemented!("STEP-12.2: CaptureFollower::version")
+    }
+}
+
+impl Iterator for CaptureFollower {
+    type Item = Result<CaptureRecord, CaptureError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        unimplemented!("STEP-12.2: CaptureFollower::next")
     }
 }

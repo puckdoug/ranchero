@@ -12,6 +12,7 @@
 pub mod control;
 pub mod pidfile;
 pub mod probe;
+pub mod relay;
 pub mod runtime;
 
 use std::path::PathBuf;

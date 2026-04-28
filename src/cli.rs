@@ -95,6 +95,23 @@ pub enum Command {
         #[arg(long)]
         verbose: bool,
     },
+    /// Tail a wire-capture file and print each record to standard
+    /// output as it is written. Pairs with `ranchero start
+    /// --capture <path>` to validate the live stream from a second
+    /// terminal.
+    Follow {
+        /// Path to the capture file.
+        path: PathBuf,
+        /// Decode each payload as `ServerToClient` (inbound) or
+        /// `ClientToServer` (outbound) and print the decoded
+        /// message instead of a one-line summary.
+        #[arg(long)]
+        decode: bool,
+        /// Exit after this many seconds without a new record.
+        /// Default: run until interrupted.
+        #[arg(long, value_name = "SECONDS")]
+        idle_timeout: Option<u64>,
+    },
 }
 
 impl Command {
@@ -106,6 +123,7 @@ impl Command {
             Command::Status => "status",
             Command::AuthCheck => "auth-check",
             Command::Replay { .. } => "replay",
+            Command::Follow { .. } => "follow",
         }
     }
 }
@@ -195,7 +213,10 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 }
                 Command::Stop => Ok(daemon::stop(&resolved)?),
                 Command::Status => Ok(daemon::status(&resolved)?),
-                Command::Configure | Command::AuthCheck | Command::Replay { .. } => {
+                Command::Configure
+                | Command::AuthCheck
+                | Command::Replay { .. }
+                | Command::Follow { .. } => {
                     unreachable!()
                 }
             }
@@ -211,7 +232,23 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             print_replay(&path, verbose)?;
             Ok(ExitCode::SUCCESS)
         }
+        Command::Follow { path, decode, idle_timeout } => {
+            print_follow(&path, decode, idle_timeout)?;
+            Ok(ExitCode::SUCCESS)
+        }
     }
+}
+
+/// STEP-12.2 stub: tail a wire-capture file and print each record
+/// to standard output as it is written. The implementation lives
+/// in `docs/plans/STEP-12.2-follow-command.md`. Until that lands,
+/// this function panics with `unimplemented!()`.
+fn print_follow(
+    _path: &PathBuf,
+    _decode: bool,
+    _idle_timeout: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    unimplemented!("STEP-12.2: print_follow")
 }
 
 /// Render an "auth-check" report: for each configured account, show the

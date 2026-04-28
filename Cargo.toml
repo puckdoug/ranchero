@@ -29,6 +29,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "macros
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
+thiserror = "1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 zwift-api = { path = "crates/zwift-api" }
 zwift-relay = { path = "crates/zwift-relay" }

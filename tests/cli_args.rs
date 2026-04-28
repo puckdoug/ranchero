@@ -82,6 +82,47 @@ fn parses_replay_with_verbose() {
     }
 }
 
+// -- STEP-12.2: `follow` subcommand parsing ------------------------------
+
+#[test]
+fn parses_follow_subcommand() {
+    let cli = parse(&["ranchero", "follow", "/tmp/x.cap"]);
+    match cli.command {
+        Command::Follow { ref path, decode, idle_timeout } => {
+            assert_eq!(path, std::path::Path::new("/tmp/x.cap"));
+            assert!(!decode, "decode defaults to false");
+            assert!(idle_timeout.is_none(), "idle_timeout defaults to None");
+        }
+        other => panic!("expected Follow, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_follow_with_decode() {
+    let cli = parse(&["ranchero", "follow", "/tmp/x.cap", "--decode"]);
+    match cli.command {
+        Command::Follow { decode, .. } => assert!(decode),
+        other => panic!("expected Follow {{ decode: true }}, got {other:?}"),
+    }
+}
+
+#[test]
+fn parses_follow_with_idle_timeout() {
+    let cli = parse(&["ranchero", "follow", "/tmp/x.cap", "--idle-timeout", "30"]);
+    match cli.command {
+        Command::Follow { idle_timeout, .. } => {
+            assert_eq!(idle_timeout, Some(30));
+        }
+        other => panic!("expected Follow with idle_timeout, got {other:?}"),
+    }
+}
+
+#[test]
+fn dispatch_follow_stub() {
+    let cli = parse(&["ranchero", "follow", "/tmp/x.cap"]);
+    assert!(run(cli).contains("follow"));
+}
+
 // -- global flag parsing --------------------------------------------------
 
 #[test]
@@ -258,12 +299,41 @@ fn dispatch_start_with_capture_errors_until_step12() {
     // wiring is implemented in STEP 12. The dispatcher must
     // return an error early with a clear message rather than
     // silently ignore the flag.
+    //
+    // STEP-12.1 will remove the Fix-D guard and replace this test
+    // with `dispatch_start_passes_capture_path_to_daemon` (below).
+    // Both tests are present during the red phase: this one
+    // currently passes (the guard is in place), and the new one
+    // currently fails (the wiring is not yet present).
     let cli = parse(&["ranchero", "--capture", "/tmp/x.cap", "start"]);
     let err = ranchero::cli::dispatch(cli).expect_err("dispatch must reject");
     let msg = err.to_string();
     assert!(
         msg.contains("--capture") && msg.contains("STEP 12"),
         "error must reference both --capture and STEP 12; got: {msg}",
+    );
+}
+
+#[test]
+fn dispatch_start_passes_capture_path_to_daemon() {
+    // STEP-12.1 contract: dispatch must (a) not reject `--capture`
+    // with the STEP-11.6 Fix-D guard, and (b) pass the capture
+    // path through to `daemon::start`. The fully-wired test
+    // requires an injection point so that the daemon's received
+    // path is observable; until that lands, this test fails
+    // because dispatch still returns the Fix-D guard error.
+    let cli = parse(&["ranchero", "--capture", "/tmp/x.cap", "start"]);
+    let result = ranchero::cli::dispatch(cli);
+    let saw_fix_d_guard = matches!(
+        &result,
+        Err(e) if e.to_string().contains("--capture") && e.to_string().contains("STEP 12"),
+    );
+    assert!(
+        !saw_fix_d_guard,
+        "STEP-12.1 red state: the Fix-D guard from STEP-11.6 must be \
+         removed and the capture path must be wired through to \
+         daemon::start; got: {:?}",
+        result.as_ref().err().map(|e| e.to_string()),
     );
 }
 
