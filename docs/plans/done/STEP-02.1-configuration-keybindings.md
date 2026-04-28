@@ -2,32 +2,38 @@
 
 ## Goal
 
-Make every editable text field in `ranchero configure` respond to vi key
-bindings (normal/insert/visual modal editing) as the primary enhancement, with
-emacs key bindings as a bonus. The active editing mode is chosen by:
+Make every editable text field in `ranchero configure` respond to
+vi key bindings (normal, insert, and visual modal editing) as the
+primary enhancement; emacs key bindings are a secondary feature.
+The active editing mode is selected by the following precedence:
 
-1. **Config file** `[tui] editing_mode = "vi" | "emacs" | "default"` — highest
-   priority.
-2. **`~/.editrc`** — if the file contains `bind -v`, default to vi; if it
-   contains `bind -e`, default to emacs. Parsed at startup, before the TUI
-   opens.
-3. **Built-in default** — `"default"` (current behaviour: Emacs-style, since
-   that is crossterm's natural key model).
+1. The configuration file entry `[tui] editing_mode = "vi" | "emacs"
+   | "default"` has the highest priority.
+2. The file `~/.editrc`: if it contains `bind -v`, the default is
+   vi; if it contains `bind -e`, the default is emacs. The file is
+   parsed at startup, before the TUI opens.
+3. The built-in default is `"default"` (the current behaviour:
+   emacs-style, because that is the natural key model of
+   crossterm).
 
 ## Library decision
 
 ### `edtui` (https://github.com/preiter93/edtui, v0.7.1)
 
-`edtui` provides `EditorState` (text buffer + cursor + vi/emacs mode) and
-`EditorView` (ratatui widget that renders the buffer). It supports the full
-vi command set — Normal / Insert / Visual modes, motions, operators, undo/redo
-— and also has an emacs mode. It is the right tool for this job.
+`edtui` provides `EditorState` (a text buffer with cursor and a
+vi/emacs mode) and `EditorView` (a ratatui widget that renders the
+buffer). It supports the full vi command set — Normal, Insert, and
+Visual modes, motions, operators, undo, and redo — and it also
+provides an emacs mode. It is the appropriate library for this
+work.
 
-**Ratatui compatibility:** edtui targets ratatui `0.30`. We are currently on
-`0.29`. This step begins with a minor upgrade (`0.29 → 0.30`) before adding
-edtui. The 0.29 → 0.30 bump is a patch-level API change; no breaking changes
-are expected for the widget surface we use (Layout, Block, Paragraph, Tabs,
-Spans, TestBackend). Verify with `cargo test` after the bump before proceeding.
+**Ratatui compatibility:** edtui targets ratatui `0.30`. The
+project is currently on `0.29`. This step begins with a minor
+upgrade (`0.29` to `0.30`) before adding edtui. The `0.29` to
+`0.30` upgrade is a patch-level API change; no breaking changes
+are expected in the widget surface in use (Layout, Block,
+Paragraph, Tabs, Spans, TestBackend). Verify with `cargo test`
+after the upgrade before proceeding.
 
 ### `editline` — not used
 
@@ -98,8 +104,9 @@ fn make_editor(mode: EditingMode) -> EditorState {
 
 ### Event routing in `Model::update`
 
-In `Mode::Editing`, instead of our hand-rolled char-push/backspace handler,
-pass the crossterm `Event` to `edtui`'s event handler for the focused field:
+In `Mode::Editing`, replace the existing custom character-push and
+backspace handler with a call that passes the crossterm `Event` to
+`edtui`'s event handler for the focused field:
 
 ```rust
 Mode::Editing => {
@@ -109,8 +116,8 @@ Mode::Editing => {
         .map(|ed| ed.on_event(&ev))
         .unwrap_or(false);
 
-    // Intercept Esc at normal-mode boundary to leave Editing:
-    // in Vi mode, the first Esc takes us from Insert → Normal (edtui handles);
+    // Intercept Esc at the normal-mode boundary to leave Editing:
+    // in Vi mode, the first Esc transitions Insert → Normal (handled by edtui);
     // a second Esc (already in Normal) or Esc in Emacs mode exits Editing.
     if !handled {
         if let Event::Key(KeyEvent { code: KeyCode::Esc, .. }) = ev {
@@ -122,9 +129,10 @@ Mode::Editing => {
 }
 ```
 
-For `Mode::Normal` (our screen-level normal mode, distinct from vi's normal
-mode), existing navigation keys are unchanged. A Vi-mode field shows `[N]` or
-`[I]` in its border title to indicate which vi mode the editor is in.
+For `Mode::Normal` (the screen-level normal mode of this layer,
+distinct from vi's own normal mode), existing navigation keys are
+unchanged. A Vi-mode field shows `[N]` or `[I]` in its border
+title to indicate which vi mode the editor is in.
 
 ### Digit-only enforcement for numeric fields
 
@@ -155,9 +163,10 @@ Parse rules (from the editrc(5) man page):
 - Lines beginning with `#` are comments.
 - A line of the form `bind -v` sets vi mode globally.
 - A line of the form `bind -e` sets emacs mode globally.
-- Program-scoped lines (`prog:bind -v`) are ignored — we are not `libedit`.
-- The **last** matching global directive wins (consistent with libedit
-  behaviour).
+- Program-scoped lines (`prog:bind -v`) are ignored, because this
+  implementation is not `libedit`.
+- The last matching global directive takes precedence (consistent
+  with libedit behaviour).
 
 ## Config schema extension
 
@@ -193,9 +202,10 @@ CLI --editing-mode (future) > config file [tui].editing_mode > ~/.editrc detect 
 Before adding edtui:
 
 1. Update `Cargo.toml`: `ratatui = "0.30"`.
-2. Run `cargo test` — the 0.29 → 0.30 bump is minor; breakage is unlikely
-   but verify all 79 existing tests pass before proceeding.
-3. Re-run tests green, then add `edtui = "0.7"` and proceed.
+2. Run `cargo test`. The `0.29` to `0.30` upgrade is minor;
+   breakage is unlikely, but verify that all 79 existing tests
+   continue to pass before proceeding.
+3. Once the tests are passing, add `edtui = "0.7"` and proceed.
 
 ## Tests first
 
@@ -223,15 +233,17 @@ Before adding edtui:
     on each field's `EditorState`.
 12. `emacs_mode_starts_in_insert_state` — model built with `Emacs` has
     `EditorMode::Insert`.
-13. `vi_i_enters_insert_then_esc_returns_to_normal` — feed `i`, type chars,
-    `Esc`: field is in normal mode with typed text saved.
+13. `vi_i_enters_insert_then_esc_returns_to_normal` — send the
+    keystroke `i`, type characters, then `Esc`. The field must be
+    in normal mode with the typed text saved.
 14. `vi_dd_clears_field` — in normal mode, `dd` empties the field string.
 15. `vi_A_appends_to_end` — `A` moves cursor to end and enters insert mode.
 16. `emacs_ctrl_a_moves_to_start` — in emacs mode, `Ctrl-A` moves cursor to
     position 0.
 17. `emacs_ctrl_k_kills_to_end_of_line` — text after cursor is deleted.
-18. `esc_in_vi_normal_exits_editing_mode` — a second Esc (already in vi normal)
-    returns our `Mode` to `Normal`.
+18. `esc_in_vi_normal_exits_editing_mode` — a second Esc
+    (already in vi normal) returns the model's `Mode` to
+    `Normal`.
 19. `esc_in_emacs_mode_exits_editing_mode` — single Esc exits.
 20. `numeric_field_ignores_non_digit_in_vi_insert` — typing `x` in server_port
     field (insert mode) is rejected before reaching edtui.
@@ -240,8 +252,9 @@ Before adding edtui:
 
 21. `configure_tui_reads_editing_mode_from_resolved_config` — model created
     from a `ResolvedConfig` with `Vi` uses vi mode on all editors.
-22. `editrc_vi_mode_propagates_end_to_end` — fake home with `~/.editrc`
-    containing `bind -v`; resolved config has no override → model uses Vi.
+22. `editrc_vi_mode_propagates_end_to_end` — a synthetic home
+    directory with a `~/.editrc` containing `bind -v`; the
+    resolved configuration has no override; the model uses Vi.
 
 ### `tests/config.rs` integration tests (extend existing)
 
@@ -250,7 +263,7 @@ Before adding edtui:
 
 ## Acceptance criteria
 
-- `cargo test` green, `cargo clippy -- -D warnings` clean.
+- `cargo test` passes; `cargo clippy -- -D warnings` reports no warnings.
 - `ranchero configure` with no config and no `~/.editrc` behaves as before
   (cursor key editing, Enter to commit, Esc to cancel).
 - With `bind -v` in `~/.editrc`, the same command opens with vi normal mode;
@@ -262,9 +275,12 @@ Before adding edtui:
 
 ## Deferred
 
-- `--editing-mode` CLI flag (would sit above config in the precedence chain).
-- Visual-mode selection for log-level (a bounded enum field would be better
-  served by an arrow-key selector widget than by text editing).
-- Mouse cursor positioning within fields (edtui supports it; wire once stable).
-- Syntax highlighting in the Review screen's TOML preview (edtui supports it
-  but requires a grammar definition).
+- A `--editing-mode` command-line flag (which would have higher
+  precedence than the configuration file).
+- Visual-mode selection for log-level: a bounded enumeration field
+  is better served by an arrow-key selector widget than by text
+  editing.
+- Mouse cursor positioning within fields: edtui supports this; it
+  will be integrated once the support is stable.
+- Syntax highlighting in the Review screen's TOML preview: edtui
+  supports this, but it requires a grammar definition.

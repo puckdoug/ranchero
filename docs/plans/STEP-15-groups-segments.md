@@ -24,4 +24,4 @@ Higher-level stats on top of STEP 14:
 - Segment start/stop: hand-built road history → correct entries in
   `activeSegments` + `segmentSlices`.
 
-To be fully elaborated when we start work on this step.
+To be fully elaborated when work on this step begins.

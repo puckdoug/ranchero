@@ -11,16 +11,16 @@ upstream protobuf tree from
 
 sauce4zwift's `src/zwift.proto` is a heavily modified single-file
 proto3 fork (renamed messages, camelCase, dropped proto2 presence
-semantics). It is **not** the source. We pull from upstream directly
-to stay close to Zwift's actual wire format and to avoid
+semantics). It is **not** the source. The project pulls from upstream
+directly to remain close to Zwift's actual wire format and to avoid
 derivative-of-a-derivative drift.
 
 ## Licensing
 
 Upstream is AGPL-3.0. ranchero is therefore AGPL-3.0 (GPL-3.0
-inherited from sauce4zwift, upgraded by combining with AGPL upstream
-— compatible, one-way). The `zwift-proto` crate carries an SPDX
-`AGPL-3.0-only` header and the project-level LICENSE matches.
+inherited from sauce4zwift, upgraded by combining with the AGPL
+upstream: compatible, one-way). The `zwift-proto` crate carries an
+SPDX `AGPL-3.0-only` header and the project-level LICENSE matches.
 
 ## One-time vendor
 
@@ -28,11 +28,11 @@ inherited from sauce4zwift, upgraded by combining with AGPL upstream
 - Vendor location: `crates/zwift-proto/proto/`
 - Layout: mirror upstream's filenames; do **not** merge into a single
   file. proto2 multi-file with `import` between files is the upstream
-  convention and `prost-build::compile_protos` handles it natively.
+  convention, and `prost-build::compile_protos` handles it natively.
 
-Files to vendor for the live-data core (subset of upstream's 19):
+Files to vendor for the live-data core (a subset of upstream's 19):
 
-| Upstream file | Why we need it |
+| Upstream file | Reason for inclusion |
 |---|---|
 | `login.proto` | `LoginRequest`, `LoginResponse`, `RelaySessionRefreshResponse` |
 | `per-session-info.proto` | `PerSessionInfo`, `TcpConfig`, `TcpAddress` |
@@ -46,9 +46,9 @@ Plus any additional file pulled in transitively by `import` statements
 in the above.
 
 After vendoring, the file is maintained in ranchero's tree. Updates
-are made by copying fresh from upstream and re-running codegen — no
-sauce4zwift checkout, no upstream `git submodule`, no
-build/test/runtime path that resolves outside ranchero.
+are made by copying fresh from upstream and re-running codegen: no
+sauce4zwift checkout, no upstream `git submodule`, and no
+build, test, or runtime path that resolves outside ranchero.
 
 ## Sketch
 
@@ -57,22 +57,23 @@ build/test/runtime path that resolves outside ranchero.
   where `files` is the explicit list above (paths relative to
   `CARGO_MANIFEST_DIR`) and `proto_root` is `proto/` so `import`
   resolution works.
-- Use `syntax = "proto2"` as found in upstream — do not convert.
+- Use `syntax = "proto2"` as found in upstream; do not convert.
 - Expose the messages downstream crates need via `pub use` so callers
-  don't have to navigate generated module paths. Working list (subject
+  do not have to navigate generated module paths. Working list (subject
   to refinement during the elaboration pass): `LoginRequest`,
   `LoginResponse`, `ClientToServer`, `ServerToClient`, `PlayerState`,
   `WorldAttribute`, `WA_TYPE`, `TcpConfig`, `TcpAddress`, `UdpConfig`,
   `RelayAddress`, `UdpConfigVOD`, `RelayAddressesVOD`, `SegmentResult`,
   `RideOn`, `PlayerLeftWorld`, `Event`, `EventSubgroup`, `Segment`.
   (Note: `PlayerJoinedWorld` from sauce4zwift's list does not appear
-  by that name upstream — verify the corresponding upstream payload
+  by that name upstream; verify the corresponding upstream payload
   during elaboration.)
 - **Field naming.** Upstream is snake_case (proto convention). prost
   also produces snake_case Rust fields. v2 payload formatters
-  (STEP 18) need camelCase on the JSON wire to keep widgets working —
-  add `serde` rename attributes in the formatter layer rather than
-  fighting the generated types (per spec §7.12 footgun).
+  (STEP 18) require camelCase on the JSON wire to keep widgets
+  functional; add `serde` rename attributes in the formatter layer
+  rather than working against the generated types (per the
+  hazard noted in spec §7.12).
 
 ## Tests-first outline
 
@@ -80,6 +81,6 @@ build/test/runtime path that resolves outside ranchero.
   `Message::decode`.
 - Vector tests: decode a captured `ServerToClient` byte dump
   (vendored under `crates/zwift-proto/tests/fixtures/`) and assert
-  selected fields (athlete count, seqno, etc.) match.
+  that selected fields (athlete count, seqno, and so on) match.
 
-To be fully elaborated when we start work on this step.
+To be fully elaborated when work begins on this step.

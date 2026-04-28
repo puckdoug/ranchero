@@ -8,18 +8,18 @@ Secure TCP/3025 channel per spec §4.7:
 
 - Connect to the chosen relay server's port 3025 with a 31 s
   connect timeout. **Do not** enable `setKeepAlive` (spec §7.12
-  footgun: Node-specific bug; Tokio doesn't enable keepalive by
-  default, so the corresponding Rust requirement is to simply not
+  hazard: Node-specific bug; Tokio does not enable keepalive by
+  default, so the corresponding Rust requirement is to not
   call `set_keepalive(true)`).
 - After connection, the *supervisor* (STEP 12) sends a hello
   `ClientToServer` whose payload it constructs (carries
   `largestWorldAttributeTimestamp` and other supervisor-tracked
-  fields). The channel exposes a `send_packet` API that flips the
-  hello / steady-state header + envelope shape based on a flag
-  the caller passes.
+  fields). The channel exposes a `send_packet` API that selects
+  the hello or steady-state header and envelope shape based on a
+  flag the caller passes.
 - Stream-based recv loop: drain the TCP socket into an accumulator
-  buffer, drive STEP 08's `next_tcp_frame` until the buffer is
-  empty (or short), decrypt + decode each complete frame.
+  buffer, exercise STEP 08's `next_tcp_frame` until the buffer is
+  empty (or short), decrypt and decode each complete frame.
 - Watchdog: 30 s of inbound silence emits a `Timeout` event so the
   supervisor can decide to reconnect.
 
@@ -31,29 +31,29 @@ TCP + UDP into a `GameMonitor` supervisor.
 **In scope** (channel layer only — transport, IV state, framing,
 recv loop, watchdog, shutdown):
 
-- `TcpTransport` trait + `TokioTcpTransport` impl (mirrors STEP 10's
-  UDP transport pattern).
+- `TcpTransport` trait and `TokioTcpTransport` implementation
+  (mirrors STEP 10's UDP transport pattern).
 - `TcpChannel<T>` generic over `T: TcpTransport`.
-- `TcpChannel::establish` — opens TCP, spawns recv loop, returns
+- `TcpChannel::establish`: opens TCP, spawns the recv loop, returns
   once the channel is ready for traffic.
-- `TcpChannel::send_packet(payload, hello)` — caller-controlled
-  hello vs steady-state. Hello flips the header flags
-  (`RELAY_ID|CONN_ID|SEQNO` vs `SEQNO`) and the plaintext envelope
-  byte (`[2,0,...]` vs `[2,1,...]`).
-- Recv loop with stream accumulator + `next_tcp_frame` demuxer.
+- `TcpChannel::send_packet(payload, hello)`: caller-controlled
+  hello versus steady-state. Hello selects the header flags
+  (`RELAY_ID|CONN_ID|SEQNO` versus `SEQNO`) and the plaintext envelope
+  byte (`[2,0,...]` versus `[2,1,...]`).
+- Recv loop with a stream accumulator and the `next_tcp_frame` demuxer.
 - Watchdog around the read side.
-- Shutdown via `Notify` (same pattern STEP 10 used).
+- Shutdown via `Notify` (the same pattern used in STEP 10).
 - IV state mutation per inbound and outbound packet.
 
-**Out of scope** (lives in STEP 12's `GameMonitor` supervisor):
+**Out of scope** (resides in STEP 12's `GameMonitor` supervisor):
 
 | Concern | Why elsewhere |
 |---|---|
-| Reconnect with `1000 * 1.2^n` backoff | Channel-supervisor split: channel just emits `Shutdown`; supervisor decides retry policy (`zwift.mjs:1876-1883`) |
+| Reconnect with `1000 * 1.2^n` backoff | Channel-supervisor split: the channel emits `Shutdown` and the supervisor decides retry policy (`zwift.mjs:1876-1883`) |
 | Preferring the previously-used server IP on reconnect | Server-pool concern (`zwift.mjs:1815-1827`); supervisor maintains `_lastTCPServer`-style state |
-| Constructing the hello payload (`largestWorldAttributeTimestamp`, etc.) | Supervisor tracks the high-water mark across reconnects |
-| 1 Hz `ClientToServer` heartbeat | (a) supervisor-driven, (b) **UDP only**, not TCP — sauce's `broadcastPlayerState` iterates `this._udpChannels` (`zwift.mjs:1948`); the original STEP 11 stub mis-listed this as TCP work |
-| Channel state machine (`Closed → Connecting → Active → Closed`) | Spec §7.7 names this as a shared state machine, but in practice it's a supervisor concern — the channel itself just exists or doesn't, and emits events on transitions |
+| Constructing the hello payload (`largestWorldAttributeTimestamp`, and similar fields) | Supervisor tracks the high-water mark across reconnects |
+| 1 Hz `ClientToServer` heartbeat | (a) supervisor-driven, (b) **UDP only**, not TCP: sauce's `broadcastPlayerState` iterates `this._udpChannels` (`zwift.mjs:1948`); the original STEP 11 stub mis-listed this as TCP work |
+| Channel state machine (`Closed → Connecting → Active → Closed`) | Spec §7.7 names this as a shared state machine, but in practice it is a supervisor concern: the channel itself either exists or does not, and emits events on transitions |
 
 ## Crate layout
 
@@ -72,16 +72,16 @@ crates/zwift-relay/
 
 If `tcp.rs` and `udp.rs` start growing in parallel and develop
 shared private helpers, fold both into `channel/{mod,udp,tcp}.rs`.
-Plan starts with the flat layout; the two channels intentionally
-share no state at runtime, so a shared module isn't load-bearing.
+The plan starts with the flat layout; the two channels intentionally
+share no state at runtime, so a shared module is not load-bearing.
 
 ## Dependencies
 
-No new direct deps. `tokio` already has the `net` feature from
-STEP 10. `prost`, `zwift-proto`, and the codec primitives are all
-already in.
+No new direct dependencies. `tokio` already has the `net` feature
+from STEP 10. `prost`, `zwift-proto`, and the codec primitives are
+all already present.
 
-Dev-deps unchanged.
+Development dependencies are unchanged.
 
 ## Public API surface (proposed)
 
@@ -120,9 +120,10 @@ impl TokioTcpTransport {
 A note on `read_chunk`'s shape: it returns `Vec<u8>` rather than
 filling a caller-supplied buffer. This makes the mock transport
 trivially scriptable (push pre-built `Vec<u8>` chunks of arbitrary
-sizes into an mpsc) at the cost of an alloc per read. For STEP 11
-the simpler signature wins; if profile data later shows TCP recv as
-a hotspot, switch to `read_into(&mut Vec<u8>) -> usize`.
+sizes into an mpsc) at the cost of an allocation per read. At
+this step the simpler signature is preferred; if profile data
+later shows TCP recv as a hotspot, switch to
+`read_into(&mut Vec<u8>) -> usize`.
 
 ### `TcpChannel` (new, in `tcp`)
 
@@ -140,7 +141,7 @@ pub enum TcpChannelEvent {
     /// Recv loop is running and ready to deliver inbound packets.
     /// First event after `establish` returns. Emitted from the
     /// spawned recv task so subscribers attached after `establish`
-    /// still see it (same trick STEPs 09 / 10 used).
+    /// still see it (the same approach used in STEPs 09 and 10).
     Established,
     /// One inbound `ServerToClient` decoded successfully.
     Inbound(zwift_proto::ServerToClient),
@@ -205,7 +206,7 @@ impl<T: TcpTransport> TcpChannel<T> {
 
 The recv loop reuses STEP 08's `next_tcp_frame(&[u8]) ->
 Result<Option<(&[u8], usize)>, CodecError>`. The state the channel
-adds is just an accumulator buffer:
+adds is an accumulator buffer:
 
 ```rust
 let mut buffer: Vec<u8> = Vec::new();
@@ -248,10 +249,10 @@ loop {
 `process_inbound_tcp` is structurally the same as STEP 10's
 `process_inbound_packet`, but the TCP recv plaintext is wrapped in a
 `[2, hello?, proto…]` envelope (STEP 08's `parse_tcp_plaintext`),
-whereas UDP recv plaintext is just the raw proto bytes. Worth
-extracting a shared private helper for the header-decode / IV-update
-/ decrypt steps and parametrizing on the envelope handler. Keeps
-the IV rules in one place.
+whereas UDP recv plaintext is the raw proto bytes. It is worth
+extracting a shared private helper for the header-decode,
+IV-update, and decrypt steps and parametrizing on the envelope
+handler. This keeps the IV rules in one place.
 
 ## Send path
 
@@ -299,7 +300,8 @@ pub async fn send_packet(&self, payload: ClientToServer, hello: bool) -> Result<
 ## Tests-first plan
 
 All tests in `crates/zwift-relay/tests/tcp.rs`. Mock transport
-defined inline (mpsc-driven, like UDP's). Same `MockHandle` shape.
+defined inline (mpsc-driven, like the UDP transport). The same
+`MockHandle` shape is used.
 
 ### Hello / steady-state send shape
 
@@ -318,7 +320,7 @@ defined inline (mpsc-driven, like UDP's). Same `MockHandle` shape.
 | `recv_handles_two_frames_in_one_chunk` | Mock pushes two concatenated frames in a single `read_chunk` response; channel emits two `Inbound` events. |
 | `recv_handles_frame_split_across_two_chunks` | Mock pushes the first half of a frame, then (on next `read_chunk`) the second half. Channel buffers across reads and emits `Inbound` once. |
 | `recv_handles_size_prefix_split_between_chunks` | Edge case: 1 byte of the BE u16 size in one chunk, the other byte + payload in the next. (`next_tcp_frame` returns `Ok(None)` on a 1-byte input — channel should not error.) |
-| `recv_emits_recv_error_on_decryption_failure` | Push a frame whose tag has been flipped → `RecvError` event; channel keeps running. |
+| `recv_emits_recv_error_on_decryption_failure` | Push a frame whose tag has been altered → `RecvError` event; channel keeps running. |
 | `recv_emits_recv_error_on_bad_relay_id` | Push a frame whose RELAY_ID flag carries a different `relay_id` → `RecvError`. |
 
 ### Lifecycle
@@ -341,90 +343,93 @@ defined inline (mpsc-driven, like UDP's). Same `MockHandle` shape.
 These are claims the implementor should confirm and record in the
 as-built doc.
 
-1. **`hello: bool` vs `enum HelloKind`.** The plan uses a bool
-   parameter on `send_packet`. Same deliberation as STEP 08
-   `tcp_plaintext`'s `hello: bool` (left as bool there). If
-   reviewers find the call site confusing (`send_packet(payload,
-   true)` is opaque), swap to `enum HelloKind { Hello, Steady }`.
-   Easy to flip.
+1. **`hello: bool` versus `enum HelloKind`.** The plan uses a bool
+   parameter on `send_packet`. The same deliberation applied to
+   STEP 08's `tcp_plaintext` `hello: bool` parameter (left as a
+   bool there). If reviewers find the call site confusing
+   (`send_packet(payload, true)` is opaque), swap to
+   `enum HelloKind { Hello, Steady }`. The change is straightforward.
 
 2. **`app_seqno` ownership for TCP.** Sauce's
    `NetChannel.makeDataPBAndBuffer` (`zwift.mjs:1192-1197`)
    auto-increments `_sendSeqno` per outbound packet, shared between
-   TCP and UDP. STEP 10 already adopted this for UDP (channel owns
-   `app_seqno` and writes it into `payload.seqno`). For TCP we have
-   two options:
+   TCP and UDP. STEP 10 already adopted this for UDP (the channel
+   owns `app_seqno` and writes it into `payload.seqno`). For TCP
+   there are two options:
 
-   - **Match sauce / mirror UDP** — channel owns `app_seqno`,
-     overrides `payload.seqno` on every send. Caller passes a
+   - **Match sauce, mirror UDP**: the channel owns `app_seqno` and
+     overrides `payload.seqno` on every send. The caller passes a
      payload with `seqno: None`.
-   - **Caller-owns** — supervisor sets `payload.seqno` directly;
-     channel doesn't touch it.
+   - **Caller-owns**: the supervisor sets `payload.seqno` directly
+     and the channel does not modify it.
 
-   Recommend matching sauce (channel-owns). Caller passes the
-   payload sans seqno; channel slots it in. Document in as-built.
+   The recommendation is to match sauce (channel-owns). The caller
+   passes the payload without a seqno; the channel inserts it.
+   Document the decision in the as-built document.
 
 3. **Connect-timeout location.** `TokioTcpTransport::connect` takes
    the timeout parameter. The channel's `establish` does not. If a
-   future transport (TLS-wrapped, e.g.) needs a different timeout
-   shape, move the timeout into `TcpChannelConfig`. For now,
-   transport owns it.
+   future transport (for example, TLS-wrapped) needs a different
+   timeout shape, move the timeout into `TcpChannelConfig`. At this
+   step, the transport owns it.
 
-4. **`set_keepalive` footgun.** Spec §7.12: "Do not enable TCP
+4. **`set_keepalive` hazard.** Spec §7.12: "Do not enable TCP
    keepalive." Tokio's `TcpStream` defaults to off. Verify by
-   inspection that `TokioTcpTransport::connect` doesn't enable it.
+   inspection that `TokioTcpTransport::connect` does not enable it.
    Add a one-line code comment at the `connect` site noting the
-   deliberate non-action so a future "improvement" PR doesn't add
+   deliberate non-action so a future "improvement" PR does not add
    it back. The 1 Hz `ClientToServer` heartbeat (UDP only,
    supervisor concern) is the application-level liveness signal.
 
 5. **Frame-size sanity ceiling.** Sauce's recv buffer is 65 536
    bytes (`Buffer.alloc(65536)`). A frame larger than the buffer
-   would confuse sauce's demuxer; ours can in theory accept larger
-   accumulators (`Vec<u8>` grows). The `BE u16` length prefix caps
-   each frame at 65 535 bytes. Consider a sanity max in the
-   channel (e.g. reject if accumulator grows past 128 KiB without
-   a complete frame) to bound memory if the peer sends garbage.
-   Optional; add only if integration testing surfaces an issue.
+   would confuse sauce's demuxer; this implementation can in
+   theory accept larger accumulators (`Vec<u8>` grows). The
+   `BE u16` length prefix caps each frame at 65 535 bytes.
+   Consider a sanity maximum in the channel (for example, reject
+   if the accumulator grows past 128 KiB without a complete frame)
+   to bound memory if the peer sends malformed data. Optional;
+   add only if integration testing surfaces an issue.
 
 6. **Recv-loop "stop" semantics on `Err(io)` from `read_chunk`.**
    Plan: stop the recv loop on transport-level errors (peer
-   closed, broken pipe, etc.) — emits `RecvError` then exits with
-   `Shutdown`. The supervisor (STEP 12) treats this as a signal to
-   reconnect. Worth confirming we don't want to retry transient
-   errors automatically; in practice tokio surfaces transient
-   errors as `Pending`, not `Err`, so any `Err` we see is fatal.
+   closed, broken pipe, and similar): emit `RecvError` and then
+   exit with `Shutdown`. The supervisor (STEP 12) treats this as a
+   signal to reconnect. It is worth confirming that the channel
+   should not retry transient errors automatically; in practice
+   tokio surfaces transient errors as `Pending`, not `Err`, so any
+   `Err` observed is fatal.
 
 ## Design decisions worth pre-committing
 
 - **`TcpChannel` is generic over `T: TcpTransport`.** Same
   rationale as STEP 10's UDP channel (avoid `async-trait`).
-- **Single recv-loop background task.** Owns `transport.read_chunk()`
-  + the accumulator buffer + the demuxer drain. Send path is a
-  separate code path guarded by a `Mutex` on the IV state.
+- **Single recv-loop background task.** Owns `transport.read_chunk()`,
+  the accumulator buffer, and the demuxer drain. The send path is
+  a separate code path guarded by a `Mutex` on the IV state.
 - **Watchdog co-located with recv loop.** Wraps `read_chunk` in
   `tokio::time::timeout`. On timeout, emit `Timeout` and continue
-  (no self-shutdown — supervisor decides).
-- **`Notify`-based clean shutdown.** Same pattern STEP 10 uses:
-  `shutdown()` notifies, recv-loop selects on the notify, emits
-  `Shutdown` and exits.
-- **No reconnect logic in this step.** Channel exposes
-  `Timeout` / `RecvError` / `Shutdown` events. Backoff lives
+  (no self-shutdown: the supervisor decides).
+- **`Notify`-based clean shutdown.** The same pattern STEP 10 uses:
+  `shutdown()` notifies, the recv loop selects on the notify, emits
+  `Shutdown`, and exits.
+- **No reconnect logic in this step.** The channel exposes
+  `Timeout`, `RecvError`, and `Shutdown` events. Backoff resides
   in STEP 12.
 - **Share inbound-decode logic with UDP** by extracting the
-  per-packet work (header decode + IV update + decrypt) into a
-  private helper that both channels reach. Keeps the IV / header /
-  decrypt rules in one place. The plaintext-envelope step differs
-  (UDP recv has no envelope, TCP recv has `[2, hello?, proto…]`)
-  and stays in each channel.
+  per-packet work (header decode, IV update, decrypt) into a
+  private helper that both channels reach. This keeps the IV,
+  header, and decrypt rules in one place. The plaintext-envelope
+  step differs (UDP recv has no envelope, TCP recv has
+  `[2, hello?, proto…]`) and remains in each channel.
 
 ## Wiring into the workspace
 
-- `crates/zwift-relay/` only edits are `src/tcp.rs` + `tests/tcp.rs`
-  (plus a small refactor pulling the shared inbound helper into a
-  private module if we go that route).
-- No new direct deps; no `Cargo.toml` change.
+- `crates/zwift-relay/` only edits are `src/tcp.rs` and
+  `tests/tcp.rs` (plus a small refactor pulling the shared inbound
+  helper into a private module if that route is taken).
+- No new direct dependencies; no `Cargo.toml` change.
 - The root `ranchero` crate does not yet depend on TCP-channel
-  surface — that comes at STEP 12.
+  surface; that is added at STEP 12.
 - License header `// SPDX-License-Identifier: AGPL-3.0-only` at the
   top of every new `.rs` file.

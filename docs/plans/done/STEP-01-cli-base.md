@@ -4,31 +4,31 @@
 
 A `ranchero` binary that parses a command line, recognises all planned
 subcommands and options, prints coherent `--help`, and dispatches to a
-per-subcommand stub that simply reports which command was selected and which
+per-subcommand stub that reports which command was selected and which
 options were supplied. No I/O beyond argument parsing and stdout; no network,
 no config reading, no daemon fork. All logic is pure and therefore
 exhaustively testable.
 
-This is the scaffold that every later step plugs into.
+This is the foundation on which every later step builds.
 
 ## Subcommands
 
 | Command | Purpose |
 |---|---|
-| `ranchero configure` | Open an interactive TUI to configure the application. (Stubbed in this step — actually launched in STEP 02.) |
-| `ranchero start` | Start ranchero listening on a Zwift stream. (Stubbed; real behaviour in STEP 03.) |
-| `ranchero stop` | Stop the currently-running ranchero process. (Stubbed; real behaviour in STEP 03.) |
-| `ranchero status` | Dump statistics about the currently running ranchero process, or report shut down. (Stubbed; real behaviour in STEP 03.) |
+| `ranchero configure` | Open an interactive TUI to configure the application. (Stub in this step; the TUI is launched in STEP 02.) |
+| `ranchero start` | Start ranchero listening on a Zwift stream. (Stub here; full behaviour is implemented in STEP 03.) |
+| `ranchero stop` | Stop the currently running ranchero process. (Stub here; full behaviour is implemented in STEP 03.) |
+| `ranchero status` | Print statistics about the currently running ranchero process, or report that it is not running. (Stub here; full behaviour is implemented in STEP 03.) |
 
 ## Global options
 
 All options are parsed at the top level and made available to every
-subcommand. (`clap`'s derive API with `#[command(flatten)]` on a shared
-`GlobalOpts` struct is the straightforward way.)
+subcommand. (`clap`'s derive API, with `#[command(flatten)]` on a shared
+`GlobalOpts` struct, is the simplest mechanism.)
 
 | Long | Short | Argument | Description |
 |---|---|---|---|
-| `--verbose` | `-v` | — | Verbose mode. Repeatable later; boolean for now. |
+| `--verbose` | `-v` | — | Verbose mode. Will be repeatable in a later step; a single boolean at this step. |
 | `--debug` | `-D` | — | Emit debug-level output. **Implies `--foreground`** (see below). |
 | `--foreground` | — | — | Keep the process in the foreground (no daemonization). |
 | `--mainuser` | — | `<email>` | Override main account login email. |
@@ -39,23 +39,26 @@ subcommand. (`clap`'s derive API with `#[command(flatten)]` on a shared
 
 Notes:
 
-- `-D` is a **non-standard** short flag for debug (clap's default would be
-  `-d`). Since the user specified `-D` explicitly, wire it with
-  `#[arg(short = 'D', long = "debug")]`.
-- `--debug` setting `foreground = true` is resolved in `GlobalOpts::finalize()`
-  so tests can assert it as a pure function rather than by side-effect.
-- `--mainpassword` and `--monitorpassword` on the command line are an
-  anti-pattern (they leak to `ps`) but the spec requires them; warn when
-  they are set and `--verbose` is on.
-- Option values are plain `Option<T>` in this step. The precedence merge
-  (CLI > env > config file > default) belongs to STEP 02.
+- `-D` is a non-standard short flag for debug (clap's default would be
+  `-d`). Because the specification requires `-D` explicitly, configure
+  it with `#[arg(short = 'D', long = "debug")]`.
+- The rule that `--debug` sets `foreground = true` is resolved in
+  `GlobalOpts::finalize()` so that tests can assert it as a pure
+  function rather than as a side-effect of parsing.
+- Passing `--mainpassword` or `--monitorpassword` on the command line
+  is an anti-pattern, because the value is visible to `ps`. The
+  specification requires the flags regardless; emit a warning when
+  they are set and `--verbose` is also enabled.
+- Option values are plain `Option<T>` in this step. The precedence
+  merge (CLI > environment > configuration file > default) is
+  implemented in STEP 02.
 
 ## Tests first
 
-Put tests in `tests/cli_args.rs` (integration test against a public
-`parse_args` function) plus unit tests inside `src/cli.rs` where
-convenient. All tests must compile-and-fail before any production code
-beyond the minimum to satisfy the compiler.
+Place the tests in `tests/cli_args.rs` (integration tests against a
+public `parse_args` function), with unit tests inside `src/cli.rs`
+where convenient. Every test must be present and failing before any
+production code is written, beyond the minimum required to compile.
 
 ### Parsing tests
 
@@ -97,17 +100,22 @@ beyond the minimum to satisfy the compiler.
     each variant (and includes global-option state when `--verbose`
     is set, e.g. `"start (verbose)"`).
 
-### Anti-tests (guard against regressions we know we want)
+### Regression guards
 
-16. `password_on_cli_without_verbose_is_silent` — asserting no warning
-    string in the run output when `--mainpassword` is set but `-v` is
-    not.
-17. `password_on_cli_with_verbose_warns` — the opposite; a warning is
-    present.
+These tests guard the inverse condition of an explicit
+requirement: they fail if a future change accidentally
+re-introduces a behaviour that has been explicitly excluded.
+
+16. `password_on_cli_without_verbose_is_silent` — asserts that no
+    warning string appears in the run output when `--mainpassword`
+    is set but `--verbose` is not.
+17. `password_on_cli_with_verbose_warns` — the inverse: a warning
+    string is present when both `--mainpassword` and `--verbose`
+    are set.
 
 ## Implementation outline
 
-Single crate for now (STEP 01 doesn't need the workspace split yet):
+A single crate is sufficient at step 01; the workspace split is introduced in STEP 06:
 
 ```
 ranchero/
@@ -121,7 +129,7 @@ ranchero/
     cli_args.rs         # integration tests that exercise parse_from
 ```
 
-Key types (sketch, not binding):
+Key types (illustrative; the final signatures may vary):
 
 ```rust
 // src/cli.rs
@@ -169,7 +177,7 @@ impl GlobalOpts {
 }
 ```
 
-`main.rs` is tiny:
+`main.rs` is minimal:
 
 ```rust
 fn main() -> ExitCode {
@@ -193,9 +201,9 @@ fn main() -> ExitCode {
 
 ## Deferred to later steps
 
-- Actually honouring any option: STEP 02 (config), STEP 03 (daemon), STEP
-  04 (logging), STEP 05 (credentials).
+- Honouring any option: STEP 02 (configuration), STEP 03 (daemon),
+  STEP 04 (logging), STEP 05 (credentials).
 - The interactive TUI behind `ranchero configure`: STEP 02.
-- Workspace split: triggered as soon as STEP 06 introduces `zwift-proto`.
-- Env-var fallbacks (`RANCHERO_MAINUSER` etc.): STEP 02 when we introduce
-  the full precedence chain.
+- Workspace split: introduced when STEP 06 adds `zwift-proto`.
+- Environment-variable fallbacks (`RANCHERO_MAINUSER` and so on):
+  STEP 02, when the full precedence chain is implemented.

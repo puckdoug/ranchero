@@ -22,4 +22,4 @@ routes to the correct UDP pool based on the watched athlete's current
   activity resumes immediately.
 - Watched-athlete switch triggers UDP reselection.
 
-To be fully elaborated when we start work on this step.
+To be fully elaborated when work on this step begins.

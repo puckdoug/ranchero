@@ -15,7 +15,7 @@ Establish the secure UDPv4 telemetry channel per spec §4.6 / §4.7:
   offset)` sample; once ≥ 5 samples are within stddev of the median
   latency, average their offsets and call
   `WorldTimer::adjust_offset(-mean_offset)`.
-- After convergence the channel goes "active": background recv-loop
+- After convergence the channel becomes "active": a background recv-loop
   decrypts inbound `ServerToClient` packets and emits them on a
   broadcast; `send_player_state` is the outbound side.
 - Watchdog: 30 s of silence (or arbitrary recv-loop error budget)
@@ -23,7 +23,7 @@ Establish the secure UDPv4 telemetry channel per spec §4.6 / §4.7:
 
 This is the first step that touches a real `tokio::net::UdpSocket`
 in the workspace. It owns the IV state mutation rules that STEP 08's
-codec deliberately punted on.
+codec deliberately deferred.
 
 ## Scope
 
@@ -32,17 +32,17 @@ codec deliberately punted on.
 - `WorldTimer` — local clock with adjustable offset against the Zwift
   epoch (`1414016074400`, spec §4.3). Lives at the crate root because
   STEP 11's TCP channel will share it.
-- `UdpTransport` trait + `TokioUdpTransport` impl — abstracts the
+- `UdpTransport` trait + `TokioUdpTransport` impl: abstracts the
   `tokio::net::UdpSocket::send` / `recv` pair so tests can drive
   byte-level scripts deterministically.
-- `time_sync` module — pure-math SNTP filter (sample collection,
+- `time_sync` module: pure-math SNTP filter (sample collection,
   median-by-latency, stddev-based outlier rejection, mean offset).
-- `UdpChannel` — the orchestration: hello-loop, recv-loop background
+- `UdpChannel`: the orchestration: hello-loop, recv-loop background
   task, send path, IV state mutation, watchdog, shutdown.
 - IV state ownership for the UDP send/recv path (the contract STEP 08
   planned around).
 
-**Out of scope** (lives in later steps):
+**Out of scope** (deferred to later steps):
 
 | Concern | Where it lives |
 |---|---|
@@ -51,7 +51,7 @@ codec deliberately punted on.
 | Reconnect / backoff supervision when `Timeout` fires | STEP 12 |
 | `_lastUDPServer` "stick to the same direct server when possible" | STEP 12 |
 | Companion-app UDP / tertiary channels | Out of scope for v1 (spec §6) |
-| Player-state encoding (`encodePlayerStateFlags1/2`, cadence clamp etc.) | STEP 13+ (`zwift-stats`) — UDP just sends whatever `PlayerState` it's given |
+| Player-state encoding (`encodePlayerStateFlags1/2`, cadence clamp, and similar) | STEP 13+ (`zwift-stats`); UDP sends whatever `PlayerState` it is given |
 
 ## Crate layout
 
@@ -77,13 +77,13 @@ crates/zwift-relay/
     └── udp.rs           ← NEW (mock-transport-driven channel tests)
 ```
 
-If `udp.rs` exceeds ~500 lines we split into `udp/{mod, channel,
-transport, sync}.rs`. Plan starts with the single-file form.
+If `udp.rs` exceeds approximately 500 lines, split into `udp/{mod, channel,
+transport, sync}.rs`. The plan starts with the single-file form.
 
 ## Dependencies
 
-`crates/zwift-relay/Cargo.toml` gains the `net` feature on tokio. No
-new direct deps:
+`crates/zwift-relay/Cargo.toml` gains the `net` feature on tokio.
+There are no new direct dependencies:
 
 ```toml
 [dependencies]
@@ -120,7 +120,7 @@ level.
 ///
 /// Cloneable handle pattern: the `WorldTimer` struct holds the
 /// adjustable state behind an `Arc<Mutex<…>>`; clones share the same
-/// underlying state. Cheap to pass around to multiple channels.
+/// underlying state. Inexpensive to pass to multiple channels.
 #[derive(Clone)]
 pub struct WorldTimer { /* private */ }
 
@@ -258,13 +258,13 @@ pub const MIN_SYNC_SAMPLES: usize = 5;
 
 ## Two seqno spaces (worth pre-committing)
 
-Sauce keeps two independent `seqno` counters per channel. The Rust
+Sauce maintains two independent `seqno` counters per channel. The Rust
 port must do the same:
 
 | Counter | Where it lives | What it counts |
 |---|---|---|
 | `iv.seqno` (u32) | `RelayIv`, channel's send/recv state | Bytes-on-the-wire packet counter, embedded in the AES-GCM IV; goes into `Header::seqno` when the SEQNO flag is set |
-| `app_seqno` (u32) | `ClientToServer.seqno` proto field | Application-level packet counter, scoped to the channel; the server echoes it back as `ServerToClient.ack_seqno` so we can pair hellos to their replies for latency measurement |
+| `app_seqno` (u32) | `ClientToServer.seqno` proto field | Application-level packet counter, scoped to the channel; the server echoes it back as `ServerToClient.ack_seqno` so the client can pair hellos to their replies for latency measurement |
 
 `UdpChannel` owns both. The hello-loop's `(seqno → send_time)` map
 keys on `app_seqno`, **not** `iv.seqno`. Both increment by 1 per
@@ -301,9 +301,9 @@ if valid.len() > 4:
 ```
 
 Sauce's threshold is **strictly greater than 5** before *attempting*
-filter, and **strictly greater than 4** for accepting it. Plan
+to filter, and **strictly greater than 4** for accepting it. The plan
 preserves both bounds as `> 5` and `> 4` literals (or as `>=
-min_sync_samples + 1` / `>= 5` if we want named constants — see
+min_sync_samples + 1` / `>= 5` if named constants are preferred; see
 "Open verification points" §1).
 
 ## Tests-first plan
@@ -311,7 +311,7 @@ min_sync_samples + 1` / `>= 5` if we want named constants — see
 All tests under `crates/zwift-relay/tests/`. None require a real
 network socket; the channel tests use a `MockUdpTransport` driven by
 a pair of `tokio::sync::mpsc` channels (one for "what the test
-wants the transport to receive next" → `transport.recv()`, one for
+wants the transport to receive next" → `transport.recv()`, and one for
 "what the channel sent that the test should see" ← `transport.send()`).
 
 ### `world_timer.rs`
@@ -339,15 +339,15 @@ The filter is exposed as a free function `udp::sync::compute_offset(samples: &[S
 
 | Test | Asserts |
 |---|---|
-| `establish_sends_first_hello_with_relay_conn_seqno_flags` | The first packet on the wire decodes as a header with all 3 flags set, then a TCP-style envelope... wait, UDP envelope: `[u8 version=1][proto bytes]`. Plaintext after decrypt is exactly that shape. |
-| `establish_sends_subsequent_hellos_with_seqno_only` | After the first hello, header flags collapse to SEQNO only (since relay/conn don't change). |
+| `establish_sends_first_hello_with_relay_conn_seqno_flags` | The first packet on the wire decodes as a header with all 3 flags set, then the UDP envelope: `[u8 version=1][proto bytes]`. Plaintext after decrypt is exactly that shape. |
+| `establish_sends_subsequent_hellos_with_seqno_only` | After the first hello, header flags collapse to SEQNO only (since relay/conn do not change). |
 | `establish_sends_payload_athlete_id_realm_one_world_time_zero` | The decrypted `ClientToServer` matches `{athleteId, realm: 1, worldTime: 0}`. |
 | `establish_max_hellos_then_sync_timeout` | `MockUdpTransport::recv` never returns; `establish()` errors with `SyncTimeout { attempts: 25 }` (or whatever `max_hellos` is). |
 | `establish_converges_after_six_replies` | Mock feeds 6 well-formed `ServerToClient` replies with valid `ack_seqno` and tight-but-distinct `world_time`s; `establish()` returns `(channel, events)` and the first event is `Established { latency_ms: ... }` matching the median. |
-| `establish_increments_app_seqno_per_hello` | The first hello has `ClientToServer.seqno = 0`, second `= 1`, etc. |
-| `establish_increments_iv_seqno_per_hello` | The first hello header has `IV.seqno = 0`, second `= 1`, etc. (asserted by checking the SEQNO field in successive headers). |
+| `establish_increments_app_seqno_per_hello` | The first hello has `ClientToServer.seqno = 0`, second `= 1`, and so on. |
+| `establish_increments_iv_seqno_per_hello` | The first hello header has `IV.seqno = 0`, second `= 1`, and so on (asserted by checking the SEQNO field in successive headers). |
 | `recv_loop_emits_inbound_event_per_decoded_packet` | After establish, mock feeds two `ServerToClient` packets; channel emits two `ChannelEvent::Inbound` events with the correct payloads. |
-| `recv_rejects_inbound_with_wrong_relay_id` | An inbound packet whose RELAY_ID flag carries a different `relay_id` produces a `RecvError` event (or is silently dropped — see "Open verification points" §3). |
+| `recv_rejects_inbound_with_wrong_relay_id` | An inbound packet whose RELAY_ID flag carries a different `relay_id` produces a `RecvError` event (or is silently dropped; see "Open verification points" §3). |
 | `recv_loop_decryption_failure_emits_recv_error` | A tampered-tag inbound packet produces `RecvError` containing the underlying `CodecError`. |
 | `watchdog_fires_after_silence` | Mock provides initial sync, then stops responding. After `watchdog_timeout` (test uses small value like `200ms`), channel emits `ChannelEvent::Timeout`. |
 | `send_player_state_emits_packet_with_seqno_flag_only` | After convergence, `send_player_state(...)` produces a packet whose decrypted plaintext is `[u8 version=1][PlayerState bytes]` and whose header carries SEQNO only. |
@@ -376,52 +376,52 @@ otherwise inline in `tests/udp.rs`.
 
 ## Open verification points
 
-1. **Sauce's `> 5` and `> 4` thresholds vs. our named constants.**
+1. **Sauce's `> 5` and `> 4` thresholds vs. named constants.**
    The plan defaults `min_sync_samples = 5` and uses the literal `>
    min_sync_samples` (so 6+ samples trigger the filter). This matches
    sauce. If tests show the filter never converging on 5-tight-sample
-   inputs and we want to be more permissive, reconsider — but match
-   sauce for now.
+   inputs and a more permissive bound is wanted, reconsider; but match
+   sauce at this step.
 
 2. **Watchdog on the *send* side?** Sauce's `NetChannel` only
    watchdogs inbound silence (`tickleWatchdog` is called from
-   `_onUDPData` only). Plan inherits that. If real-world testing
-   shows we need to detect outbound failure too (e.g. send queue
-   stuck), add a separate keepalive timer.
+   `_onUDPData` only). The plan inherits that. If real-world testing
+   shows that outbound failure must also be detected (for example, a stuck
+   send queue), add a separate keepalive timer.
 
-3. **Inbound `relay_id` mismatch — drop or fatal?** Sauce throws
+3. **Inbound `relay_id` mismatch: drop or fatal?** Sauce throws
    ("Bad Relay ID", `zwift.mjs:1077-1080`), which propagates through
-   `incError` and after enough errors triggers reconnect. Plan emits
+   `incError` and after enough errors triggers reconnect. The plan emits
    it as `RecvError` (recoverable) rather than tearing down the
    channel; the supervisor (STEP 12) decides whether to reconnect.
-   Reconsider if we observe legitimate cross-channel mixups.
+   Reconsider if legitimate cross-channel mixups are observed.
 
 4. **Initial coarse clock correction at login.** Sauce's
-   `GameMonitor.login` (`zwift.mjs:1644-1648`) does a one-shot
+   `GameMonitor.login` (`zwift.mjs:1644-1648`) performs a one-shot
    coarse correction (`adjustOffset(-tDelta)`) if the local clock is
-   off by > 60 s, *before* the UDP-driven SNTP sync runs. Whose job
-   is this? Two clean choices:
+   off by > 60 s, *before* the UDP-driven SNTP sync runs. Where does
+   this responsibility belong? Two clean choices:
    - **STEP 09's relay session** populates `RelaySession.server_time_ms`,
-     and the supervisor does the coarse correction before
-     `UdpChannel::establish`. (Plan recommends this — STEP 09 already
-     plumbed `server_time_ms` through.)
+     and the supervisor performs the coarse correction before
+     `UdpChannel::establish`. (The plan recommends this; STEP 09 already
+     routes `server_time_ms` through.)
    - **STEP 10's `UdpChannel::establish`** accepts an
-     `Option<server_time_ms>` and does the coarse step itself.
+     `Option<server_time_ms>` and performs the coarse step itself.
 
-   Pick during implementation; record in as-built doc.
+   Choose during implementation; record in the as-built document.
 
-5. **Hello-loop `Promise.race([sleep(10*i), syncComplete])` vs. our
+5. **Hello-loop `Promise.race([sleep(10*i), syncComplete])` vs.
    `tokio::select!`.** Sauce sleeps `10 * i` between hellos but breaks
-   early if sync converges. Rust port uses `tokio::select!` over the
+   early if sync converges. The Rust port uses `tokio::select!` over the
    sleep and a sync-converged notify; functionally equivalent. Verify
    timing is similar (~3 s worst case, much less if sync converges
    on the first 6 packets).
 
 6. **Hello payload field names.** The vendored proto uses snake_case
-   for `ClientToServer` fields (`athlete_id`, `world_time`, etc.),
-   while sauce uses camelCase. Implementation just uses whatever
-   prost generates. Confirmed via STEP 06 inspection — no design
-   choice here, just a heads-up for spec readers.
+   for `ClientToServer` fields (`athlete_id`, `world_time`, and similar),
+   while sauce uses camelCase. The implementation uses whatever
+   prost generates. Confirmed via STEP 06 inspection; no design
+   choice here, only a note for spec readers.
 
 ## Design decisions worth pre-committing
 
@@ -431,19 +431,19 @@ otherwise inline in `tests/udp.rs`.
   monomorphizations: `UdpChannel<TokioUdpTransport>` for production
   and `UdpChannel<MockUdpTransport>` for tests.
 - **Single recv-loop background task.** One spawned task owns
-  `transport.recv()` in a loop, decrypt → decode → broadcast. Send
+  `transport.recv()` in a loop, decrypt → decode → broadcast. The send
   path is a separate code path, guarded by an internal mutex on the
   IV state. No multi-consumer for the transport.
 - **Watchdog co-located with the recv-loop.** The recv-loop wraps its
   `recv` call in `tokio::time::timeout(watchdog_timeout, …)`. On
   timeout, emit `ChannelEvent::Timeout` and loop again (no
-  self-shutdown — the supervisor decides). Avoids a second task just
-  for the watchdog.
+  self-shutdown; the supervisor decides). This avoids a second task
+  dedicated to the watchdog.
 - **`broadcast` channel for events, capacity 64.** Same pattern STEP
   09 used. Multiple consumers (supervisor + future stats processor +
   TUI debug pane) can subscribe without coordinating.
 - **`WorldTimer` is `Clone`-as-handle.** Internally
-  `Arc<Mutex<State>>`; clones share state. Cheap to pass to multiple
+  `Arc<Mutex<State>>`; clones share state. Inexpensive to pass to multiple
   channels and to a stats-processor instance.
 - **No reconnect logic in this step.** `UdpChannel` exposes
   `Timeout` / `RecvError` / `Shutdown` events. The supervisor that
@@ -452,9 +452,9 @@ otherwise inline in `tests/udp.rs`.
 ## Wiring into the workspace
 
 - `crates/zwift-relay/Cargo.toml` adds the `net` feature to tokio.
-- No new direct deps; no new crate.
+- No new direct dependencies; no new crate.
 - The root `ranchero` crate does not yet depend on UDP-channel
-  surface — that comes at STEP 12 when the daemon orchestrates
+  surface; that comes at STEP 12 when the daemon orchestrates
   session + channels + stats.
 - License header `// SPDX-License-Identifier: AGPL-3.0-only` at the
   top of every new `.rs` file (matches the rest of the workspace).

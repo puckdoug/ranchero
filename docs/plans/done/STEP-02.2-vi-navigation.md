@@ -4,9 +4,10 @@
 
 ## Goal
 
-When `editing_mode = "vi"`, extend vi key bindings from the field-editing
-layer (STEP 02.1) to the **outer screen-navigation layer** so the entire
-`ranchero configure` workflow is drivable with vi muscle memory:
+When `editing_mode = "vi"`, extend vi key bindings from the
+field-editing layer (STEP 02.1) to the outer screen-navigation
+layer, so that the entire `ranchero configure` workflow is
+navigable using familiar vi key sequences:
 
 - Tab / Shift-Tab to move between screens (the visible "tabs").
 - `j`/`k` to move between fields within a screen.
@@ -32,27 +33,28 @@ pub enum Mode {
     Editing,
     ConfirmDiscard,
     Help,
-    VimCommand { buffer: String },   // accumulates chars after ':'
+    VimCommand { buffer: String },   // accumulates characters after ':'
 }
 ```
 
-`VimCommand` is reachable from any vi Normal context. Its `buffer` is
-rendered live in the status bar (`:wq_`).
+`VimCommand` is reachable from any vi Normal context. Its `buffer`
+is rendered in the status bar as the user types (`:wq_`).
 
 ### `Action` enum
 
 ```rust
 pub enum Action {
     None,
-    Save,              // save + close
-    WriteOnly,         // save, stay open, clear dirty (`:w`)
+    Save,              // save and close
+    WriteOnly,         // save without closing; clear the dirty flag (`:w`)
     Cancel,
     DiscardConfirmed,
 }
 ```
 
-The driver loop treats `WriteOnly` like `Save` for the storage step, but
-continues the event loop instead of returning.
+The driver loop treats `WriteOnly` identically to `Save` for the
+storage step, but it continues the event loop rather than
+returning.
 
 ### `Model` fields
 
@@ -67,23 +69,26 @@ pub struct Model {
     pub mode: Mode,
     pub editing_mode: EditingMode,
 
-    /// First char of a two-key vi sequence (`Z` awaiting `Z`/`Q`,
-    /// `d` awaiting motion or `d`, `y` awaiting motion or `y`).
-    /// Cleared on any non-continuing keypress.
+    /// First character of a two-key vi sequence (`Z` awaiting
+    /// `Z` or `Q`; `d` awaiting a motion or `d`; `y` awaiting a
+    /// motion or `y`). Cleared on any non-continuing keypress.
     pending_key: Option<char>,
 
-    /// Persistent edtui handler. Lives on the model so multi-key
-    /// sequences (`dd`, `dw`, `de`, etc.) accumulate state across
-    /// individual keypresses. Reset on `enter_editing`.
+    /// Persistent edtui handler. Stored on the model so that
+    /// multi-key sequences (`dd`, `dw`, `de`, and similar)
+    /// accumulate state across individual keypresses. Reset by
+    /// `enter_editing`.
     editor_handler: EditorEventHandler,
 
-    /// Vi paste register. Populated by `dd`/`yy`, consumed by `p`/`P`.
-    /// Survives across fields so `ddjp`-style moves work.
+    /// Vi paste register. Populated by `dd` and `yy`, consumed by
+    /// `p` and `P`. Persists across fields so that `ddjp`-style
+    /// movement is possible.
     paste_buffer: String,
 
     /// Undo history for model-level operations (`dd`, `p`, `P`).
-    /// Each entry stores the field's text and cursor position before
-    /// the operation. `u`/`:u`/`:undo` pop and restore.
+    /// Each entry stores the field's text and cursor position
+    /// before the operation. `u`, `:u`, and `:undo` pop entries
+    /// from the stack and restore the previous state.
     undo_stack: Vec<UndoEntry>,
 
     initial_texts: HashMap<FieldId, String>,
@@ -116,13 +121,13 @@ struct UndoEntry {
 | `Enter` | Same as `a` (or toggle for boolean fields like HTTPS) |
 | `dd` | Cut focused field to `paste_buffer`; clear field; push undo |
 | `yy` | Yank focused field to `paste_buffer` (no clear, no dirty) |
-| `p` / `P` | Paste `paste_buffer` AT the cursor (highlighted char shifts right); cursor lands on last pasted char |
+| `p` / `P` | Paste `paste_buffer` at the cursor (the highlighted character shifts to the right); the cursor is positioned on the last pasted character |
 | `u` | Undo most recent destructive operation |
 | `:` | Enter `Mode::VimCommand` |
 | `ZZ` | Save and close (`Action::Save`) |
 | `ZQ` | Quit without saving (`Action::DiscardConfirmed`) |
 | `?` | Toggle help overlay |
-| `Esc`, `Ctrl-C` | **No-op in vi mode** — never raises ConfirmDiscard. The user quits explicitly. |
+| `Esc`, `Ctrl-C` | No operation in vi mode; never raises ConfirmDiscard. The user must quit explicitly. |
 | `Ctrl-S` | Save (alias, all modes) |
 
 ### Unified Normal — inside a field but in `EditorMode::Normal` (after Esc from Insert)
@@ -136,8 +141,8 @@ quit commands all behave identically. Differences:
 
 ### Editing — `Mode::Editing` + `EditorMode::Insert` (vi)
 
-Edtui handles all character insertion, backspace, etc. Specific
-intercepts at our layer:
+Edtui handles all character insertion, backspace, and similar
+operations. The following keys are intercepted by this layer:
 
 | Key | Effect |
 |---|---|
@@ -151,7 +156,7 @@ editing immediately (cancel semantics).
 
 | Key | Effect |
 |---|---|
-| `Esc` | Exit `Mode::Editing` to outer Normal. **Does not revert** (vi Normal-mode edits are permanent — `dd`, `dw`, etc. stay in effect). |
+| `Esc` | Exit `Mode::Editing` to outer Normal. Does not revert: vi Normal-mode edits are permanent, so `dd`, `dw`, and similar operations remain in effect. |
 | `i`/`a`/`A`/`I` | Re-enter Insert mode (edtui) |
 
 ### Command mode (`Mode::VimCommand`)
@@ -164,23 +169,25 @@ editing immediately (cancel semantics).
 | `:q!` Enter | Force-quit — `Action::DiscardConfirmed` |
 | `:u` Enter, `:undo` Enter | Pop the model undo stack |
 | Esc | Cancel — clear buffer, return to `Mode::Normal` |
-| Backspace | Trim last char from buffer |
+| Backspace | Remove the last character from the buffer |
 | Unknown Enter | Status error: `unknown command: <buf>` |
 
 ### Modifier normalisation
 
-Most terminals send uppercase letters as `KeyCode::Char('Z')` **with
-`KeyModifiers::SHIFT` set**. Our match arms expect bare `Char(_)`. The
-`update()` entry strips `SHIFT` from `Char(_)` events before dispatch
-so `ZZ`, `ZQ`, `A`, `P`, `?` etc. work uniformly. Non-character keys
-(e.g., `Shift+BackTab`) keep their modifiers.
+Most terminals send uppercase letters as `KeyCode::Char('Z')`
+with `KeyModifiers::SHIFT` set. The match arms in this layer
+expect a bare `Char(_)`. The `update()` entry strips `SHIFT` from
+`Char(_)` events before dispatch, so that `ZZ`, `ZQ`, `A`, `P`,
+`?`, and similar keys work uniformly. Non-character keys (for
+example, `Shift+BackTab`) retain their modifiers.
 
 ---
 
 ## Edtui customisation
 
-The default edtui vim handler binds `dd`, `D`, `x`, `X`, but **not**
-`dw`, `db`, or `de`. Our `make_editor_handler` extends it:
+The default edtui vim handler binds `dd`, `D`, `x`, and `X`, but
+not `dw`, `db`, or `de`. The `make_editor_handler` function
+extends the handler:
 
 ```rust
 let mut handler = KeyEventHandler::vim_mode();
@@ -197,23 +204,29 @@ handler.insert(KeyEventRegister::n(vec![KeyInput::new('d'), KeyInput::new('e')])
 EditorEventHandler::new(handler)
 ```
 
-The `arboard` feature is **disabled** in our `edtui` dependency
-(`default-features = false` in `Cargo.toml`). With it enabled, edtui's
-paste reads from the OS clipboard, which conflicts with our model
-`paste_buffer` semantics and produces surprising results.
+The `arboard` feature is disabled in the `edtui` dependency
+(`default-features = false` in `Cargo.toml`). When enabled,
+edtui's paste reads from the operating-system clipboard, which
+conflicts with the model's `paste_buffer` semantics and produces
+unexpected results.
 
-### `d` / `y` lookahead in unified Normal
+### `d` and `y` lookahead in unified Normal
 
-Our model intercepts the first `d`/`y` of every operator-motion sequence:
+The model intercepts the first `d` or `y` of every
+operator-motion sequence:
 
-1. First `d` → `pending_key = Some('d')`, no immediate effect.
+1. First `d` → `pending_key = Some('d')`, with no immediate
+   effect.
 2. Second key:
-   - `d` → **our** model `dd` (clears field, populates `paste_buffer`, pushes undo).
-   - Anything else → forward the buffered `d` to edtui, fall through to
-     forward the second key normally. Edtui completes `dw`/`db`/`de`/etc.
+   - `d` → the model's own `dd` (clears the field, populates
+     `paste_buffer`, pushes an undo entry).
+   - Any other key → the buffered `d` is forwarded to edtui, and
+     the second key is forwarded normally. Edtui then completes
+     `dw`, `db`, `de`, and similar operator-motion sequences.
 
-This preserves `dd` cross-field semantics while letting edtui handle
-`d{motion}` natively. `yy` is symmetrical.
+This preserves `dd`'s cross-field semantics while allowing edtui
+to handle `d{motion}` natively. The `yy` sequence is handled
+symmetrically.
 
 ---
 
@@ -225,9 +238,10 @@ In `render_field`:
 - Field focused, `Mode::Editing` + `EditorMode::Insert` → text rendered
   unchanged, terminal cursor positioned via `frame.set_cursor_position()`
   (the terminal draws its native blinking bar).
-- Field focused, any other state → **block cursor**: the character at
-  `editor.cursor.col` is rendered with `Modifier::REVERSED`. No characters
-  are inserted into the rendered string — surrounding text stays in place.
+- Field focused, any other state → block cursor: the character
+  at `editor.cursor.col` is rendered with `Modifier::REVERSED`.
+  No characters are inserted into the rendered string; the
+  surrounding text remains in place.
 
 The cursor is therefore visible in **outer Normal mode** as well, so
 `h`/`l`/`b`/`w` movement provides clear visual feedback and `p`/`P` paste
@@ -250,7 +264,7 @@ left: mode indicator / command buffer                          right: dirty
 | Vi | Normal | — | `Tab: screen  j/k: field  h/l: cursor  i/a: edit  :: command  ZZ: save  ?: help` |
 | Vi | VimCommand | — | `:<buffer>` |
 | Vi | Editing | Insert | `-- INSERT --` |
-| Vi | Editing | Normal | *(empty — vi Normal is silent, like real vim)* |
+| Vi | Editing | Normal | *(empty; vi Normal is silent, matching standard vim behaviour)* |
 | Vi | Editing | Visual | `-- VISUAL --` |
 | Default / Emacs | Editing | — | `Editing — Enter: confirm  Esc: cancel` |
 | Any | ConfirmDiscard | — | `Unsaved changes. y: discard  n: go back` |
@@ -258,9 +272,10 @@ left: mode indicator / command buffer                          right: dirty
 
 Errors override the left zone with red text from `model.status.message`.
 
-`status_bar_content(mode, editor_mode, editing_mode) -> String` is a pure
-function exposed for unit testing. The view layer derives the indicator
-each frame rather than relying on the model to push updates.
+`status_bar_content(mode, editor_mode, editing_mode) -> String`
+is exposed as a pure function for unit testing. The view layer
+derives the indicator on each frame rather than relying on the
+model to push updates.
 
 ---
 
@@ -310,30 +325,35 @@ Keybindings
 
 ```
 text  = "abc",    cursor.col = 1 (on 'b'),    paste_buffer = "XY"
-result = "aXYbc",  cursor.col = 2 (on the 'Y' — last char of pasted region)
+result = "aXYbc",  cursor.col = 2 (on the 'Y' — the last character of the pasted region)
 ```
 
-Both `p` and `P` map to this single helper because each form field is a
-single line, so vim's "after current line" vs "at current line"
-distinction does not apply. The character under the cursor shifts right
-to make room — this matches the user mental model of "insert at the
-cursor", and `c{motion}` / `s` remain available for replace semantics.
+Both `p` and `P` are routed through this single helper, because
+each form field is a single line; vim's distinction between
+"after current line" and "at current line" does not apply. The
+character under the cursor shifts to the right to make room. This
+behaviour matches the user mental model of "insert at the
+cursor"; `c{motion}` and `s` remain available for replace
+semantics.
 
-The buffer survives field-to-field navigation, so `ddjp` moves data
-between fields. `p`/`P` from inside `Mode::Editing` (after Esc from
-Insert) also reads our `paste_buffer`, never the OS clipboard.
+The buffer persists across field-to-field navigation, so that
+`ddjp` moves data between fields. `p` and `P` invoked from inside
+`Mode::Editing` (after `Esc` from Insert) also read from the
+model's `paste_buffer` and never from the operating-system
+clipboard.
 
 ---
 
 ## Undo
 
-`push_undo(field)` snapshots the field's text and cursor before any
-destructive operation. `dd`, `p`, `P` all push entries. `pop_undo()`:
+`push_undo(field)` captures a snapshot of the field's text and
+cursor position before any destructive operation. `dd`, `p`, and
+`P` all push entries. `pop_undo()`:
 
 1. Restores the field's text.
 2. Restores the cursor position.
-3. **Jumps focus** to the restored field, switching screens if necessary
-   (so the user sees the change).
+3. Moves focus to the restored field, switching screens if
+   necessary, so that the change is visible to the user.
 4. Sets `dirty = true`, runs `validate()`.
 5. Reports `Nothing to undo` (red) if the stack is empty.
 
@@ -348,17 +368,18 @@ shows "Saved." until the next non-error keypress in `Mode::Normal`.
 
 ## Architecture — driver event filtering
 
-`run_loop` skips key events whose `kind != KeyEventKind::Press`. Some
-terminals (kitty keyboard protocol, certain macOS configurations) emit
-both Press and Release events; processing both fires every keypress
-twice. The filter lives in the driver, not in the model, so the model
-never sees these synthetic events.
+`run_loop` skips key events whose `kind != KeyEventKind::Press`.
+Some terminals (the kitty keyboard protocol, and certain macOS
+configurations) emit both Press and Release events; processing
+both would cause every keypress to be processed twice. The filter
+resides in the driver, not in the model, so that the model never
+sees these synthetic events.
 
 ---
 
 ## Tests
 
-Below is the final test set actually implemented. Counts are cumulative
+Below is the final test set as implemented. Counts are cumulative
 to the end of STEP 02.2.
 
 ### `src/tui/model.rs` — vi navigation and operators
@@ -481,7 +502,7 @@ to the end of STEP 02.2.
 All met:
 
 - ✅ All tests pass (192 total at completion of this step).
-- ✅ `cargo clippy --all-targets -- -D warnings` clean.
+- ✅ `cargo clippy --all-targets -- -D warnings` reports no warnings.
 - ✅ Tab/Shift-Tab switch screens; `j`/`k` navigate fields; `h`/`l` move cursor within field.
 - ✅ `i` / `a` / `A` / Enter enter Editing; cursor placed correctly (start vs end).
 - ✅ `dd` / `yy` populate `paste_buffer`; `p` / `P` insert at cursor (shifts text right).
@@ -499,14 +520,17 @@ All met:
 
 ## Deferred
 
-- `gg` / `G` for first / last screen.
-- `0` / `$` / `^` for line motions in outer Normal (h/l only for now).
+- `gg` and `G` for first / last screen.
+- `0`, `$`, and `^` for line motions in outer Normal mode (only
+  `h` and `l` are implemented at this stage).
 - Numeric prefix counts (`3j`, `5l`, `2dd`).
-- `c{motion}` / `s` (change / substitute) — currently only edtui's own
-  implementations apply within Insert mode.
-- Cross-field paste from edtui's per-field clip (when user does `dw`
-  inside a field, the deleted word goes to edtui's clip and is not
-  available via outer `p`).
+- `c{motion}` and `s` (change and substitute); at present, only
+  edtui's own implementations apply within Insert mode.
+- Cross-field paste from edtui's per-field clipboard. When the
+  user invokes `dw` inside a field, the deleted word is placed in
+  edtui's clipboard rather than the outer `paste_buffer`, and so
+  is not available via the outer `p`.
 - Mouse click to focus a field.
-- Custom `:` commands beyond `:w` / `:wq` / `:x` / `:q` / `:q!` / `:u` / `:undo`.
+- Custom `:` commands beyond `:w`, `:wq`, `:x`, `:q`, `:q!`,
+  `:u`, and `:undo`.
 - Redo (`Ctrl-R` / `:redo`).

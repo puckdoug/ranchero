@@ -29,4 +29,4 @@ serve the exact JSON protocol widgets expect (spec §6.3 / §7.9).
 - Backpressure: feed a stuck client; socket is closed after threshold.
 - HTTPS conditional: cert files present → TLS listener, absent → HTTP.
 
-To be fully elaborated when we start work on this step.
+To be fully elaborated when work on this step begins.

@@ -13,9 +13,10 @@ Port `shared/sauce/data.mjs` + `shared/sauce/power.mjs`:
 
 ## Tests-first outline
 
-- Against a set of recorded `(t, value)` traces, assert our rolling
-  sums / NP values agree with the JS implementation to ≤ 1e-6.
+- Against a set of recorded `(t, value)` traces, assert that the
+  rolling sums and NP values agree with the JS implementation to
+  ≤ 1e-6.
 - Boundary cases: empty window, single-sample, `maxGap` exceeded,
   `softPad`/`Break` sentinels restart the active-time accumulator.
 
-To be fully elaborated when we start work on this step.
+To be fully elaborated when work on this step begins.

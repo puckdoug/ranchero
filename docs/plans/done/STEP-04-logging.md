@@ -2,25 +2,28 @@
 
 ## Goal
 
-Wire `tracing` + `tracing-subscriber` so every later step has a uniform
-way to emit diagnostics, and make `-v` / `-D` actually change behaviour.
+Wire `tracing` and `tracing-subscriber` so every later step has a
+uniform way to emit diagnostics, and make `-v` and `-D` change
+behaviour.
 
 ## Behaviour
 
 Defaults differ by sink so backgrounded daemons always record their
 lifecycle events to the configured logfile, independent of any
-verbosity flag — operators rely on the logfile as the post-mortem
+verbosity flag; operators rely on the logfile as the post-mortem
 record of when the daemon ran.
 
-- `--verbose` → `info` on ranchero crates, `warn` on deps.
-- `--debug`   → `debug` on ranchero crates, `info` on deps; also keeps
-  process in foreground (already wired in STEP 01).
+- `--verbose` → `info` on ranchero crates, `warn` on dependencies.
+- `--debug`   → `debug` on ranchero crates, `info` on dependencies;
+  also keeps the process in foreground (already wired in STEP 01).
 - Foreground, no flags → `warn` everywhere (clean stderr).
-- Backgrounded, no flags → `info` on ranchero crates, `warn` on deps
-  (so `started` / `stopped` always reach the logfile).
-- `RUST_LOG` always wins if set (handed straight to `EnvFilter`).
+- Backgrounded, no flags → `info` on ranchero crates, `warn` on
+  dependencies (so that `started` and `stopped` always reach the
+  log file).
+- `RUST_LOG` always takes precedence if set (passed directly to
+  `EnvFilter`).
 - Logging sink: stderr when foreground, `logging.file` when backgrounded.
-- Rolling file appender — deferred (see Deferred section).
+- Rolling file appender: deferred (see Deferred section).
 
 ## Design
 
@@ -45,8 +48,8 @@ returns a `Guard` that flushes the non-blocking appender on drop.
 
 ## Emission contract
 
-The daemon ships these tracing events as part of STEP 04 so the
-integration tests have a stable surface to grep against. Existing
+The daemon emits these tracing events as part of STEP 04 so the
+integration tests have a stable surface to search against. Existing
 user-facing `println!` lines on stdout are preserved.
 
 | Level   | Target / message                          | Site                                                          |
@@ -55,8 +58,8 @@ user-facing `println!` lines on stdout are preserved.
 | `info`  | `"ranchero stopped"`                      | `daemon::runtime::start`, after the event loop exits          |
 | `debug` | `"control request received"` (`req` field)| `daemon::runtime::handle_unix_connection`, on each request    |
 
-Later steps (07+) bring their own per-domain events; STEP 04 only owns
-the lifecycle three above.
+Later steps (07 and later) introduce their own per-domain events;
+STEP 04 only owns the three lifecycle events above.
 
 ## Tests-first outline
 
@@ -67,9 +70,9 @@ Unit tests in `src/logging/mod.rs` exercise the three pure helpers:
    flags → directive must include `ranchero=info` so lifecycle events
    reach the logfile.
 3. `subscriber_respects_verbose_flag` — verbose yields `ranchero=info`
-   on a `warn` default for deps.
+   on a `warn` default for dependencies.
 4. `subscriber_respects_debug_flag` — debug yields `ranchero=debug` plus
-   `info` for deps.
+   `info` for dependencies.
 5. `debug_overrides_verbose_when_both_set`.
 6. `rust_log_env_wins_over_flags`, `rust_log_env_wins_for_background_too`,
    `rust_log_env_wins_with_complex_directive`.
@@ -85,33 +88,33 @@ the live subscriber against the emission contract above:
 
 - `verbose_flag_emits_startup_info_to_stderr` — `-v --foreground start`
   → stderr contains the `started` and `stopped` info events.
-- `default_silences_info_on_stderr` — no flags + foreground → stderr
+- `default_silences_info_on_stderr` — no flags plus foreground → stderr
   carries no `INFO` lines during a clean lifecycle.
-- `debug_flag_emits_control_debug_to_stderr` — `-D start` followed by a
+- `debug_flag_emits_control_debug_to_stderr` — `-D start` followed by
   `ranchero status` → stderr contains a `DEBUG` line for the control
   request.
 - `rust_log_env_overrides_default_filter` — `RUST_LOG=ranchero=info`
-  with no flags → `started` event reaches stderr.
+  with no flags → the `started` event reaches stderr.
 - `backgrounded_daemon_writes_lifecycle_to_logfile_without_flags` —
-  plain `ranchero start` (no `-v`, no `-D`) → configured logfile
-  contains `started` and `stopped`. Regression for the empty-logfile
-  bug.
-- `logfile_is_appended_across_two_runs` — two no-flag start/stop cycles
-  → both `started` events present in the logfile.
+  `ranchero start` with no flags (no `-v`, no `-D`) → the configured
+  logfile contains `started` and `stopped`. This is a regression test
+  for the empty-logfile bug.
+- `logfile_is_appended_across_two_runs` — two no-flag start and stop
+  cycles → both `started` events are present in the logfile.
 
-Tests are written first (TDD); the helpers ship as `todo!()` stubs and
-the emission points are not yet wired, so the suite fails red until
-STEP 04 implementation lands.
+Tests are written first (TDD); the helpers are added as `todo!()`
+stubs and the emission points are not yet wired, so the suite fails
+red until the STEP 04 implementation is complete.
 
-## Implementation outline (deferred until tests are green-able)
+## Implementation outline (deferred until tests are able to pass)
 
 - New module `src/logging/mod.rs` with the three pure helpers and the
   `install()` wrapper.
 - Add `tracing`, `tracing-subscriber` (with `env-filter`) and
   `tracing-appender` to `Cargo.toml` once the implementation begins.
-- `cli::dispatch` calls `logging::install` after resolving config but
-  before entering the subcommand body, threading the resolved `log_file`
-  and the foreground bit through.
+- `cli::dispatch` calls `logging::install` after resolving the
+  configuration but before entering the subcommand body, threading the
+  resolved `log_file` and the foreground flag through.
 
 ## Acceptance criteria
 
@@ -125,12 +128,12 @@ STEP 04 implementation lands.
 
 ## Deferred
 
-- **Log rotation** — the implementation uses a plain append-mode file
+- **Log rotation**: the implementation uses a plain append-mode file
   via `tracing_appender::non_blocking`. A long-running daemon will grow
-  one logfile unbounded. Add `tracing-appender::rolling` (daily or
-  size-based) in a follow-up.
-- Per-module level overrides (`zwift_relay=trace,zwift_api=debug`) ship
-  with the workspace split in STEPS 06–08; STEP 04 only targets the
-  `ranchero` crate root.
-- JSON / structured log output for downstream tooling.
+  a single logfile without bound. Add `tracing-appender::rolling`
+  (daily or size-based) in a follow-up.
+- Per-module level overrides (`zwift_relay=trace,zwift_api=debug`) are
+  added with the workspace split in STEPS 06–08; STEP 04 only targets
+  the `ranchero` crate root.
+- JSON or structured log output for downstream tooling.
 - Log shipping to external collectors.

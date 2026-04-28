@@ -2,12 +2,13 @@
 
 This directory breaks the Rust reimplementation from
 [`../ARCHITECTURE-AND-RUST-SPEC.md`](../ARCHITECTURE-AND-RUST-SPEC.md) into an
-ordered sequence of steps. Each step lives in its own `STEP-NN-*.md` file with:
+ordered sequence of steps. Each step is described in its own `STEP-NN-*.md`
+file with:
 
 - **Goal** — the user-visible or internal capability delivered at the end.
 - **Tests first** — the failing tests to write before any production code.
 - **Implementation outline** — the minimum surface area to make those tests pass.
-- **Acceptance criteria** — how we know the step is finished.
+- **Acceptance criteria** — the conditions that indicate the step is finished.
 - **Deferred** — anything explicitly left for a later step.
 
 ## Workflow (applies to every step)
@@ -15,7 +16,7 @@ ordered sequence of steps. Each step lives in its own `STEP-NN-*.md` file with:
 1. Write tests that fail (`cargo test` shows them red).
 2. Implement the smallest code that turns them green.
 3. Refactor. Re-run tests. Commit only on green.
-4. Update this README's status column when the step lands.
+4. Update this README's status column when the step is committed.
 
 ## Step index
 
@@ -46,9 +47,9 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 |  18 | ☐ | v1/v2 payload formatters (field-for-field parity) | [STEP-18-format-payloads.md](STEP-18-format-payloads.md) |
 |  19 | ☐ | Compatibility test battery (AES vector, header roundtrip, metric parity, widget smoke) | [STEP-19-compatibility-tests.md](STEP-19-compatibility-tests.md) |
 
-Later steps may be renumbered or split as we learn more. Steps 01–03 are
-elaborated up-front; 04 onward are currently light sketches and will be
-fleshed out as we approach them.
+Later steps may be renumbered or split as the project progresses. Steps
+01–03 are elaborated in detail; step 04 onward are currently light
+sketches and will be elaborated as those steps are approached.
 
 ## Crate layout (target)
 
@@ -68,4 +69,4 @@ ranchero/
 ```
 
 The current layout (single-crate `ranchero`) is temporary; it becomes a
-workspace root the moment STEP 01 needs more than one module.
+workspace root once STEP 01 requires more than one module.

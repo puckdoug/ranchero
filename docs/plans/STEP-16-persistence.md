@@ -12,7 +12,7 @@ Per spec §5.7 / §7.10:
 ## Tests-first outline
 
 - KV round-trip (insert, update, delete, concurrent read).
-- Schema migrations via a tiny `user_version`-based migrator.
+- Schema migrations via a minimal `user_version`-based migrator.
 - WAL is enabled on open.
 
-To be fully elaborated when we start work on this step.
+To be fully elaborated when work on this step begins.

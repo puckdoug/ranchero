@@ -2,22 +2,27 @@
 
 ## Goal
 
-Give ranchero a durable configuration surface so subsequent steps can read
-settings without re-asking on every run:
+Provide ranchero with a persistent configuration surface so that
+subsequent steps can read settings without prompting the user on
+every run:
 
-1. A **config file** on disk (TOML) with a documented schema, loader,
-   default-path resolver, and a precedence merge with CLI/env overrides.
-2. An interactive **TUI** launched by `ranchero configure` — a full
-   widget-based ratatui UI that reads the current file, lets the user edit
-   each field, validates, and writes back. Built on ratatui from day one
-   because the configuration surface is expected to grow (multiple
-   sections, per-field validation, lists, route/world overrides, mod
-   toggles, etc.) and switching frameworks later would be more work than
-   absorbing ratatui's modest learning curve up front.
+1. A configuration file on disk (TOML) with a documented schema,
+   loader, default-path resolver, and a precedence merge with the
+   command-line and environment overrides.
+2. An interactive TUI launched by `ranchero configure`. The TUI is
+   a full widget-based ratatui interface that reads the current
+   file, allows the user to edit each field, validates the input,
+   and writes the result back. The TUI is built on ratatui from
+   the start: the configuration surface is expected to grow
+   (additional sections, per-field validation, lists, route and
+   world overrides, mod toggles, and so on), and switching
+   frameworks at a later stage would cost more than learning
+   ratatui at the outset.
 
-Credentials are **not** written to this file — they live in the keyring
-(STEP 05). The config file only stores a username (or keyring account
-handle) per role, plus non-secret tuning knobs.
+Credentials are not written to this file; they are stored in the
+keyring (STEP 05). The configuration file only stores a username
+(or keyring account handle) per role, plus non-secret tuning
+parameters.
 
 ## Schema (v1)
 
@@ -46,23 +51,26 @@ file   = "~/.local/state/ranchero/ranchero.log"
 pidfile = "~/.local/state/ranchero/ranchero.pid"
 ```
 
-Every field has a compile-time default; the config file can be absent.
-Schema versioning is reserved for future migrations — an unknown
-`schema_version` fails loudly rather than silently loading partial data.
+Every field has a compile-time default; the configuration file may
+be absent. Schema versioning is reserved for future migrations: an
+unknown `schema_version` returns a clear error rather than silently
+loading partial data.
 
 ## Precedence
 
 `CLI flag > env var (RANCHERO_*) > config file > built-in default`.
 
-Tested as a pure `ResolvedConfig::resolve(cli: &GlobalOpts, env: &Env,
-file: Option<ConfigFile>) -> ResolvedConfig` function. `Env` is a small
-trait wrapping `std::env::var_os` so tests don't touch the real
-environment.
+The merge is tested as a pure function with the signature
+`ResolvedConfig::resolve(cli: &GlobalOpts, env: &Env,
+file: Option<ConfigFile>) -> ResolvedConfig`. `Env` is a small
+trait that wraps `std::env::var_os`, so that tests do not need to
+read the real environment.
 
 ## TUI architecture
 
-Strict separation between **state** and **rendering** so every behavioural
-test runs against the pure model and never needs a real terminal:
+There is a strict separation between state and rendering, so that
+every behavioural test runs against the pure model and does not
+require a real terminal:
 
 ```
 ┌──────────────────┐   Event    ┌──────────────────┐   render()   ┌──────────────┐
@@ -109,8 +117,9 @@ impl Model {
 }
 ```
 
-`Event` is a thin wrapper around `crossterm::event::Event` so tests can
-construct them without depending on terminal types directly.
+`Event` is a thin wrapper around `crossterm::event::Event` so that
+tests can construct events without depending on terminal types
+directly.
 
 The driver:
 
@@ -124,9 +133,10 @@ pub fn run_configure(
 ```
 
 `TerminalBackend` is a thin abstraction over `ratatui::Terminal`'s
-`draw` + event loop so tests can drive `Model::update` directly with a
-scripted `Event` stream and inspect the resulting `TestBackend` buffer
-without touching `run_configure`.
+`draw` method and event loop. The abstraction allows tests to drive
+`Model::update` directly with a scripted `Event` stream and to
+inspect the resulting `TestBackend` buffer without invoking
+`run_configure`.
 
 ## Tests first
 
@@ -140,16 +150,16 @@ Unit tests in `src/config.rs`:
    `server.port = 9999`; resolved config reflects it.
 3. `env_overrides_file` — same fixture + `RANCHERO_SERVER_PORT=1234` →
    port 1234.
-4. `cli_mainuser_overrides_file_main_email` — `--mainuser x@y` wins over
-   `accounts.main.email` in the file.
+4. `cli_mainuser_overrides_file_main_email` — `--mainuser x@y` takes
+   precedence over `accounts.main.email` in the file.
 5. `cli_mainpassword_handled_via_redacted_string` — after `resolve`, the
    `mainpassword` is wrapped in `RedactedString`; `Debug`/`Display`
    render `"[redacted]"`; the actual value is reachable only via
    `.expose()`.
 6. `unknown_schema_version_errors` — a file with `schema_version = 99`
    returns `Err(ConfigError::UnknownSchemaVersion)`.
-7. `malformed_toml_errors_with_path_and_line` — garbage TOML yields an
-   error referencing the offending path and line.
+7. `malformed_toml_errors_with_path_and_line` — malformed TOML
+   yields an error that references the offending path and line.
 8. `tilde_expansion_for_paths` — `~/foo` → `$HOME/foo` for `logging.file`
    and `daemon.pidfile`.
 9. `config_path_flag_respected` — `--config /tmp/alt.toml` loads that
@@ -160,7 +170,7 @@ Unit tests in `src/config.rs`:
 11. `port_zero_rejected_at_resolve` — `server.port = 0` → `Err`.
 12. `bind_must_parse_as_ip_or_hostname` — invalid `server.bind` → `Err`.
 
-### Atomic file writes (pure-ish)
+### Atomic file writes (largely pure)
 
 13. `atomic_write_creates_tempfile_and_renames` — invokes the writer
     against a tmpdir, asserts a `*.tmp` file is created and that the
@@ -177,9 +187,11 @@ These don't render; they drive `Model::update` directly. Place under
     the source value.
 15. `tab_advances_focus_within_screen` — focus moves through fields in
     document order; Shift-Tab moves backward.
-16. `right_arrow_moves_to_next_screen` — Right (or Ctrl-Right, decide)
-    advances `Screen::Accounts → Server → Logging → Daemon → Review`,
-    wrapping or stopping at edges per spec.
+16. `right_arrow_moves_to_next_screen` — the Right key (or
+    Ctrl-Right; the choice between the two is to be made during
+    implementation) advances `Screen::Accounts → Server → Logging →
+    Daemon → Review`, wrapping or stopping at the edges according
+    to the specification.
 17. `editing_mode_captures_typed_text_into_focused_field`.
 18. `enter_in_editing_mode_commits_value_and_returns_to_normal`.
 19. `escape_in_editing_mode_reverts_field`.
@@ -188,7 +200,7 @@ These don't render; they drive `Model::update` directly. Place under
 21. `email_field_validation_runs_on_every_update` — invalid → field
     flagged in `ValidationReport`; valid → cleared.
 22. `password_field_does_not_appear_in_serialized_config_file` — even if
-    the user types one in, the `ConfigFile` we'd serialize has no
+    the user types one in, the serialised `ConfigFile` has no
     password field.
 23. `save_action_returns_only_when_no_validation_errors` — invalid model
     + Save key returns `Action::None` and shows status error; valid
@@ -226,8 +238,7 @@ into the run loop in place of real keyboard input.
 
 ## Implementation outline
 
-Crates added (workspace-style features only; we stay single-crate until
-STEP 06):
+Crates added (workspace-style features only; the project remains a single crate until STEP 06):
 
 | Need | Crate |
 |---|---|
@@ -257,34 +268,42 @@ src/
     keyring.rs          # KeyringStore trait + InMemoryKeyringStore (real one in STEP 05)
 ```
 
-The `Model::update` boundary is the contract every behavioural test sits
-on. `view.rs` is intentionally allowed to be loose-typed (lots of
-`Spans`, `Layout`) because all of its observable behaviour is captured
-through `TestBackend` cell assertions.
+The `Model::update` boundary is the contract that every
+behavioural test verifies. `view.rs` is intentionally permitted to
+be loosely typed (with many `Spans` and `Layout` calls), because
+all of its observable behaviour is captured through `TestBackend`
+cell assertions.
 
-`src/cli.rs::run` grows a real `Command::Configure` dispatcher only at
-the end of the step (after the model is fully covered); until then,
-configure still returns the stub from STEP 01 so unrelated tests stay
+`src/cli.rs::run` is extended with a real `Command::Configure`
+dispatcher only at the end of the step, after the model is fully
+covered by tests. Until that point, the configure command continues
+to return the stub from STEP 01, so that unrelated tests remain
 green.
 
 ## Acceptance criteria
 
-- All tests in this step pass; `cargo clippy --all-targets -- -D warnings` clean.
-- `ranchero configure` against a clean home dir launches the ratatui UI;
-  the user can edit every field, validation feedback is live, and Save
-  writes a valid TOML + populates the in-memory keyring.
-- The serialized TOML byte-for-byte matches a golden file for a known
-  set of edits.
-- `ranchero start --mainuser x@y` (still stubbed in STEP 02) prints the
-  resolved main email as `x@y`, demonstrating CLI-over-file precedence.
-- `cargo run -- configure` exits 0 on a successful save, non-zero on
-  hard quit without save (so callers / scripts can react).
+- All tests in this step pass; `cargo clippy --all-targets -- -D warnings` reports no warnings.
+- `ranchero configure`, run against a clean home directory, launches
+  the ratatui interface. The user can edit every field, validation
+  feedback updates as the user types, and Save writes a valid TOML
+  file and populates the in-memory keyring.
+- The serialised TOML matches a golden file byte-for-byte for a
+  known sequence of edits.
+- `ranchero start --mainuser x@y` (still a stub in STEP 02) prints
+  the resolved main email as `x@y`, demonstrating that the
+  command-line value takes precedence over the file value.
+- `cargo run -- configure` exits with status 0 on a successful save
+  and with a non-zero status on an abnormal exit without saving, so
+  that callers and scripts can react accordingly.
 
 ## Deferred
 
-- Real keyring backend → STEP 05 (here we use the trait + in-memory fake).
-- Migrations on `schema_version` bump — not needed until v2.
-- Mouse support / resize handling beyond what `ratatui` does for free.
-- Settings categories beyond v1 schema (mods, route overrides, etc.) —
-  the screen enum + field enum are designed so adding a new section is
-  a localized change.
+- The real keyring backend is implemented in STEP 05; this step
+  uses the trait and an in-memory implementation.
+- Migrations triggered by a change to `schema_version` are not
+  needed until version 2 of the schema.
+- Mouse support and resize handling beyond what `ratatui` provides
+  by default.
+- Configuration categories beyond the version 1 schema (mods, route
+  overrides, and so on); the screen and field enumerations are
+  designed so that adding a new section is a localised change.

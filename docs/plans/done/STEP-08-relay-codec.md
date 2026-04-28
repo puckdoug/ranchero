@@ -11,7 +11,7 @@ on-the-wire codec for the Zwift relay protocol: AES-128-GCM with a
 no sockets, no `tokio`, no `reqwest`.
 
 This is the foundation under STEP 09 (`RelaySession`), STEP 10
-(`UdpChannel`), and STEP 11 (`TcpChannel`). It also clears spec §7.11
+(`UdpChannel`), and STEP 11 (`TcpChannel`). It also satisfies spec §7.11
 compatibility tests #1 (AES-GCM byte-identical interop) and #2
 (header round-trip across all 8 flag combinations).
 
@@ -21,7 +21,7 @@ compatibility tests #1 (AES-GCM byte-identical interop) and #2
 on `Vec<u8>` / `&[u8]` / fixed-size arrays):
 
 - `RelayIv` → 12-byte AES-GCM IV, with the leading two zero bytes
-  written explicitly (spec §7.12 footgun).
+  written explicitly (spec §7.12 hazard).
 - `HeaderFlags` bitmap + `Header` encode / decode (variable length,
   1-11 bytes).
 - AES-128-GCM with `U4` tag size (`type Aes128Gcm4 = AesGcm<Aes128, U4>`,
@@ -35,14 +35,14 @@ on `Vec<u8>` / `&[u8]` / fixed-size arrays):
 - TCP stream framing helper: split a byte stream into individual
   frames (the `_onTCPData` accumulator from `zwift.mjs:1259-1289`),
   returning `Ok(None)` when more bytes are needed.
-- UDP frame wrapping: just concat `[header][ciphertext||tag4]`
+- UDP frame wrapping: concatenate `[header][ciphertext||tag4]`
   (datagrams are self-delimited).
 - Constants: `WORLD_TIME_EPOCH_MS`, port numbers, `TAG_LEN = 4`,
   `IV_LEN = 12`, version bytes (spec §7.4).
 
-**Out of scope** (lives in later steps):
+**Out of scope** (deferred to later steps):
 
-| Concern | Where it lives |
+| Concern | Where it is implemented |
 |---|---|
 | Owning `send_iv` / `recv_iv` mutable state | STEP 10 / 11 channels |
 | TCP / UDP socket lifetimes, watchdog, reconnect | STEP 10 / 11 |
@@ -58,7 +58,7 @@ crates/zwift-relay/
 ├── Cargo.toml          — workspace member, AGPL-3.0-only
 ├── src/
 │   ├── lib.rs          — re-exports + module-level docs
-│   ├── consts.rs       — DeviceType, ChannelType, version bytes, ports, etc.
+│   ├── consts.rs       — DeviceType, ChannelType, version bytes, ports, and so on
 │   ├── iv.rs           — RelayIv + to_bytes()
 │   ├── header.rs       — HeaderFlags, Header, encode/decode
 │   ├── crypto.rs       — Aes128Gcm4 alias + encrypt/decrypt wrappers
@@ -99,11 +99,11 @@ Notes:
   it never decodes a proto. `zwift-proto` is `dev-dependencies` only,
   so end-to-end tests can wrap a real `ClientToServer::default()` to
   prove the envelope shape lines up.
-- **No `tokio` dep, anywhere.** The codec is sync and stateless. The
-  channel layer (STEP 10/11) brings tokio in.
+- **No `tokio` dep, anywhere.** The codec is synchronous and stateless. The
+  channel layer (STEP 10/11) introduces tokio.
 - **`aes-gcm` with `default-features = false`.** Pulls in the
-  `aes` and `alloc` features only — keeps the crate `no_std`-ready
-  even though we don't need that today.
+  `aes` and `alloc` features only; this keeps the crate `no_std`-ready
+  even though it is not required at this step.
 
 ## Public API surface (proposed)
 
@@ -118,8 +118,8 @@ pub const UDP_VERSION: u8 = 1;
 ```
 
 Plus the spec §7.4 protocol constants (`WORLD_TIME_EPOCH_MS`, port
-numbers, etc.) — those duplicate spec text but live here so callers
-don't have to pull a different crate just for a port number.
+numbers, and similar): these duplicate spec text but live here so callers
+do not have to pull a different crate to obtain a port number.
 
 ### Enums (`consts`)
 
@@ -142,8 +142,8 @@ pub struct RelayIv {
 }
 
 impl RelayIv {
-    /// 12-byte GCM IV. **Bytes 0..2 are explicitly zeroed** — see
-    /// spec §7.12 footgun about `Buffer.allocUnsafe` in the JS
+    /// 12-byte GCM IV. **Bytes 0..2 are explicitly zeroed**; see
+    /// spec §7.12 regarding the `Buffer.allocUnsafe` hazard in the JS
     /// reference.
     pub fn to_bytes(&self) -> [u8; IV_LEN];
 }
@@ -201,8 +201,8 @@ pub fn decrypt(key: &[u8; KEY_LEN], iv: &[u8; IV_LEN], aad: &[u8], ciphertext_wi
 
 `encrypt` returns `ciphertext || tag4`. `decrypt` accepts the same
 shape and validates the tag; tag-mismatch surfaces as
-`CodecError::AuthTagMismatch` (must reject tampered packets — explicit
-test).
+`CodecError::AuthTagMismatch` (the implementation must reject tampered packets;
+this is covered by an explicit test).
 
 ### Plaintext envelopes + framing (`frame`)
 
@@ -235,21 +235,21 @@ pub enum CodecError {
 }
 ```
 
-`relay_id` validation is *not* in the codec — see "Open verification
+`relay_id` validation is *not* in the codec; see "Open verification
 points" §3.
 
 ## Tests-first plan
 
-Every test lives at `crates/zwift-relay/tests/*.rs` (per the project's
+Every test resides at `crates/zwift-relay/tests/*.rs` (following the project's
 pattern of integration tests, not unit tests in `src/`). TDD order:
-write each test, watch it fail, implement until green.
+write each test, observe it fail, then implement until it passes.
 
 ### `iv.rs` — RelayIV vectors
 
 | Test | Asserts |
 |---|---|
-| `iv_layout_zero_bytes_at_offsets_0_and_1` | `RelayIv { device: Relay, channel: UdpClient, conn_id: 0, seqno: 0 }.to_bytes()[0..2] == [0, 0]`. Catches the spec §7.12 footgun directly. |
-| `iv_layout_known_vector` | A hand-built `RelayIv` matches a precomputed 12-byte array, byte-for-byte. |
+| `iv_layout_zero_bytes_at_offsets_0_and_1` | `RelayIv { device: Relay, channel: UdpClient, conn_id: 0, seqno: 0 }.to_bytes()[0..2] == [0, 0]`. Catches the spec §7.12 hazard directly. |
+| `iv_layout_known_vector` | A manually constructed `RelayIv` matches a precomputed 12-byte array, byte-for-byte. |
 | `iv_byte_order_is_big_endian` | `device=2, channel=1, conn_id=0xABCD, seqno=0x12345678` → `[0,0, 0,2, 0,1, 0xAB,0xCD, 0x12,0x34,0x56,0x78]`. |
 
 ### `header.rs` — header codec
@@ -280,9 +280,9 @@ generated once via a small Node script
 with hard-coded inputs and prints the outputs as hex. The script is
 checked in for reproducibility but is not invoked from CI; the Rust
 test reads the resulting byte arrays as constants. Treating the Node
-output as the oracle is what the spec calls for ("byte-identical
-between JS and Rust") and lets us regenerate vectors deterministically
-without standing up a Zwift account.
+output as the oracle is what the spec requires ("byte-identical
+between JS and Rust") and allows the project to regenerate vectors
+deterministically without provisioning a Zwift account.
 
 ### `frame.rs` — envelope + framing
 
@@ -298,42 +298,42 @@ without standing up a Zwift account.
 
 ## Open verification points
 
-These are claims I want the implementor to confirm against a real
+These are claims the implementor should confirm against a real
 sauce4zwift run (or a captured packet) before declaring this step
-done. None block tests — the codec can be implemented and tested
-against either choice. Note any decision in the as-built doc.
+complete. None block tests; the codec can be implemented and tested
+against either choice. Record any decision in the as-built document.
 
 1. **UDP plaintext shape.** Spec §4.4 / §7.4 says "UDP plaintext is
-   just the proto bytes." The actual sauce code at
+   the proto bytes only." The actual sauce code at
    `zwift.mjs:1437-1440` prepends `[u8 version=1]`. The plan above
    follows the *code*, because sauce works against real Zwift
    servers. If the `udp_round_trip_with_real_proto` test fails
-   against captured wire data, we'll know the spec is right and the
-   code is the oddity (or vice-versa). Update the spec to match
-   whichever wins.
+   against captured wire data, that will indicate the spec is correct and the
+   code is the anomaly (or the reverse). Update the spec to match
+   whichever takes precedence.
 
 2. **`forceSeq` on UDP sends.** The JS UDP path hard-codes
    `{forceSeq: true, ...options}` (`zwift.mjs:1439`) so every UDP
    send carries an explicit seqno field. This is a *channel*-layer
-   policy, not a codec rule — the codec just encodes whatever
-   `Header` it's given. Note here so STEP 10 doesn't forget.
+   policy, not a codec rule; the codec encodes whatever
+   `Header` it is given. Noted here so STEP 10 does not omit it.
 
 3. **`relay_id` validation locus.** The JS `decrypt()` validates
    that an inbound `relayId` matches the channel's expected value
    (`zwift.mjs:1077-1080`). The plan keeps validation *out* of the
-   codec — `decode_header` just returns the parsed value, and the
+   codec: `decode_header` returns the parsed value, and the
    channel layer compares against its expected `relay_id`. Two API
    shapes were considered:
    - `decode_header(bytes)` returns the parsed header; the *caller*
      compares (chosen above for stateless purity).
    - `decode_header(bytes, expected_relay_id: u32)` validates inline.
 
-   If the second turns out to be ergonomically much cleaner for
-   STEP 10/11, switch — both are easy.
+   If the second proves ergonomically cleaner for
+   STEP 10/11, switch; both are straightforward.
 
 4. **`HelloKind` enum vs. `bool hello`.** The plan uses `bool` in
-   `tcp_plaintext` to keep the API thin. If reviewers find boolean
-   trap-y, swap for an enum.
+   `tcp_plaintext` to keep the API minimal. If reviewers find the boolean
+   parameter unclear, replace it with an enum.
 
 ## Design decisions worth pre-committing
 
@@ -341,7 +341,7 @@ against either choice. Note any decision in the as-built doc.
   belongs to the channel (it owns `send_iv`, mutates `recv_iv` based
   on inbound headers, increments seqno post-encrypt/decrypt). Pushing
   state into this crate would make it harder to share an AES key
-  across two channels (the spec hints at exactly this — TCP and UDP
+  across two channels (the spec hints at exactly this: TCP and UDP
   share a session key but have independent connId counters).
 - **No async, no `tokio`.** Tested with no runtime. The reactor
   enters at STEP 10 / 11.
@@ -350,13 +350,13 @@ against either choice. Note any decision in the as-built doc.
   failure mode visible to a caller.
 - **`Vec<u8>` outputs, not generic over `Buf` / `BufMut`.** Adopting
   `bytes::BytesMut` is a future optimization once the channel layer
-  exists and we can measure whether allocator pressure matters.
-  Premature abstraction otherwise.
+  exists and the project can measure whether allocator pressure matters.
+  Otherwise this would be premature abstraction.
 
 ## Wiring into the workspace
 
 - `crates/zwift-relay/` is picked up by the existing `members =
-  ["crates/*"]` glob in the root `Cargo.toml` — no edit needed there
+  ["crates/*"]` glob in the root `Cargo.toml`; no edit is needed there
   until a consumer (STEP 09) starts depending on it.
 - The root `ranchero` crate gains a `zwift-relay = { path = "..." }`
   dep only when STEP 09 needs it. STEP 08 itself does not require

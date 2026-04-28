@@ -18,4 +18,4 @@ Port the `AthleteData` record (spec §5.2) and `DataBucket` /
   peaks match the JS reference.
 - GC ticks at 10 s and evicts correctly.
 
-To be fully elaborated when we start work on this step.
+To be fully elaborated when work on this step begins.

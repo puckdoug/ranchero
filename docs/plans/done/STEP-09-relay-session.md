@@ -20,7 +20,7 @@ Implement the HTTPS handshake described in spec §4.1 / §7.6:
    on refresh failure, attempts a full re-login; on re-login failure,
    surfaces a typed event and backs off.
 
-This is the last piece before STEP 10 / 11 (UDP / TCP channels) can be
+This is the final component required before STEP 10 / 11 (UDP / TCP channels) can be
 written: those channels need `aes_key`, `relay_id`, and a server IP,
 all of which come from here.
 
@@ -34,8 +34,8 @@ all of which come from here.
   refresh, exposes the current session via a snapshot accessor, emits
   lifecycle events on a `tokio::sync::broadcast` channel.
 - TCP server list filtering (`lb_realm == 0 && lb_course == 0`).
-- The server-time field plumbed through (used by STEP 12 for clock
-  sync; STEP 09 just exposes it).
+- The server-time field passed through (used by STEP 12 for clock
+  sync; STEP 09 only exposes it).
 - Extension to `zwift_api::ZwiftAuth` to support
   `POST` with a body (the existing `fetch()` is GET-only).
 
@@ -48,18 +48,18 @@ all of which come from here.
 | Per-course UDP server pool selection (`UdpConfigVod`) | STEP 12 (`GameMonitor`) |
 | `_lastTCPServer` "stick to the same server" logic | STEP 11 (channel reconnect policy) |
 | Watching/leaving worlds, `/relay/worlds/.../leave`, `/api/users/logout` | Later (probably STEP 12) |
-| The `await sleep(1000)` after login (sauce comment: "No joke this is required") | This step — see "Open verification points" §4 |
+| The `await sleep(1000)` after login (sauce comment: "No joke this is required") | This step; see "Open verification points" §4 |
 
 ## Crate layout
 
-`zwift-relay` already exists from STEP 08 with codec modules. We add
-the session module next to them — no new crate, no feature gate (the
+`zwift-relay` already exists from STEP 08 with codec modules. The session
+module is added next to them: no new crate and no feature gate (the
 codec is still `no_std`-clean in source even though the crate as a
 whole now depends on tokio + reqwest).
 
 ```
 crates/zwift-relay/
-├── Cargo.toml          — extended deps below
+├── Cargo.toml          — extended dependencies below
 ├── src/
 │   ├── lib.rs          — re-exports (codec + session)
 │   ├── consts.rs       (existing)
@@ -144,9 +144,9 @@ pub struct RelaySession {
     /// `Instant` when the supervisor must (at the latest) have
     /// refreshed by. Computed as `logged_in_at + expiration`.
     pub expires_at: tokio::time::Instant,
-    /// `LoginResponse.info.time` in milliseconds — the server's wall
+    /// `LoginResponse.info.time` in milliseconds: the server's wall
     /// clock at login time. STEP 12's `WorldTimer` uses this for
-    /// initial clock alignment; STEP 09 just plumbs it through.
+    /// initial clock alignment; STEP 09 only routes it through.
     pub server_time_ms: Option<u64>,
 }
 ```
@@ -262,16 +262,16 @@ impl ZwiftAuth {
 
 Why on `ZwiftAuth` and not in this crate's session module:
 
-- The auth + Source + User-Agent + 401-retry pipeline is already there
+- The auth + Source + User-Agent + 401-retry pipeline already exists
   for `fetch()`. Re-implementing it in `zwift-relay` would duplicate
-  five lines of logic and silently drift if the channel-pool refresh
+  five lines of logic and could silently diverge if the channel-pool refresh
   rules change.
-- Keeping `ZwiftAuth` ignorant of prost (it stays at the `Vec<u8>`
+- Keeping `ZwiftAuth` ignorant of prost (it remains at the `Vec<u8>`
   layer) preserves the boundary the STEP 07 plan deliberately drew.
 
 This adds an `authed_post_includes_bearer_source_and_user_agent_headers`
 test to `crates/zwift-api/tests/auth.rs` (mirrors the existing GET
-counterpart). Update STEP 07's as-built doc when this lands.
+counterpart). Update STEP 07's as-built document when this is committed.
 
 ## Tests-first plan
 
@@ -301,22 +301,22 @@ bearer header.
 `zwift-proto` is the test oracle for both directions: tests build
 `LoginRequest` / `LoginResponse` / `RelaySessionRefreshResponse` via
 the generated types, encode them in test setup, and decode them in
-assertion code, so the wire shape is exercised without hand-rolled
+assertion code, so the wire shape is exercised without custom
 byte arrays.
 
 ## Open verification points
 
 These are claims the implementor should resolve and record in the
-as-built doc.
+as-built document.
 
 1. **`RelaySessionRefreshRequest` is missing from the vendored
    upstream proto tree.** Sauce's fork has it
    (`sauce4zwift/src/zwift.proto:902-904`); upstream
-   `zoffline/zwift-offline` does not. The body shape is trivial —
-   one varint field — so two reasonable approaches:
+   `zoffline/zwift-offline` does not. The body shape is trivial
+   (one varint field), so there are two reasonable approaches:
 
-   a. **Hand-encode the body** in this step. The on-the-wire shape
-   for `RelaySessionRefreshRequest { relay_session_id: u32 }` is just
+   a. **Custom-encode the body** in this step. The on-the-wire shape
+   for `RelaySessionRefreshRequest { relay_session_id: u32 }` is
    `[tag=0x08, varint relay_session_id_le]`, 2-6 bytes total. The
    plan above takes this approach (no proto vendor change).
 
@@ -324,7 +324,7 @@ as-built doc.
    re-run the build. Cleaner, but requires a proto vendor change for
    one trivially-encoded message.
 
-   Decision pending — record which path was taken in the as-built doc.
+   Decision pending; record which path was taken in the as-built document.
    If (b), update STEP-06's as-built note about the vendor file list.
 
 2. **Field-name divergence between spec wording and vendored proto.**
@@ -339,8 +339,8 @@ as-built doc.
    | `TcpAddress.realm` / `courseId` | `TcpAddress.lb_realm` / `lb_course` |
    | `LoginResponse.session.time` | `LoginResponse.info.time` (Option<u64>) |
 
-   No design choice here — the implementation just uses the vendored
-   names. The plan flags this so reviewers reading the spec aren't
+   No design choice here; the implementation uses the vendored
+   names. The plan flags this so reviewers reading the spec are not
    surprised by what they see in code.
 
 3. **Should `LoginResponse.relay_session_id` being `None` be an error?**
@@ -348,27 +348,27 @@ as-built doc.
    login carries it. The plan treats `None` as
    `Error::MissingField("relay_session_id")` because downstream
    consumers (channels) would otherwise panic when constructing the
-   IV. Confirm this matches observed server behavior or relax to
-   "default to 0" if real captures show otherwise.
+   IV. Confirm this matches observed server behavior, or relax to
+   "default to 0" if real captures indicate otherwise.
 
 4. **The `await sleep(1000)` after login.** Sauce's comment at
    `zwift.mjs:1651`: *"No joke this is required (100ms works about
-   50% of the time)."* Zwift's relay servers apparently need ~1 s to
-   stabilize after login before they'll accept relay traffic. Plan:
+   50% of the time)."* Zwift's relay servers apparently need approximately 1 s to
+   stabilize after login before they will accept relay traffic. Plan:
    include the sleep in `login()` itself with the sauce comment
    reproduced verbatim above the line, so a future reader who
    "optimizes it away" sees the warning. Verify against captured
    wire data whether 1 s is still required (Zwift's API may have
-   improved; might also have gotten worse).
+   improved, or may have regressed).
 
 ## Design decisions worth pre-committing
 
 - **Single supervisor pattern.** One `RelaySessionSupervisor` owns
   the periodic refresh and the lifecycle events. Channels (STEP
-  10/11) are passive consumers — they read `current()` for the
-  session snapshot and subscribe to `events()` if they want
-  notification. This avoids the JS pattern where `GameMonitor` mixes
-  session, channels, and SNTP all in one class
+  10/11) are passive consumers: they read `current()` for the
+  session snapshot and subscribe to `events()` when notification is
+  required. This avoids the JS pattern where `GameMonitor` combines
+  session, channels, and SNTP into one class
   (`zwift.mjs:1633-1933`).
 - **Snapshot via `tokio::sync::RwLock<Arc<RelaySession>>`.** Read
   side is cheap (`current().await` clones an `Arc`). Refresh swaps
@@ -377,30 +377,31 @@ as-built doc.
 - **Refresh failure → re-login → backoff.** Failure handling uses an
   exponential backoff floor of `MIN_REFRESH_INTERVAL` × `2^attempt`,
   capped at the original `expiration`. After 5 consecutive failures
-  the supervisor still keeps trying but emits a
+  the supervisor continues to retry but emits a
   `LoginFailed { attempt: ≥ 5 }` event so callers can take
-  intervention (alert, surface in TUI, etc.).
+  intervention (for example: alert, surface in the TUI, and so on).
 - **Real-time waits in tests, not `tokio::time::pause()`.** Same
   rationale as STEP 07's preemptive-refresh test (logged in
   STEP-20 §20.1): paused virtual time + `current_thread` runtime +
   reqwest IO deadlocks because the reactor never gets a turn. The
   one supervisor-schedule test pays a real ~55 s wall-clock cost
-  with `expiration: 1` minute. If this turns out to dominate the
+  with `expiration: 1` minute. If this comes to dominate the
   suite, revisit STEP-20 §20.1 and migrate.
 - **No CLI surface in this step.** STEP 09 is library code only;
   the daemon will wire it in at STEP 12. The existing `auth-check`
   diagnostic does *not* extend to a "relay-login dry-run" because a
-  dry-run would have to actually POST to Zwift's relay host, which
+  dry-run would have to POST to Zwift's relay host, which
   defeats the no-network guarantee.
 
 ## Wiring into the workspace
 
 - `crates/zwift-relay/` already exists; STEP 09 only edits its
-  `Cargo.toml` (deps) and adds `src/session.rs` + `tests/session.rs`.
+  `Cargo.toml` (dependencies) and adds `src/session.rs` and
+  `tests/session.rs`.
 - `crates/zwift-api/` gains a `post()` method on `ZwiftAuth` (see
   "Required upstream change" above) plus a parser/headers test.
 - The root `ranchero` crate does **not** need to depend on
-  `zwift-relay` yet — that comes at STEP 12 when the daemon's
-  `start` command actually orchestrates a session + channels.
+  `zwift-relay` yet; that comes at STEP 12 when the daemon's
+  `start` command orchestrates a session + channels.
 - License header `// SPDX-License-Identifier: AGPL-3.0-only` at the
   top of every new `.rs` file.

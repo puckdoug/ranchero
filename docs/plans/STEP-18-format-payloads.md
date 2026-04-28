@@ -4,7 +4,7 @@
 
 Port `_formatAthleteData` and `_formatAthleteDataV2` verbatim so
 unmodified sauce4zwift browser widgets continue to work (spec §7.9, §7.12
-`keepCase` footgun).
+`keepCase` hazard).
 
 - Keep field names byte-identical to the JS formatters (camelCase /
   underscored where JS uses them).
@@ -17,6 +17,6 @@ unmodified sauce4zwift browser widgets continue to work (spec §7.9, §7.12
 - Compare Rust-formatted JSON bytes against JS-formatted JSON bytes for
   a captured trace — zero-diff.
 - Query reduction: two subscribers with identical queries cause one
-  serialization call (use a counting fake).
+  serialization call (use a counting in-memory implementation).
 
-To be fully elaborated when we start work on this step.
+To be fully elaborated when work on this step begins.
