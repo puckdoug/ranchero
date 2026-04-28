@@ -346,6 +346,40 @@ async fn writer_record_is_non_blocking() {
     );
 }
 
+// --- 4b. flush_and_close drain semantics --------------------------
+
+#[tokio::test]
+async fn flush_and_close_drains_pending_records() {
+    // Pins open verification point #4 of STEP-11.5: closing while
+    // records are queued must drain them rather than truncate. The
+    // requirement is that every accepted record (i.e. every push
+    // that did not increment dropped_count) must be readable after
+    // close.
+    let path = NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open_with_capacity(path.path(), 4)
+        .await
+        .expect("open");
+
+    let n = 100usize;
+    for i in 0..n {
+        writer.record(record_with_payload(
+            Direction::Inbound,
+            TransportKind::Udp,
+            vec![(i & 0xFF) as u8; 16],
+        ));
+    }
+    let dropped = writer.dropped_count() as usize;
+    writer.flush_and_close().await.expect("close");
+
+    let reader = CaptureReader::open(path.path()).expect("read");
+    let count = reader.count();
+    assert_eq!(
+        count,
+        n - dropped,
+        "every accepted record must survive flush_and_close (n={n}, dropped={dropped}, recovered={count})",
+    );
+}
+
 // --- 5. capture-off zero overhead ---------------------------------
 
 #[test]

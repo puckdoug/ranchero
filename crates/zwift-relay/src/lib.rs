@@ -12,7 +12,7 @@
 // - TCP channel (async): `TcpTransport`, `TcpChannel`.
 //   STEP 11; implemented.
 // - Wire capture / replay: `CaptureWriter`, `CaptureReader`.
-//   STEP 11.5; currently stubs.
+//   STEP 11.5; implemented.
 //
 // Every public item is re-exported from this file so callers
 // `use zwift_relay::{…}` without navigating internal module paths.

@@ -253,6 +253,21 @@ fn dispatch_replay_stub() {
 }
 
 #[test]
+fn dispatch_start_with_capture_errors_until_step12() {
+    // STEP 11.6, Fix D: --capture is parsed, but the supervisor
+    // wiring is implemented in STEP 12. The dispatcher must
+    // return an error early with a clear message rather than
+    // silently ignore the flag.
+    let cli = parse(&["ranchero", "--capture", "/tmp/x.cap", "start"]);
+    let err = ranchero::cli::dispatch(cli).expect_err("dispatch must reject");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("--capture") && msg.contains("STEP 12"),
+        "error must reference both --capture and STEP 12; got: {msg}",
+    );
+}
+
+#[test]
 fn dispatch_auth_check_stub() {
     let cli = parse(&["ranchero", "auth-check"]);
     assert!(run(cli).contains("auth-check"));

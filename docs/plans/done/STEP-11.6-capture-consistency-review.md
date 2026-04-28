@@ -9,33 +9,33 @@ detailed inline below at the matching anchor. Items annotated with
 `→ STEP 12` are appropriately deferred to that step and are listed
 here only for tracking.
 
-- [ ] **A. Outdated comment in `zwift-relay/src/lib.rs`** — change
+- [x] **A. Outdated comment in `zwift-relay/src/lib.rs`** — change
   the `currently stubs` annotation on the capture module to
   `implemented`. See [§Fix A](#fix-a--outdated-comment-in-zwift-relaysrclibrs).
-- [ ] **B. Stale `docs/plans/README.md` status table** — set the
+- [x] **B. Stale `docs/plans/README.md` status table** — set the
   status for steps 04 through 11.5 to `☑`, change each link to
   point into `done/`, and add a row for **11.6**. See
   [§Fix B](#fix-b--docsplansreadmemd-status-table).
-- [ ] **C. `flush_and_close` drain semantics not pinned by a test**
+- [x] **C. `flush_and_close` drain semantics not pinned by a test**
   — add `flush_and_close_drains_pending_records` to
   `crates/zwift-relay/tests/capture.rs`. See
   [§Fix C](#fix-c--pin-flush_and_close-drain-semantics).
-- [ ] **D. `--capture` is silently ignored on `start`** —
+- [x] **D. `--capture` is silently ignored on `start`** —
   reject the flag in `cli::dispatch` with a clear "deferred to
   STEP 12" error, and add a test in `cli_args.rs` that asserts the
   message. See [§Fix D](#fix-d--reject---capture-on-start-until-step-12).
-- [ ] **E. Move this file to `docs/plans/done/`** once Fixes A–D
-  are complete and the test suite is green; ensure the `STEP-11.6`
-  row in `plans/README.md` points into `done/`. See
-  [§Fix E](#fix-e--move-this-file-to-done).
 - [ ] ~~F.~~ Pass `Arc<CaptureWriter>` into the channel configurations — **→ STEP 12**.
 - [ ] ~~G.~~ Establish a relay session and the UDP and TCP channels from the daemon — **→ STEP 12**.
 - [ ] ~~H.~~ The supervisor must call `flush_and_close()` on shutdown (Finding 6) — **→ STEP 12**.
 
-Total scope of step 11.6: five changes (one comment edit, one
-README edit, two new tests, one source change, plus the file move).
-The net production-source change is approximately six lines in
-`cli.rs` plus roughly twenty-five lines of test code; the remaining
+Note: the user manages git tracking of plan documents and the
+movement of completed plans into `docs/plans/done/`; those
+operations are not part of this step's scope.
+
+Total scope of step 11.6: four changes (one comment edit, one
+README edit, two new tests, and one source change). The net
+production-source change is approximately six lines in `cli.rs`
+plus roughly twenty-five lines of test code; the remaining
 changes are documentation.
 
 ## Goal
@@ -219,8 +219,8 @@ Each step lists the exact files, lines, and code to be changed.
 The steps are independent and may be committed individually or
 together. The recommended order follows the project's
 test-driven-development practice: tests first for items C and D,
-then the source change for D, then the documentation changes A
-and B, and finally the file move E.
+then the source change for D, and finally the documentation
+changes A and B.
 
 ### Fix A — Outdated comment in `zwift-relay/src/lib.rs`
 
@@ -257,9 +257,9 @@ Replace lines 31-39 of the current file with:
 | 11.6 | ☑ | Capture & stream-logging consistency review (this file) | [STEP-11.6-capture-consistency-review.md](done/STEP-11.6-capture-consistency-review.md) |
 ```
 
-The 11.6 row links to the `done/` path because
-[Fix E](#fix-e--move-this-file-to-done) moves the file there at
-the end of the step.
+The 11.6 row links to the `done/` path. This file resides under
+`docs/plans/done/`; the user manages plan-document movement and
+git tracking.
 
 There is no test impact. Verify by previewing the rendered
 output in a Markdown renderer.
@@ -394,23 +394,6 @@ the writer in its place. The test from D.1 must then either be
 deleted or rewritten to assert that `--capture` succeeds and
 produces a non-empty capture file.
 
-### Fix E — Move this file to `done/`
-
-Once Fixes A through D are complete and the test suite is green,
-move this file:
-
-```bash
-git mv docs/plans/STEP-11.6-capture-consistency-review.md \
-       docs/plans/done/STEP-11.6-capture-consistency-review.md
-```
-
-If the file is currently untracked, use a plain `mv`; the file
-will be added to `done/` on the next `git add`.
-
-The 11.6 row in `docs/plans/README.md` already points into
-`done/` (see Fix B), so no further changes to the README are
-required.
-
 ## Acceptance criteria
 
 - `cargo test --workspace` passes; one new test in
@@ -427,8 +410,6 @@ required.
 - Manual verification: `ranchero --capture /tmp/x.cap start`
   exits with a non-zero status code and prints a stderr message
   containing both `--capture` and `STEP 12`.
-- This file is located at
-  `docs/plans/done/STEP-11.6-capture-consistency-review.md`.
 
 ## Deferred to STEP 12
 

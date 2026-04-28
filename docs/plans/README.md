@@ -29,15 +29,16 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 | 02.1 | ☑ | TUI keybindings: vi mode (priority) + emacs mode; `~/.editrc` detection; ratatui 0.30 upgrade | [STEP-02.1-configuration-keybindings.md](STEP-02.1-configuration-keybindings.md) |
 | 02.2 | ☑ | Vi outer navigation: `j/k/h/l`, `i/a`, `:wq`/`:q!`/`ZZ`, vi-aware status bar and help | [STEP-02.2-vi-navigation.md](STEP-02.2-vi-navigation.md) |
 |  03 | ☑ | Daemon lifecycle (`start` / `stop` / `status`, PID file, foreground vs background) | [STEP-03-daemon-lifecycle.md](done/STEP-03-daemon-lifecycle.md) |
-|  04 | ☐ | Structured logging & verbose/debug flags | [STEP-04-logging.md](STEP-04-logging.md) |
-|  05 | ☐ | Credential storage in OS keyring | [STEP-05-credentials.md](STEP-05-credentials.md) |
-|  06 | ☐ | `zwift-proto` crate — prost-build against vendored zwift-offline proto tree (`crates/zwift-proto/proto/*.proto`, proto2) | [STEP-06-proto-crate.md](STEP-06-proto-crate.md) |
-|  07 | ☐ | `zwift-api` — OAuth2 password grant + token refresh + REST client | [STEP-07-auth-and-rest.md](STEP-07-auth-and-rest.md) |
-|  08 | ☐ | `zwift-relay` codec — header flags, `RelayIv`, AES-128-GCM-4 wire format | [STEP-08-relay-codec.md](STEP-08-relay-codec.md) |
-|  09 | ☐ | Relay login (`/api/users/login`) + session refresh supervisor | [STEP-09-relay-session.md](STEP-09-relay-session.md) |
-|  10 | ☐ | UDP channel with 25-shot hello handshake and world-time offset sync | [STEP-10-udp-channel.md](STEP-10-udp-channel.md) |
-|  11 | ☐ | TCP channel with exponential backoff reconnect and watchdog | [STEP-11-tcp-channel.md](STEP-11-tcp-channel.md) |
-| 11.5 | ☐ | Wire capture & replay — `ranchero start --capture <path>` + `ranchero replay`; produces the fixtures STEPS 08/18/19 consume | [STEP-11.5-wire-capture.md](STEP-11.5-wire-capture.md) |
+|  04 | ☑ | Structured logging & verbose/debug flags | [STEP-04-logging.md](done/STEP-04-logging.md) |
+|  05 | ☑ | Credential storage in OS keyring | [STEP-05-credentials.md](done/STEP-05-credentials.md) |
+|  06 | ☑ | `zwift-proto` crate — prost-build against vendored zwift-offline proto tree (`crates/zwift-proto/proto/*.proto`, proto2) | [STEP-06-proto-crate.md](done/STEP-06-proto-crate.md) |
+|  07 | ☑ | `zwift-api` — OAuth2 password grant + token refresh + REST client | [STEP-07-auth-and-rest.md](done/STEP-07-auth-and-rest.md) |
+|  08 | ☑ | `zwift-relay` codec — header flags, `RelayIv`, AES-128-GCM-4 wire format | [STEP-08-relay-codec.md](done/STEP-08-relay-codec.md) |
+|  09 | ☑ | Relay login (`/api/users/login`) + session refresh supervisor | [STEP-09-relay-session.md](done/STEP-09-relay-session.md) |
+|  10 | ☑ | UDP channel with 25-shot hello handshake and world-time offset sync | [STEP-10-udp-channel.md](done/STEP-10-udp-channel.md) |
+|  11 | ☑ | TCP channel with exponential backoff reconnect and watchdog | [STEP-11-tcp-channel.md](done/STEP-11-tcp-channel.md) |
+| 11.5 | ☑ | Wire capture & replay — `ranchero start --capture <path>` + `ranchero replay`; produces the fixtures STEPS 08/18/19 consume | [STEP-11.5-wire-capture.md](done/STEP-11.5-wire-capture.md) |
+| 11.6 | ☑ | Capture & stream-logging consistency review | [STEP-11.6-capture-consistency-review.md](done/STEP-11.6-capture-consistency-review.md) |
 |  12 | ☐ | GameMonitor orchestration — server pool selection, watched-athlete routing | [STEP-12-game-monitor.md](STEP-12-game-monitor.md) |
 |  13 | ☐ | `zwift-stats` rolling primitives — `RollingAverage`, `RollingPower`, NP, TSS | [STEP-13-rolling-stats.md](STEP-13-rolling-stats.md) |
 |  14 | ☐ | Per-athlete `AthleteData` + `DataBucket`/`DataCollector` + peak periods | [STEP-14-athlete-data.md](STEP-14-athlete-data.md) |
