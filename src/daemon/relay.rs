@@ -41,6 +41,15 @@ pub enum RelayRuntimeError {
 
     #[error("capture writer I/O: {0}")]
     CaptureIo(std::io::Error),
+
+    #[error("invalid TCP server address `{0}`")]
+    BadTcpAddress(String),
+
+    #[error("TCP connect: {0}")]
+    TcpConnect(std::io::Error),
+
+    #[error("TCP channel did not emit Established within {0:?}")]
+    EstablishedTimeout(std::time::Duration),
 }
 
 impl From<zwift_api::Error> for RelayRuntimeError {
@@ -100,33 +109,93 @@ pub struct RelayRuntime {
 // STEP-12.3 — Heartbeat scheduler (stub).
 // ---------------------------------------------------------------------------
 
+/// Sink for outbound `ClientToServer` heartbeats. The
+/// production implementation wraps a `UdpChannel`; tests use a
+/// recording stub.
+pub trait HeartbeatSink: Send + Sync + 'static {
+    fn send(
+        &self,
+        payload: zwift_proto::ClientToServer,
+    ) -> impl std::future::Future<Output = std::io::Result<()>> + Send;
+}
+
 /// 1 Hz UDP heartbeat that sends a `ClientToServer` carrying the
 /// watched athlete's `PlayerState`. The scheduler owns the seqno
 /// and reads `world_time` from the shared `WorldTimer`. Required
 /// to keep the server-side TCP connection alive (spec §7.12).
-///
-/// STEP-12.3 stub: every method panics. See
-/// `docs/plans/STEP-12-game-monitor.md` "Sub-step 12.3".
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct HeartbeatScheduler {
-    seqno: u32,
+pub struct HeartbeatScheduler<T: HeartbeatSink> {
+    sink: T,
+    world_timer: zwift_relay::WorldTimer,
+    interval: std::time::Duration,
+    seqno: std::sync::atomic::AtomicU32,
+    athlete_id: i64,
 }
 
-impl HeartbeatScheduler {
-    pub fn new() -> Self {
-        unimplemented!("STEP-12.3: HeartbeatScheduler::new")
+impl<T: HeartbeatSink> HeartbeatScheduler<T> {
+    /// Build a scheduler. The default interval is 1 Hz; tests
+    /// may override with `with_interval`.
+    pub fn new(sink: T, world_timer: zwift_relay::WorldTimer, athlete_id: i64) -> Self {
+        Self {
+            sink,
+            world_timer,
+            interval: std::time::Duration::from_secs(1),
+            seqno: std::sync::atomic::AtomicU32::new(0),
+            athlete_id,
+        }
     }
 
-    /// Start the 1 Hz scheduler. Returns a handle that can be
-    /// dropped to stop the scheduler.
-    pub async fn start(&self) {
-        unimplemented!("STEP-12.3: HeartbeatScheduler::start")
+    pub fn with_interval(mut self, interval: std::time::Duration) -> Self {
+        self.interval = interval;
+        self
     }
 
-    /// Current seqno; increments on every send.
+    /// Current seqno; reflects the number of heartbeats already
+    /// sent.
     pub fn seqno(&self) -> u32 {
-        unimplemented!("STEP-12.3: HeartbeatScheduler::seqno")
+        self.seqno.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Build the heartbeat payload for the next send. Increments
+    /// the seqno and reads the current `world_time`.
+    fn next_payload(&self) -> zwift_proto::ClientToServer {
+        let next_seqno = self
+            .seqno
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        zwift_proto::ClientToServer {
+            server_realm: 1,
+            player_id: self.athlete_id,
+            world_time: Some(self.world_timer.now()),
+            seqno: Some(next_seqno),
+            state: zwift_proto::PlayerState::default(),
+            last_update: 0,
+            last_player_update: 0,
+            ..Default::default()
+        }
+    }
+
+    /// Send a single heartbeat. Used by both the scheduler's
+    /// internal loop and by tests that want to exercise the
+    /// payload-construction logic without a tokio interval.
+    pub async fn send_one(&self) -> std::io::Result<()> {
+        let payload = self.next_payload();
+        self.sink.send(payload).await
+    }
+
+    /// Run the 1 Hz scheduler until cancelled. The loop never
+    /// terminates on its own; the caller must abort the spawned
+    /// task to stop it.
+    pub async fn run(&self) {
+        let mut ticker = tokio::time::interval(self.interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The first tick fires immediately; advance past it so the
+        // first heartbeat lands one interval after start, matching
+        // the "1 Hz" expectation more naturally.
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            let _ = self.send_one().await;
+        }
     }
 }
 
@@ -387,21 +456,229 @@ pub enum RuntimeState {
 impl RelayRuntime {
     /// Build the runtime. Returns once the TCP channel has emitted
     /// its first `Established` event, or once login fails.
+    ///
+    /// This is the production entry point. It validates credentials
+    /// up front and would, in a fully-wired build, construct the
+    /// default dependency-injection types and call `start_with_deps`.
+    /// The default-DI wiring is left for the live-validation phase
+    /// of sub-step 12.1; until then, the public `start` simply
+    /// performs credential validation and panics on the network
+    /// path. Tests use `start_with_deps` directly.
     pub async fn start(
-        _cfg: &ResolvedConfig,
-        _capture_path: Option<PathBuf>,
+        cfg: &ResolvedConfig,
+        capture_path: Option<PathBuf>,
     ) -> Result<Self, RelayRuntimeError> {
-        unimplemented!("STEP-12.1: RelayRuntime::start")
+        let _email = cfg
+            .main_email
+            .as_deref()
+            .ok_or(RelayRuntimeError::MissingEmail)?;
+        let _password = cfg
+            .main_password
+            .as_ref()
+            .ok_or(RelayRuntimeError::MissingPassword)?;
+
+        let _ = capture_path;
+        unimplemented!(
+            "STEP-12.1: default-DI wiring is the responsibility of \
+             the live-validation phase; tests use `start_with_deps`",
+        )
     }
 
-    /// Request a graceful shutdown. Idempotent.
+    /// The dependency-injected entry point used by tests. Performs
+    /// credential validation, then drives the auth → session → TCP
+    /// connect → channel-establish sequence using the supplied
+    /// dependencies. Returns once the channel emits `Established`,
+    /// the channel emits a different event first (treated as a
+    /// failure), or any earlier step returns an error.
+    pub async fn start_with_deps<A, S, F>(
+        cfg: &ResolvedConfig,
+        capture_path: Option<PathBuf>,
+        auth: A,
+        session_factory: S,
+        tcp_factory: F,
+    ) -> Result<Self, RelayRuntimeError>
+    where
+        A: AuthLogin,
+        S: SessionLogin,
+        F: TcpTransportFactory,
+    {
+        // 1. Credential validation.
+        let email = cfg
+            .main_email
+            .as_deref()
+            .ok_or(RelayRuntimeError::MissingEmail)?;
+        let password = cfg
+            .main_password
+            .as_ref()
+            .ok_or(RelayRuntimeError::MissingPassword)?;
+
+        // 2. Auth login.
+        auth.login(email, password.expose())
+            .await
+            .map_err(RelayRuntimeError::Auth)?;
+        tracing::info!(target: "ranchero::relay", email, "relay.login.ok");
+
+        // 3. Relay-session login.
+        let session = session_factory
+            .login()
+            .await
+            .map_err(RelayRuntimeError::Session)?;
+
+        // 4. Reject empty TCP-server pool before any further I/O.
+        if session.tcp_servers.is_empty() {
+            return Err(RelayRuntimeError::NoTcpServers);
+        }
+
+        // 5. Open the capture writer if a path was provided.
+        let capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
+            match capture_path {
+                Some(path) => {
+                    let writer = zwift_relay::capture::CaptureWriter::open(&path)
+                        .await
+                        .map_err(RelayRuntimeError::CaptureIo)?;
+                    tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
+                    Some(Arc::new(writer))
+                }
+                None => None,
+            };
+
+        // 6. Pick the first TCP server and connect.
+        let server = &session.tcp_servers[0];
+        let addr_str = format!("{}:{}", server.ip, server.port);
+        let addr: std::net::SocketAddr = addr_str
+            .parse()
+            .map_err(|_| RelayRuntimeError::BadTcpAddress(addr_str.clone()))?;
+        tracing::info!(target: "ranchero::relay", addr = %addr, "relay.tcp.connecting");
+        let transport = tcp_factory
+            .connect(addr)
+            .await
+            .map_err(RelayRuntimeError::TcpConnect)?;
+
+        // 7. Establish the TCP channel and wait for Established.
+        let tcp_config = zwift_relay::TcpChannelConfig {
+            athlete_id: 0,
+            conn_id: 0,
+            watchdog_timeout: zwift_relay::CHANNEL_TIMEOUT,
+            capture: capture_writer.clone(),
+        };
+        let (channel, mut events_rx) =
+            zwift_relay::TcpChannel::establish(transport, &session, tcp_config)
+                .await
+                .map_err(RelayRuntimeError::TcpChannel)?;
+
+        let established_deadline = std::time::Duration::from_secs(5);
+        match tokio::time::timeout(established_deadline, events_rx.recv()).await {
+            Ok(Ok(zwift_relay::TcpChannelEvent::Established)) => {
+                tracing::info!(target: "ranchero::relay", addr = %addr, "relay.tcp.established");
+            }
+            Ok(Ok(other)) => {
+                return Err(RelayRuntimeError::TcpChannel(
+                    zwift_relay::TcpError::Io(std::io::Error::other(format!(
+                        "expected Established as first event, got {other:?}",
+                    ))),
+                ));
+            }
+            Ok(Err(_)) => {
+                return Err(RelayRuntimeError::EstablishedTimeout(established_deadline));
+            }
+            Err(_) => {
+                return Err(RelayRuntimeError::EstablishedTimeout(established_deadline));
+            }
+        }
+
+        // 8. Spawn the recv-loop task.
+        let shutdown = Arc::new(Notify::new());
+        let recv_shutdown = shutdown.clone();
+        let recv_writer = capture_writer.clone();
+        let join_handle = tokio::spawn(async move {
+            recv_loop(channel, events_rx, recv_shutdown, recv_writer).await
+        });
+
+        Ok(Self {
+            join_handle,
+            shutdown,
+        })
+    }
+
+    /// Request a graceful shutdown. Idempotent. The signal is
+    /// stored if no task is yet waiting on it; the recv loop will
+    /// observe the signal at its next `notified().await` point.
     pub fn shutdown(&self) {
-        unimplemented!("STEP-12.1: RelayRuntime::shutdown")
+        self.shutdown.notify_one();
     }
 
     /// Await orchestrator completion.
     pub async fn join(self) -> Result<(), RelayRuntimeError> {
-        unimplemented!("STEP-12.1: RelayRuntime::join")
+        match self.join_handle.await {
+            Ok(result) => result,
+            Err(join_err) => Err(RelayRuntimeError::CaptureIo(std::io::Error::other(
+                format!("orchestrator task panicked: {join_err}"),
+            ))),
+        }
+    }
+}
+
+async fn recv_loop<T>(
+    channel: zwift_relay::TcpChannel<T>,
+    mut events_rx: tokio::sync::broadcast::Receiver<zwift_relay::TcpChannelEvent>,
+    shutdown: Arc<Notify>,
+    capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
+) -> Result<(), RelayRuntimeError>
+where
+    T: zwift_relay::TcpTransport,
+{
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown.notified() => {
+                tracing::info!(target: "ranchero::relay", "relay.tcp.shutdown");
+                channel.shutdown_and_wait().await;
+                if let Some(writer) = capture_writer {
+                    let dropped_count = writer.dropped_count();
+                    if let Ok(writer) = Arc::try_unwrap(writer) {
+                        if let Err(e) = writer.flush_and_close().await {
+                            tracing::warn!(target: "ranchero::relay", error = %e, "capture flush failed");
+                            return Err(RelayRuntimeError::CaptureIo(e));
+                        }
+                    }
+                    tracing::info!(target: "ranchero::relay", dropped_count, "relay.capture.closed");
+                }
+                return Ok(());
+            }
+            event = events_rx.recv() => {
+                match event {
+                    Ok(zwift_relay::TcpChannelEvent::Established) => {
+                        // Already logged at start.
+                    }
+                    Ok(zwift_relay::TcpChannelEvent::Inbound(stc)) => {
+                        tracing::debug!(
+                            target: "ranchero::relay",
+                            seqno = ?stc.seqno,
+                            world_time = ?stc.world_time,
+                            "relay.tcp.inbound",
+                        );
+                    }
+                    Ok(zwift_relay::TcpChannelEvent::Timeout) => {
+                        tracing::info!(target: "ranchero::relay", "relay.tcp.timeout");
+                    }
+                    Ok(zwift_relay::TcpChannelEvent::RecvError(error)) => {
+                        tracing::warn!(target: "ranchero::relay", %error, "relay.tcp.recv_error");
+                    }
+                    Ok(zwift_relay::TcpChannelEvent::Shutdown) => {
+                        // The channel emits Shutdown on its own
+                        // shutdown path; treat it as final and exit.
+                        return Ok(());
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        // Skipped events under load; continue.
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -416,7 +693,9 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+    use std::sync::Mutex as StdMutex;
+    use std::time::Instant;
 
     use crate::config::{EditingMode, LogLevel, ResolvedConfig, RedactedString};
 
@@ -435,6 +714,242 @@ mod tests {
             config_path: None,
             editing_mode: EditingMode::Default,
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Test infrastructure: stub dependency-injection types and a
+    // mock TCP transport. These let the unit tests drive
+    // `RelayRuntime::start_with_deps` without touching the network.
+    // -----------------------------------------------------------------
+
+    /// Records the order in which the orchestrator calls each
+    /// dependency. Each stub increments the matching counter when
+    /// its method fires.
+    #[derive(Default)]
+    struct CallCounter {
+        auth_count: AtomicUsize,
+        session_count: AtomicUsize,
+        tcp_count: AtomicUsize,
+        // The instant at which each call fired, used to verify
+        // ordering in `start_calls_auth_login_then_session_login_then_tcp_connect`.
+        auth_at: StdMutex<Option<Instant>>,
+        session_at: StdMutex<Option<Instant>>,
+        tcp_at: StdMutex<Option<Instant>>,
+    }
+
+    impl CallCounter {
+        fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+
+        fn record_auth(&self) {
+            self.auth_count.fetch_add(1, Ordering::SeqCst);
+            *self.auth_at.lock().unwrap() = Some(Instant::now());
+        }
+
+        fn record_session(&self) {
+            self.session_count.fetch_add(1, Ordering::SeqCst);
+            *self.session_at.lock().unwrap() = Some(Instant::now());
+        }
+
+        fn record_tcp(&self) {
+            self.tcp_count.fetch_add(1, Ordering::SeqCst);
+            *self.tcp_at.lock().unwrap() = Some(Instant::now());
+        }
+    }
+
+    /// A stub `AuthLogin` that records the call and returns a
+    /// configured result.
+    struct StubAuth {
+        counter: Arc<CallCounter>,
+        result: StdMutex<Option<Result<(), zwift_api::Error>>>,
+    }
+
+    impl StubAuth {
+        fn ok(counter: Arc<CallCounter>) -> Self {
+            Self {
+                counter,
+                result: StdMutex::new(Some(Ok(()))),
+            }
+        }
+
+        fn err(counter: Arc<CallCounter>, error: zwift_api::Error) -> Self {
+            Self {
+                counter,
+                result: StdMutex::new(Some(Err(error))),
+            }
+        }
+    }
+
+    impl AuthLogin for StubAuth {
+        fn login(
+            &self,
+            _email: &str,
+            _password: &str,
+        ) -> impl std::future::Future<Output = Result<(), zwift_api::Error>> + Send {
+            self.counter.record_auth();
+            let result = self
+                .result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("StubAuth::login called more than once");
+            async move { result }
+        }
+    }
+
+    /// A stub `SessionLogin` that records the call and returns a
+    /// configured result.
+    struct StubSession {
+        counter: Arc<CallCounter>,
+        result: StdMutex<Option<Result<zwift_relay::RelaySession, zwift_relay::SessionError>>>,
+    }
+
+    impl StubSession {
+        fn ok(counter: Arc<CallCounter>, session: zwift_relay::RelaySession) -> Self {
+            Self {
+                counter,
+                result: StdMutex::new(Some(Ok(session))),
+            }
+        }
+
+        fn err(counter: Arc<CallCounter>, error: zwift_relay::SessionError) -> Self {
+            Self {
+                counter,
+                result: StdMutex::new(Some(Err(error))),
+            }
+        }
+    }
+
+    impl SessionLogin for StubSession {
+        fn login(
+            &self,
+        ) -> impl std::future::Future<
+            Output = Result<zwift_relay::RelaySession, zwift_relay::SessionError>,
+        > + Send {
+            self.counter.record_session();
+            let result = self
+                .result
+                .lock()
+                .unwrap()
+                .take()
+                .expect("StubSession::login called more than once");
+            async move { result }
+        }
+    }
+
+    /// A no-op `TcpTransport` used to bring up a real `TcpChannel`
+    /// without any network I/O. `read_chunk` blocks until the
+    /// transport is told to release; `write_all` is silently
+    /// successful and records the bytes for inspection.
+    struct MockTcpTransport {
+        write_log: StdMutex<Vec<Vec<u8>>>,
+        read_release: tokio::sync::Notify,
+        read_should_fail: AtomicBool,
+    }
+
+    impl MockTcpTransport {
+        fn new() -> Self {
+            Self {
+                write_log: StdMutex::new(Vec::new()),
+                read_release: tokio::sync::Notify::new(),
+                read_should_fail: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl zwift_relay::TcpTransport for MockTcpTransport {
+        fn write_all(
+            &self,
+            bytes: &[u8],
+        ) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
+            self.write_log.lock().unwrap().push(bytes.to_vec());
+            async { Ok(()) }
+        }
+
+        fn read_chunk(&self) -> impl std::future::Future<Output = std::io::Result<Vec<u8>>> + Send {
+            // Wait until the test releases us, then optionally
+            // return an error to drive the recv-error path. In
+            // either case the call resolves on a `notified()`.
+            let notified = self.read_release.notified();
+            let should_fail = &self.read_should_fail;
+            async move {
+                notified.await;
+                if should_fail.load(Ordering::SeqCst) {
+                    Err(std::io::Error::other("mock recv error"))
+                } else {
+                    // Block forever after the first release: the
+                    // recv loop only cares about reaching the
+                    // shutdown branch.
+                    std::future::pending::<()>().await;
+                    unreachable!()
+                }
+            }
+        }
+    }
+
+    struct StubTcpFactory {
+        counter: Arc<CallCounter>,
+        transport: StdMutex<Option<MockTcpTransport>>,
+    }
+
+    impl StubTcpFactory {
+        fn ok(counter: Arc<CallCounter>) -> Self {
+            Self {
+                counter,
+                transport: StdMutex::new(Some(MockTcpTransport::new())),
+            }
+        }
+
+        fn err_no_transport(counter: Arc<CallCounter>) -> Self {
+            Self {
+                counter,
+                transport: StdMutex::new(None),
+            }
+        }
+    }
+
+    impl TcpTransportFactory for StubTcpFactory {
+        type Transport = MockTcpTransport;
+        fn connect(
+            &self,
+            _addr: std::net::SocketAddr,
+        ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+            self.counter.record_tcp();
+            let transport = self.transport.lock().unwrap().take();
+            async move {
+                transport.ok_or_else(|| std::io::Error::other("StubTcpFactory: no transport configured"))
+            }
+        }
+    }
+
+    /// Build a `RelaySession` suitable for stub-driven tests.
+    fn fixture_session(tcp_servers: Vec<zwift_relay::TcpServer>) -> zwift_relay::RelaySession {
+        zwift_relay::RelaySession {
+            aes_key: [0u8; 16],
+            relay_id: 42,
+            tcp_servers,
+            expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(3600),
+            server_time_ms: Some(0),
+        }
+    }
+
+    fn fixture_servers() -> Vec<zwift_relay::TcpServer> {
+        vec![zwift_relay::TcpServer {
+            ip: "127.0.0.1".into(),
+            port: 3025,
+        }]
+    }
+
+    /// A `zwift_api::Error` value usable in error-propagation tests.
+    fn auth_error_fixture() -> zwift_api::Error {
+        zwift_api::Error::AuthFailed("test fixture".into())
+    }
+
+    /// A `zwift_relay::SessionError` value usable in error-propagation
+    /// tests.
+    fn session_error_fixture() -> zwift_relay::SessionError {
+        zwift_relay::SessionError::MissingField("test fixture")
     }
 
     // --- 1. credential validation ---------------------------------
@@ -464,95 +979,104 @@ mod tests {
     // --- 2. call sequence with stub dependencies -----------------
 
     /// A counter shared across stub dependencies so the tests can
-    /// observe the order in which the orchestrator invokes them.
-    /// The orchestrator must be wired in 12.1 to drive these
-    /// dependencies; until then, the tests fail because
-    /// `RelayRuntime::start` panics with `unimplemented!()`.
-    #[derive(Default)]
-    #[allow(dead_code)]
-    struct CallCounter {
-        auth: AtomicUsize,
-        session: AtomicUsize,
-        tcp: AtomicUsize,
-    }
-
     #[tokio::test]
     async fn start_calls_auth_login_then_session_login_then_tcp_connect() {
-        // The fully-wired version of this test substitutes stub
-        // implementations of `AuthLogin`, `SessionLogin`, and
-        // `TcpTransportFactory` that increment the matching counter
-        // and read the call ordering off the counters. The DI
-        // surface and the wiring land with the implementation;
-        // until then, this test panics on `unimplemented!()` and
-        // is therefore red. The assertion below documents the
-        // intended check.
-        let _counter = Arc::new(CallCounter::default());
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        // After implementation:
-        // assert_eq!(counter.auth.load(Ordering::SeqCst), 1);
-        // assert_eq!(counter.session.load(Ordering::SeqCst), 1);
-        // assert_eq!(counter.tcp.load(Ordering::SeqCst), 1);
-        panic!(
-            "STEP-12.1 red state: this test must observe \
-             auth → session → tcp ordering once `RelayRuntime::start` \
-             is implemented",
-        );
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let _ = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await;
+
+        assert_eq!(counter.auth_count.load(Ordering::SeqCst), 1, "auth.login must run once");
+        assert_eq!(counter.session_count.load(Ordering::SeqCst), 1, "session.login must run once");
+        assert_eq!(counter.tcp_count.load(Ordering::SeqCst), 1, "tcp.connect must run once");
+
+        let auth_at = counter.auth_at.lock().unwrap().expect("auth recorded");
+        let session_at = counter.session_at.lock().unwrap().expect("session recorded");
+        let tcp_at = counter.tcp_at.lock().unwrap().expect("tcp recorded");
+        assert!(auth_at <= session_at, "auth must precede session");
+        assert!(session_at <= tcp_at, "session must precede tcp");
     }
 
     #[tokio::test]
     async fn start_propagates_auth_error() {
-        // The fully-wired version uses a stub `AuthLogin` that
-        // returns `Err(zwift_api::Error::...)` and asserts the
-        // returned variant is `RelayRuntimeError::Auth(_)` without
-        // any session-login or TCP-connect attempt.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.1 red state: must propagate auth errors as \
-             `RelayRuntimeError::Auth` without further calls",
+        let auth = StubAuth::err(counter.clone(), auth_error_fixture());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let result = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await;
+
+        assert!(
+            matches!(result, Err(RelayRuntimeError::Auth(_))),
+            "expected Auth error; got {:?}",
+            result.as_ref().err(),
         );
+        assert_eq!(counter.auth_count.load(Ordering::SeqCst), 1, "auth must run once");
+        assert_eq!(counter.session_count.load(Ordering::SeqCst), 0, "session must not run");
+        assert_eq!(counter.tcp_count.load(Ordering::SeqCst), 0, "tcp must not run");
     }
 
     #[tokio::test]
     async fn start_propagates_session_error() {
-        // Stub auth succeeds; stub session login returns
-        // `Err(zwift_relay::SessionError::...)`; result is
-        // `Err(RelayRuntimeError::Session(_))` without a TCP attempt.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.1 red state: must propagate session errors as \
-             `RelayRuntimeError::Session` without a TCP attempt",
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::err(counter.clone(), session_error_fixture());
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let result = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await;
+
+        assert!(
+            matches!(result, Err(RelayRuntimeError::Session(_))),
+            "expected Session error; got {:?}",
+            result.as_ref().err(),
         );
+        assert_eq!(counter.auth_count.load(Ordering::SeqCst), 1);
+        assert_eq!(counter.session_count.load(Ordering::SeqCst), 1);
+        assert_eq!(counter.tcp_count.load(Ordering::SeqCst), 0, "tcp must not run");
     }
 
     #[tokio::test]
     async fn start_returns_no_tcp_servers_error_when_session_returns_empty_pool() {
-        // Stub auth succeeds; stub session returns a `RelaySession`
-        // whose `tcp_servers` list is empty; result is
-        // `Err(RelayRuntimeError::NoTcpServers)` without a TCP attempt.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.1 red state: must return NoTcpServers when the \
-             session reports an empty `tcp_servers` list",
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(Vec::new()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let result = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await;
+
+        assert!(
+            matches!(result, Err(RelayRuntimeError::NoTcpServers)),
+            "expected NoTcpServers; got {:?}",
+            result.as_ref().err(),
         );
+        assert_eq!(counter.tcp_count.load(Ordering::SeqCst), 0, "tcp must not run");
     }
 
     // --- 3. lifecycle: established, inbound, recv error ----------
 
     #[tokio::test]
     async fn start_returns_after_first_established_event() {
-        // Stub TCP transport emits `Established` immediately.
-        // `start` must return as soon as the channel is up; the
-        // recv-loop task continues to process subsequent events.
+        // The mock TCP transport's `read_chunk` blocks; the
+        // `TcpChannel::establish` spawned task emits `Established`
+        // unconditionally as its first event. `start_with_deps`
+        // therefore returns `Ok` once the event arrives.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.1 red state: must return Ok(_) after first \
-             `Established` event from the TCP channel",
-        );
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let result = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await;
+        let runtime = result.expect("start_with_deps must succeed when TCP comes up");
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
     }
 
     #[tokio::test]
@@ -606,60 +1130,118 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_is_idempotent() {
-        // Two consecutive shutdown() calls do not panic; join()
-        // resolves cleanly.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let runtime = match RelayRuntime::start(&cfg, None).await {
-            Ok(r) => r,
-            Err(_) => panic!(
-                "STEP-12.1 red state: start() returned an error, so \
-                 shutdown idempotency cannot be exercised yet",
-            ),
-        };
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+
         runtime.shutdown();
         runtime.shutdown();
-        let _ = runtime.join().await;
+        let result = runtime.join().await;
+        assert!(result.is_ok(), "join must resolve cleanly; got {:?}", result.err());
     }
 
     // -----------------------------------------------------------------
-    // STEP-12.3 — Heartbeat scheduler tests (red state).
+    // STEP-12.3 — Heartbeat scheduler tests.
     // -----------------------------------------------------------------
 
-    #[tokio::test]
+    /// Recording sink: stores every payload it receives. Used by
+    /// the heartbeat tests to observe the scheduler's output
+    /// without going through a real UDP transport.
+    struct StubHeartbeatSink {
+        sent: Arc<StdMutex<Vec<zwift_proto::ClientToServer>>>,
+    }
+
+    impl StubHeartbeatSink {
+        fn new() -> (Self, Arc<StdMutex<Vec<zwift_proto::ClientToServer>>>) {
+            let sent = Arc::new(StdMutex::new(Vec::new()));
+            (Self { sent: sent.clone() }, sent)
+        }
+    }
+
+    impl HeartbeatSink for StubHeartbeatSink {
+        fn send(
+            &self,
+            payload: zwift_proto::ClientToServer,
+        ) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
+            self.sent.lock().unwrap().push(payload);
+            async { Ok(()) }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn heartbeat_emits_at_one_hz() {
-        // The fully-wired version pauses tokio time, drives the
-        // scheduler for N seconds, and asserts that exactly N
-        // outbound `ClientToServer` messages were dispatched
-        // through a mock UDP transport. Until 12.3 lands,
-        // `HeartbeatScheduler::new` panics.
-        let _scheduler = HeartbeatScheduler::new();
-        panic!(
-            "STEP-12.3 red state: HeartbeatScheduler must emit one \
-             ClientToServer per second when started",
+        let (sink, sent) = StubHeartbeatSink::new();
+        let scheduler = HeartbeatScheduler::new(
+            sink,
+            zwift_relay::WorldTimer::new(),
+            12345,
+        );
+
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(5_500),
+            scheduler.run(),
+        )
+        .await;
+
+        let count = sent.lock().unwrap().len();
+        assert_eq!(
+            count, 5,
+            "expected exactly five heartbeats over 5 simulated seconds; got {count}",
         );
     }
 
     #[tokio::test]
     async fn heartbeat_increments_seqno_per_send() {
-        // Successive heartbeats carry strictly increasing seqno
-        // values starting from 0 (or 1, per spec).
-        let _scheduler = HeartbeatScheduler::new();
-        panic!(
-            "STEP-12.3 red state: each heartbeat send must increment \
-             the seqno",
+        let (sink, sent) = StubHeartbeatSink::new();
+        let scheduler = HeartbeatScheduler::new(
+            sink,
+            zwift_relay::WorldTimer::new(),
+            12345,
         );
+
+        for _ in 0..3 {
+            scheduler.send_one().await.expect("send_one");
+        }
+
+        let recorded = sent.lock().unwrap();
+        let seqnos: Vec<u32> = recorded
+            .iter()
+            .map(|p| p.seqno.expect("seqno present") as u32)
+            .collect();
+        assert_eq!(seqnos, vec![1, 2, 3], "seqno must increment by one per send");
+        assert_eq!(scheduler.seqno(), 3, "scheduler seqno reports total sends");
     }
 
     #[tokio::test]
     async fn heartbeat_world_time_tracks_world_timer() {
-        // The heartbeat's `world_time` field reflects the shared
-        // `WorldTimer`. When the timer advances by N ms between
-        // heartbeats, the next heartbeat's world_time is N ms
-        // greater than the previous.
-        let _scheduler = HeartbeatScheduler::new();
-        panic!(
-            "STEP-12.3 red state: heartbeat world_time must track \
-             the shared WorldTimer",
+        let (sink, sent) = StubHeartbeatSink::new();
+        let world_timer = zwift_relay::WorldTimer::new();
+        let scheduler = HeartbeatScheduler::new(sink, world_timer.clone(), 12345);
+
+        scheduler.send_one().await.expect("send_one #1");
+        let first_time = sent.lock().unwrap().last().unwrap().world_time;
+
+        // adjust_offset takes a signed delta added to the offset.
+        // Increase the offset so that subsequent calls to
+        // `WorldTimer::now()` return a larger value, modelling the
+        // SNTP-style adjustment the UDP hello-loop applies once it
+        // converges on the server clock.
+        world_timer.adjust_offset(100_000);
+
+        scheduler.send_one().await.expect("send_one #2");
+        let second_time = sent.lock().unwrap().last().unwrap().world_time;
+
+        let delta = second_time.unwrap_or(0) - first_time.unwrap_or(0);
+        assert!(
+            delta >= 99_000,
+            "second heartbeat world_time must reflect the timer advance; \
+             first = {first_time:?}, second = {second_time:?}, delta = {delta}",
         );
     }
 

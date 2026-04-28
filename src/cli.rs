@@ -177,14 +177,6 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     use crate::daemon;
     use crate::tui;
 
-    if matches!(cli.command, Command::Start) && cli.global.capture.is_some() {
-        return Err(
-            "--capture is parsed but its supervisor wiring is implemented in STEP 12; \
-             see docs/plans/STEP-12-game-monitor.md"
-                .into(),
-        );
-    }
-
     match cli.command {
         Command::Configure => {
             let config_path = cli.global.config.clone()

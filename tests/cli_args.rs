@@ -294,27 +294,6 @@ fn dispatch_replay_stub() {
 }
 
 #[test]
-fn dispatch_start_with_capture_errors_until_step12() {
-    // STEP 11.6, Fix D: --capture is parsed, but the supervisor
-    // wiring is implemented in STEP 12. The dispatcher must
-    // return an error early with a clear message rather than
-    // silently ignore the flag.
-    //
-    // STEP-12.1 will remove the Fix-D guard and replace this test
-    // with `dispatch_start_passes_capture_path_to_daemon` (below).
-    // Both tests are present during the red phase: this one
-    // currently passes (the guard is in place), and the new one
-    // currently fails (the wiring is not yet present).
-    let cli = parse(&["ranchero", "--capture", "/tmp/x.cap", "start"]);
-    let err = ranchero::cli::dispatch(cli).expect_err("dispatch must reject");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("--capture") && msg.contains("STEP 12"),
-        "error must reference both --capture and STEP 12; got: {msg}",
-    );
-}
-
-#[test]
 fn dispatch_start_passes_capture_path_to_daemon() {
     // STEP-12.1 contract: dispatch must (a) not reject `--capture`
     // with the STEP-11.6 Fix-D guard, and (b) pass the capture
