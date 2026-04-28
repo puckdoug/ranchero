@@ -103,6 +103,17 @@ pub struct RelayRuntime {
     join_handle: JoinHandle<Result<(), RelayRuntimeError>>,
     #[allow(dead_code)]
     shutdown:    Arc<Notify>,
+    /// Forwarded broadcast of every `TcpChannelEvent` observed by
+    /// the runtime. The runtime forwards the channel's own events
+    /// here on a dedicated task; tests use [`Self::inject_event`]
+    /// to publish synthetic events for assertion purposes.
+    #[allow(dead_code)]
+    events_tx: tokio::sync::broadcast::Sender<zwift_relay::TcpChannelEvent>,
+    /// Broadcast surface for downstream consumers (web/WS server,
+    /// per-athlete data model). Lifecycle `GameEvent::StateChange`
+    /// records are emitted before `start_with_deps` returns.
+    #[allow(dead_code)]
+    game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -424,16 +435,13 @@ impl WatchedAthleteState {
 
 /// High-level events emitted by the orchestrator for downstream
 /// consumers (web/WS server, the per-athlete data model).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GameEvent {
     PlayerState {
         athlete_id: i64,
-        realm: i32,
-        course_id: i32,
-        position: (f64, f64),
         power_w: i32,
-        cadence_rpm: i32,
-        speed_mm_s: i32,
+        cadence_u_hz: i32,
+        speed_mm_h: u32,
         world_time_ms: i64,
     },
     Latency {
@@ -496,6 +504,36 @@ impl RelayRuntime {
         auth: A,
         session_factory: S,
         tcp_factory: F,
+    ) -> Result<Self, RelayRuntimeError>
+    where
+        A: AuthLogin,
+        S: SessionLogin,
+        F: TcpTransportFactory,
+    {
+        let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
+        Self::start_with_deps_and_events_tx(
+            cfg,
+            capture_path,
+            auth,
+            session_factory,
+            tcp_factory,
+            game_events_tx,
+        )
+        .await
+    }
+
+    /// As [`Self::start_with_deps`], but accepts an externally
+    /// constructed `GameEvent` sender. Tests subscribe a receiver
+    /// from this sender before calling, so that lifecycle
+    /// `StateChange` events emitted during `start_with_deps` can
+    /// be observed.
+    pub async fn start_with_deps_and_events_tx<A, S, F>(
+        cfg: &ResolvedConfig,
+        capture_path: Option<PathBuf>,
+        auth: A,
+        session_factory: S,
+        tcp_factory: F,
+        game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
     ) -> Result<Self, RelayRuntimeError>
     where
         A: AuthLogin,
@@ -566,10 +604,20 @@ impl RelayRuntime {
                 .await
                 .map_err(RelayRuntimeError::TcpChannel)?;
 
+        // Lifecycle events are emitted on the supplied sender. By
+        // the time we reach this point the auth and session login
+        // have already succeeded; we replay the sequence as
+        // `StateChange` records so that subscribers see the
+        // canonical ordering even though the actual transitions
+        // happened earlier in this function.
+        let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::Authenticating));
+        let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::SessionLoggedIn));
+
         let established_deadline = std::time::Duration::from_secs(5);
         match tokio::time::timeout(established_deadline, events_rx.recv()).await {
             Ok(Ok(zwift_relay::TcpChannelEvent::Established)) => {
                 tracing::info!(target: "ranchero::relay", addr = %addr, "relay.tcp.established");
+                let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::TcpEstablished));
             }
             Ok(Ok(other)) => {
                 return Err(RelayRuntimeError::TcpChannel(
@@ -586,18 +634,53 @@ impl RelayRuntime {
             }
         }
 
-        // 8. Spawn the recv-loop task.
+        // 8. Set up the forwarded event broadcast and spawn the
+        //    recv-loop. The forwarder reads from the channel's
+        //    broadcast and republishes on our `events_tx` so that
+        //    tests can inject synthetic events on the same surface.
+        let (events_tx, recv_rx) = tokio::sync::broadcast::channel::<zwift_relay::TcpChannelEvent>(64);
+        let forwarder_tx = events_tx.clone();
+        tokio::spawn(async move {
+            let mut rx = events_rx;
+            while let Ok(event) = rx.recv().await {
+                if forwarder_tx.send(event).is_err() {
+                    break;
+                }
+            }
+        });
+
         let shutdown = Arc::new(Notify::new());
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
+        let recv_game_events = game_events_tx.clone();
         let join_handle = tokio::spawn(async move {
-            recv_loop(channel, events_rx, recv_shutdown, recv_writer).await
+            recv_loop(channel, recv_rx, recv_shutdown, recv_writer, recv_game_events).await
         });
 
         Ok(Self {
             join_handle,
             shutdown,
+            events_tx,
+            game_events_tx,
         })
+    }
+
+    /// Subscribe to high-level `GameEvent`s emitted by the
+    /// orchestrator. Only events emitted *after* the subscribe
+    /// call are observed; lifecycle events fired during
+    /// `start_with_deps` cannot be observed by callers that
+    /// subscribe afterwards. For tests that need those
+    /// transitions, see `start_with_deps_and_events`.
+    pub fn events(&self) -> tokio::sync::broadcast::Receiver<GameEvent> {
+        self.game_events_tx.subscribe()
+    }
+
+    /// Inject a synthetic `TcpChannelEvent` into the orchestrator's
+    /// event stream. Used by tests to drive the recv-loop without a
+    /// real TCP transport.
+    #[cfg(test)]
+    pub fn inject_event(&self, event: zwift_relay::TcpChannelEvent) {
+        let _ = self.events_tx.send(event);
     }
 
     /// Request a graceful shutdown. Idempotent. The signal is
@@ -623,6 +706,7 @@ async fn recv_loop<T>(
     mut events_rx: tokio::sync::broadcast::Receiver<zwift_relay::TcpChannelEvent>,
     shutdown: Arc<Notify>,
     capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
+    game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
 ) -> Result<(), RelayRuntimeError>
 where
     T: zwift_relay::TcpTransport,
@@ -657,6 +741,17 @@ where
                             world_time = ?stc.world_time,
                             "relay.tcp.inbound",
                         );
+                        for state in &stc.states {
+                            if let Some(athlete_id) = state.id {
+                                let _ = game_events_tx.send(GameEvent::PlayerState {
+                                    athlete_id,
+                                    power_w: state.power.unwrap_or(0),
+                                    cadence_u_hz: state.cadence_u_hz.unwrap_or(0),
+                                    speed_mm_h: state.speed.unwrap_or(0),
+                                    world_time_ms: state.world_time.unwrap_or(0),
+                                });
+                            }
+                        }
                     }
                     Ok(zwift_relay::TcpChannelEvent::Timeout) => {
                         tracing::info!(target: "ranchero::relay", "relay.tcp.timeout");
@@ -1080,31 +1175,62 @@ mod tests {
     }
 
     #[tokio::test]
+    #[tracing_test::traced_test]
     async fn inbound_events_emit_debug_tracing_records() {
-        // Drive a fixture inbound packet through the recv loop; the
-        // orchestrator emits a `relay.tcp.inbound` event at DEBUG
-        // with `payload_len` and summary fields. The fully-wired
-        // version uses `tracing-test` (or an in-memory subscriber)
-        // to capture and assert the recorded event.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.1 red state: each inbound packet must produce a \
-             `relay.tcp.inbound` DEBUG record with payload_len and \
-             summary fields",
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+
+        let stc = zwift_proto::ServerToClient {
+            seqno: Some(7),
+            world_time: Some(123_456),
+            ..Default::default()
+        };
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(stc));
+
+        // Allow the recv-loop task to process the injected event.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+
+        assert!(
+            logs_contain("relay.tcp.inbound"),
+            "expected a `relay.tcp.inbound` record after an Inbound event",
         );
     }
 
     #[tokio::test]
+    #[tracing_test::traced_test]
     async fn recv_error_emits_warn_tracing_record() {
-        // Stub transport returns a recv error; the orchestrator
-        // emits a single WARN `relay.tcp.recv_error` record and
-        // continues running.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.1 red state: recv errors must produce a single \
-             WARN `relay.tcp.recv_error` record",
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+
+        runtime.inject_event(zwift_relay::TcpChannelEvent::RecvError(
+            "synthetic test error".into(),
+        ));
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+
+        assert!(
+            logs_contain("relay.tcp.recv_error"),
+            "expected a `relay.tcp.recv_error` record after a RecvError event",
         );
     }
 
@@ -1493,28 +1619,104 @@ mod tests {
 
     #[tokio::test]
     async fn game_event_player_state_emitted_on_inbound() {
-        // An inbound `ServerToClient` carrying the watched
-        // athlete's `PlayerState` produces a
-        // `GameEvent::PlayerState` on the broadcast channel.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.5 red state: inbound watched-athlete \
-             PlayerState must produce a `GameEvent::PlayerState`",
-        );
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+
+        let mut events_rx = runtime.events();
+
+        // Inject an inbound message carrying a single PlayerState
+        // for athlete 12345.
+        let stc = zwift_proto::ServerToClient {
+            seqno: Some(1),
+            world_time: Some(100),
+            states: vec![zwift_proto::PlayerState {
+                id: Some(12345),
+                power: Some(250),
+                cadence_u_hz: Some(80_000_000),
+                speed: Some(35_000_000),
+                world_time: Some(200),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(stc));
+
+        let event = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            events_rx.recv(),
+        )
+        .await
+        .expect("event must arrive within timeout")
+        .expect("broadcast must deliver event");
+
+        match event {
+            GameEvent::PlayerState {
+                athlete_id,
+                power_w,
+                cadence_u_hz,
+                speed_mm_h,
+                world_time_ms,
+            } => {
+                assert_eq!(athlete_id, 12345);
+                assert_eq!(power_w, 250);
+                assert_eq!(cadence_u_hz, 80_000_000);
+                assert_eq!(speed_mm_h, 35_000_000);
+                assert_eq!(world_time_ms, 200);
+            }
+            other => panic!("expected GameEvent::PlayerState; got {other:?}"),
+        }
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
     }
 
     #[tokio::test]
     async fn game_event_state_change_emitted_on_lifecycle_transitions() {
-        // The `RuntimeState` transitions are broadcast in order
-        // (Authenticating, SessionLoggedIn, TcpEstablished,
-        // UdpEstablished, ...).
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.5 red state: lifecycle transitions must be \
-             emitted as `GameEvent::StateChange(_)` records in \
-             order",
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let (game_events_tx, mut game_events_rx) =
+            tokio::sync::broadcast::channel::<GameEvent>(64);
+
+        let runtime = RelayRuntime::start_with_deps_and_events_tx(
+            &cfg,
+            None,
+            auth,
+            session,
+            tcp,
+            game_events_tx,
+        )
+        .await
+        .expect("start_with_deps_and_events_tx must succeed");
+
+        let mut observed: Vec<RuntimeState> = Vec::new();
+        while let Ok(event) = game_events_rx.try_recv() {
+            if let GameEvent::StateChange(state) = event {
+                observed.push(state);
+            }
+        }
+
+        assert_eq!(
+            observed,
+            vec![
+                RuntimeState::Authenticating,
+                RuntimeState::SessionLoggedIn,
+                RuntimeState::TcpEstablished,
+            ],
+            "lifecycle transitions must be broadcast in order",
         );
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
     }
 }
