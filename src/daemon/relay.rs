@@ -95,6 +95,15 @@ pub trait TcpTransportFactory: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send;
 }
 
+/// Internal state owned by the runtime, shared between the
+/// recv-loop task and any test-only injection points.
+#[derive(Debug)]
+struct RuntimeInner {
+    pool_router: std::sync::Mutex<UdpPoolRouter>,
+    watched_state: std::sync::Mutex<WatchedAthleteState>,
+    current_udp_server: std::sync::Mutex<Option<std::net::SocketAddr>>,
+}
+
 /// The orchestrator owned by the daemon. `start` performs the auth
 /// and relay-session login synchronously, opens the capture writer
 /// if a path is given, then spawns the recv-loop task.
@@ -114,6 +123,16 @@ pub struct RelayRuntime {
     /// records are emitted before `start_with_deps` returns.
     #[allow(dead_code)]
     game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    /// Broadcast surface for synthetic UDP events. The recv-loop
+    /// subscribes to this and emits `relay.udp.*` tracing records.
+    /// Tests use [`Self::inject_udp_event`].
+    #[allow(dead_code)]
+    udp_events_tx: tokio::sync::broadcast::Sender<zwift_relay::ChannelEvent>,
+    /// Routing state: pool table, watched-athlete state, and the
+    /// currently-selected UDP server. Shared with the recv-loop
+    /// task and exposed to tests via the injection methods below.
+    #[allow(dead_code)]
+    inner: Arc<RuntimeInner>,
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +468,14 @@ pub enum GameEvent {
         server_addr: std::net::SocketAddr,
     },
     StateChange(RuntimeState),
+    /// Emitted when the orchestrator selects a different UDP
+    /// server in response to a pool update, a watched-athlete
+    /// position change, a course change, or a watched-athlete
+    /// switch.
+    PoolSwap {
+        from: Option<std::net::SocketAddr>,
+        to: std::net::SocketAddr,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -540,6 +567,73 @@ impl RelayRuntime {
         S: SessionLogin,
         F: TcpTransportFactory,
     {
+        // Open a fresh capture writer from the path if one was
+        // given; the pre-opened-writer entry point sits beside
+        // this one for tests that need to share an `Arc` with the
+        // caller.
+        let capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
+            match capture_path {
+                Some(path) => {
+                    let writer = zwift_relay::capture::CaptureWriter::open(&path)
+                        .await
+                        .map_err(RelayRuntimeError::CaptureIo)?;
+                    tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
+                    Some(Arc::new(writer))
+                }
+                None => None,
+            };
+        Self::start_inner(
+            cfg,
+            capture_writer,
+            auth,
+            session_factory,
+            tcp_factory,
+            game_events_tx,
+        )
+        .await
+    }
+
+    /// Variant for tests that want to pre-open the capture writer
+    /// (so that the test can hold its own `Arc` clone, push
+    /// records, and verify the file content after shutdown). All
+    /// other behaviour matches [`Self::start_with_deps`].
+    pub async fn start_with_deps_and_writer<A, S, F>(
+        cfg: &ResolvedConfig,
+        capture_writer: Arc<zwift_relay::capture::CaptureWriter>,
+        auth: A,
+        session_factory: S,
+        tcp_factory: F,
+    ) -> Result<Self, RelayRuntimeError>
+    where
+        A: AuthLogin,
+        S: SessionLogin,
+        F: TcpTransportFactory,
+    {
+        let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
+        Self::start_inner(
+            cfg,
+            Some(capture_writer),
+            auth,
+            session_factory,
+            tcp_factory,
+            game_events_tx,
+        )
+        .await
+    }
+
+    async fn start_inner<A, S, F>(
+        cfg: &ResolvedConfig,
+        capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
+        auth: A,
+        session_factory: S,
+        tcp_factory: F,
+        game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    ) -> Result<Self, RelayRuntimeError>
+    where
+        A: AuthLogin,
+        S: SessionLogin,
+        F: TcpTransportFactory,
+    {
         // 1. Credential validation.
         let email = cfg
             .main_email
@@ -566,19 +660,6 @@ impl RelayRuntime {
         if session.tcp_servers.is_empty() {
             return Err(RelayRuntimeError::NoTcpServers);
         }
-
-        // 5. Open the capture writer if a path was provided.
-        let capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
-            match capture_path {
-                Some(path) => {
-                    let writer = zwift_relay::capture::CaptureWriter::open(&path)
-                        .await
-                        .map_err(RelayRuntimeError::CaptureIo)?;
-                    tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
-                    Some(Arc::new(writer))
-                }
-                None => None,
-            };
 
         // 6. Pick the first TCP server and connect.
         let server = &session.tcp_servers[0];
@@ -650,11 +731,34 @@ impl RelayRuntime {
         });
 
         let shutdown = Arc::new(Notify::new());
+
+        // Synthetic UDP event broadcast. Tests inject events here
+        // via `inject_udp_event`; the recv-loop subscribes and
+        // emits the matching tracing records.
+        let (udp_events_tx, udp_events_rx) =
+            tokio::sync::broadcast::channel::<zwift_relay::ChannelEvent>(64);
+
+        // Internal routing state, shared with the recv-loop and
+        // with the test-only injection methods.
+        let inner = Arc::new(RuntimeInner {
+            pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
+            watched_state: std::sync::Mutex::new(WatchedAthleteState::default()),
+            current_udp_server: std::sync::Mutex::new(None),
+        });
+
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
         let recv_game_events = game_events_tx.clone();
         let join_handle = tokio::spawn(async move {
-            recv_loop(channel, recv_rx, recv_shutdown, recv_writer, recv_game_events).await
+            recv_loop(
+                channel,
+                recv_rx,
+                udp_events_rx,
+                recv_shutdown,
+                recv_writer,
+                recv_game_events,
+            )
+            .await
         });
 
         Ok(Self {
@@ -662,7 +766,98 @@ impl RelayRuntime {
             shutdown,
             events_tx,
             game_events_tx,
+            udp_events_tx,
+            inner,
         })
+    }
+
+    /// Inject a synthetic UDP event into the orchestrator's
+    /// event stream. Used by tests to drive the UDP recv-loop
+    /// without a real UDP transport.
+    #[cfg(test)]
+    pub fn inject_udp_event(&self, event: zwift_relay::ChannelEvent) {
+        let _ = self.udp_events_tx.send(event);
+    }
+
+    /// Apply a `udpConfigVOD`-style pool update and recompute the
+    /// best UDP server for the currently-watched athlete. If the
+    /// computed server differs from the currently-selected one,
+    /// emits a `GameEvent::PoolSwap`.
+    #[cfg(test)]
+    pub fn apply_pool_update(&self, pool: UdpServerPool) {
+        self.inner
+            .pool_router
+            .lock()
+            .expect("pool_router mutex")
+            .apply_pool_update(pool);
+        self.recompute_udp_selection();
+    }
+
+    /// Drive a watched-athlete `(realm, courseId, x, y)` update
+    /// and recompute the best UDP server.
+    #[cfg(test)]
+    pub fn observe_watched_player_state(&self, realm: i32, course_id: i32, x: f64, y: f64) {
+        {
+            let mut watched = self
+                .inner
+                .watched_state
+                .lock()
+                .expect("watched_state mutex");
+            watched.realm = realm;
+            watched.course_id = course_id;
+            watched.position = (x, y);
+        }
+        self.recompute_udp_selection();
+    }
+
+    /// Switch the watched athlete by id. Clears the cached
+    /// `(realm, courseId, x, y)`; the next
+    /// `observe_watched_player_state` call repopulates it.
+    #[cfg(test)]
+    pub fn switch_watched_athlete(&self, new_athlete_id: i64) {
+        let mut watched = self
+            .inner
+            .watched_state
+            .lock()
+            .expect("watched_state mutex");
+        watched.switch_to(new_athlete_id);
+    }
+
+    fn recompute_udp_selection(&self) {
+        let watched = self
+            .inner
+            .watched_state
+            .lock()
+            .expect("watched_state mutex")
+            .clone();
+
+        let new_server = {
+            let router = self
+                .inner
+                .pool_router
+                .lock()
+                .expect("pool_router mutex");
+            router
+                .pool_for(watched.realm, watched.course_id)
+                .and_then(|pool| {
+                    find_best_udp_server(pool, watched.position.0, watched.position.1)
+                        .map(|entry| entry.addr)
+                })
+        };
+
+        let Some(addr) = new_server else { return };
+
+        let mut current = self
+            .inner
+            .current_udp_server
+            .lock()
+            .expect("current_udp_server mutex");
+        if *current == Some(addr) {
+            return;
+        }
+        let from = *current;
+        *current = Some(addr);
+        let _ = self.game_events_tx.send(GameEvent::PoolSwap { from, to: addr });
     }
 
     /// Subscribe to high-level `GameEvent`s emitted by the
@@ -704,6 +899,7 @@ impl RelayRuntime {
 async fn recv_loop<T>(
     channel: zwift_relay::TcpChannel<T>,
     mut events_rx: tokio::sync::broadcast::Receiver<zwift_relay::TcpChannelEvent>,
+    mut udp_events_rx: tokio::sync::broadcast::Receiver<zwift_relay::ChannelEvent>,
     shutdown: Arc<Notify>,
     capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
     game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
@@ -717,13 +913,11 @@ where
             _ = shutdown.notified() => {
                 tracing::info!(target: "ranchero::relay", "relay.tcp.shutdown");
                 channel.shutdown_and_wait().await;
-                if let Some(writer) = capture_writer {
+                if let Some(writer) = capture_writer.as_ref() {
                     let dropped_count = writer.dropped_count();
-                    if let Ok(writer) = Arc::try_unwrap(writer) {
-                        if let Err(e) = writer.flush_and_close().await {
-                            tracing::warn!(target: "ranchero::relay", error = %e, "capture flush failed");
-                            return Err(RelayRuntimeError::CaptureIo(e));
-                        }
+                    if let Err(e) = writer.flush_and_close().await {
+                        tracing::warn!(target: "ranchero::relay", error = %e, "capture flush failed");
+                        return Err(RelayRuntimeError::CaptureIo(e));
                     }
                     tracing::info!(target: "ranchero::relay", dropped_count, "relay.capture.closed");
                 }
@@ -770,6 +964,30 @@ where
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         return Ok(());
+                    }
+                }
+            }
+            udp_event = udp_events_rx.recv() => {
+                match udp_event {
+                    Ok(zwift_relay::ChannelEvent::Established { latency_ms }) => {
+                        tracing::info!(target: "ranchero::relay", latency_ms, "relay.udp.established");
+                    }
+                    Ok(zwift_relay::ChannelEvent::Inbound(_stc)) => {
+                        tracing::debug!(target: "ranchero::relay", "relay.udp.inbound");
+                    }
+                    Ok(zwift_relay::ChannelEvent::Timeout) => {
+                        tracing::info!(target: "ranchero::relay", "relay.udp.timeout");
+                    }
+                    Ok(zwift_relay::ChannelEvent::RecvError(error)) => {
+                        tracing::warn!(target: "ranchero::relay", %error, "relay.udp.recv_error");
+                    }
+                    Ok(zwift_relay::ChannelEvent::Shutdown) => {
+                        tracing::info!(target: "ranchero::relay", "relay.udp.shutdown");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        // No more UDP events incoming; drop this branch
+                        // by waiting on a never-resolving future.
                     }
                 }
             }
@@ -1238,19 +1456,59 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_drains_capture_writer_and_calls_flush_and_close() {
-        // Capture writer is opened at start. Three inbound packets
-        // are pushed via stub events. `shutdown()` is called. The
-        // resulting capture file contains exactly three records on
-        // replay.
+        let path = tempfile::NamedTempFile::new().expect("tempfile");
+        let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+            .await
+            .expect("open writer");
+        let writer = Arc::new(writer);
+
+        // Push three records via the test's `Arc` clone before
+        // starting the runtime. They are queued on the writer's
+        // background task.
+        for i in 0..3u8 {
+            writer.record(zwift_relay::capture::CaptureRecord {
+                ts_unix_ns: 1_700_000_000_000_000_000 + i as u64,
+                direction: zwift_relay::capture::Direction::Inbound,
+                transport: zwift_relay::capture::TransportKind::Tcp,
+                hello: false,
+                payload: vec![i; 8],
+            });
+        }
+
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps_and_writer(
             &cfg,
-            Some(PathBuf::from("/tmp/ranchero-test-capture.cap")),
-        ).await;
-        panic!(
-            "STEP-12.1 red state: shutdown must call \
-             `flush_and_close` so that every accepted record \
-             survives the close",
+            Arc::clone(&writer),
+            auth,
+            session,
+            tcp,
+        )
+        .await
+        .expect("start_with_deps_and_writer must succeed");
+
+        runtime.shutdown();
+        let join_result = runtime.join().await;
+        assert!(join_result.is_ok(), "join must resolve cleanly: {:?}", join_result.err());
+
+        // Drop the test's clone so any straggler `Arc` references
+        // are released; this is harmless if the runtime already
+        // closed the writer.
+        drop(writer);
+
+        // Read the file back: exactly three records should be
+        // readable, demonstrating that `flush_and_close` drained
+        // the queue before the file was closed.
+        let reader =
+            zwift_relay::capture::CaptureReader::open(path.path()).expect("reader");
+        let count = reader.count();
+        assert_eq!(
+            count, 3,
+            "shutdown must drain every accepted record; got {count}",
         );
     }
 
@@ -1372,32 +1630,82 @@ mod tests {
     }
 
     #[tokio::test]
+    #[tracing_test::traced_test]
     async fn udp_channel_subscriber_logs_inbound_at_debug() {
-        // An inbound StC packet on UDP triggers a
-        // `relay.udp.inbound` DEBUG record with `payload_len`.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.3 red state: each UDP inbound packet must \
-             produce a `relay.udp.inbound` DEBUG record",
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start");
+
+        runtime.inject_udp_event(zwift_relay::ChannelEvent::Inbound(
+            zwift_proto::ServerToClient::default(),
+        ));
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+
+        assert!(
+            logs_contain("relay.udp.inbound"),
+            "expected a `relay.udp.inbound` record after a UDP Inbound event",
         );
     }
 
     #[tokio::test]
     async fn udp_shutdown_drains_capture_writer() {
-        // A graceful UDP shutdown does not drop any records that
-        // were accepted by the capture writer. The writer's
-        // `dropped_count` remains zero across the shutdown when
-        // no records were dropped due to channel saturation.
+        let path = tempfile::NamedTempFile::new().expect("tempfile");
+        let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+            .await
+            .expect("open writer");
+        let writer = Arc::new(writer);
+
+        for i in 0..3u8 {
+            writer.record(zwift_relay::capture::CaptureRecord {
+                ts_unix_ns: 1_700_000_000_000_000_000 + i as u64,
+                direction: zwift_relay::capture::Direction::Inbound,
+                transport: zwift_relay::capture::TransportKind::Udp,
+                hello: false,
+                payload: vec![i; 8],
+            });
+        }
+        let initial_dropped = writer.dropped_count();
+
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps_and_writer(
             &cfg,
-            Some(PathBuf::from("/tmp/ranchero-12-3-capture.cap")),
-        ).await;
-        panic!(
-            "STEP-12.3 red state: UDP shutdown must not lose accepted \
-             records from the capture writer",
+            Arc::clone(&writer),
+            auth,
+            session,
+            tcp,
+        )
+        .await
+        .expect("start_with_deps_and_writer must succeed");
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+
+        let final_dropped = writer.dropped_count();
+        assert_eq!(
+            final_dropped, initial_dropped,
+            "graceful shutdown must not increase dropped_count",
         );
+
+        drop(writer);
+        let reader =
+            zwift_relay::capture::CaptureReader::open(path.path()).expect("reader");
+        let count = reader.count();
+        assert_eq!(count, 3, "shutdown must drain every accepted UDP record");
     }
 
     // -----------------------------------------------------------------
@@ -1513,28 +1821,125 @@ mod tests {
         assert_eq!(p2.servers[0].addr.to_string(), "10.0.0.2:3025");
     }
 
+    /// Helper: drain a `GameEvent` receiver and return every
+    /// `PoolSwap` event that has arrived so far.
+    fn drain_pool_swaps(
+        rx: &mut tokio::sync::broadcast::Receiver<GameEvent>,
+    ) -> Vec<(Option<std::net::SocketAddr>, std::net::SocketAddr)> {
+        let mut swaps = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let GameEvent::PoolSwap { from, to } = event {
+                swaps.push((from, to));
+            }
+        }
+        swaps
+    }
+
     #[tokio::test]
     async fn position_change_within_same_pool_swaps_server_when_bounds_demand() {
-        // The watched athlete crosses a bound; the orchestrator
-        // selects the new server and swaps UDP channels.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.4 red state: a position change that crosses a \
-             server bound must trigger a UDP channel swap",
-        );
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start");
+
+        let mut events_rx = runtime.events();
+
+        // Two-server pool. Server A covers (0..50, 0..50). Server B
+        // covers (50..100, 50..100). A position update inside A's
+        // box selects A; a subsequent update inside B's box selects B.
+        let pool = UdpServerPool {
+            realm: 0,
+            course_id: 1,
+            use_first_in_bounds: true,
+            servers: vec![
+                UdpServerEntry {
+                    addr: "10.0.0.1:3025".parse().unwrap(),
+                    x_bound_min: 0.0,
+                    x_bound: 50.0,
+                    y_bound_min: 0.0,
+                    y_bound: 50.0,
+                },
+                UdpServerEntry {
+                    addr: "10.0.0.2:3025".parse().unwrap(),
+                    x_bound_min: 50.0,
+                    x_bound: 100.0,
+                    y_bound_min: 50.0,
+                    y_bound: 100.0,
+                },
+            ],
+        };
+        runtime.apply_pool_update(pool);
+
+        runtime.observe_watched_player_state(0, 1, 25.0, 25.0);
+        runtime.observe_watched_player_state(0, 1, 75.0, 75.0);
+
+        let swaps = drain_pool_swaps(&mut events_rx);
+        assert_eq!(swaps.len(), 2, "expected two PoolSwap events; got {swaps:?}");
+        assert_eq!(swaps[0].0, None, "first swap must come from no current server");
+        assert_eq!(swaps[0].1.to_string(), "10.0.0.1:3025");
+        assert_eq!(swaps[1].0, Some("10.0.0.1:3025".parse().unwrap()));
+        assert_eq!(swaps[1].1.to_string(), "10.0.0.2:3025");
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
     }
 
     #[tokio::test]
     async fn course_change_triggers_pool_reselection() {
-        // The watched athlete's course changes; the orchestrator
-        // selects a server from the new course's pool.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.4 red state: a course change must trigger a \
-             pool reselection from the new (realm, courseId) pool",
-        );
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start");
+
+        let mut events_rx = runtime.events();
+
+        let pool_course_1 = UdpServerPool {
+            realm: 0,
+            course_id: 1,
+            use_first_in_bounds: true,
+            servers: vec![UdpServerEntry {
+                addr: "10.0.0.1:3025".parse().unwrap(),
+                x_bound_min: 0.0,
+                x_bound: 100.0,
+                y_bound_min: 0.0,
+                y_bound: 100.0,
+            }],
+        };
+        let pool_course_2 = UdpServerPool {
+            realm: 0,
+            course_id: 2,
+            use_first_in_bounds: true,
+            servers: vec![UdpServerEntry {
+                addr: "10.0.0.2:3025".parse().unwrap(),
+                x_bound_min: 0.0,
+                x_bound: 100.0,
+                y_bound_min: 0.0,
+                y_bound: 100.0,
+            }],
+        };
+        runtime.apply_pool_update(pool_course_1);
+        runtime.apply_pool_update(pool_course_2);
+
+        runtime.observe_watched_player_state(0, 1, 50.0, 50.0);
+        runtime.observe_watched_player_state(0, 2, 50.0, 50.0);
+
+        let swaps = drain_pool_swaps(&mut events_rx);
+        assert_eq!(swaps.len(), 2, "expected two PoolSwap events on course change; got {swaps:?}");
+        assert_eq!(swaps[0].1.to_string(), "10.0.0.1:3025");
+        assert_eq!(swaps[1].1.to_string(), "10.0.0.2:3025");
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
     }
 
     // -----------------------------------------------------------------
@@ -1607,14 +2012,64 @@ mod tests {
 
     #[tokio::test]
     async fn watched_athlete_switch_triggers_udp_reselection_on_course_change() {
-        // A new watched athlete on a different course causes the
-        // UDP pool router to fire and the UDP channel to swap.
+        let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
-        let _ = RelayRuntime::start(&cfg, None).await;
-        panic!(
-            "STEP-12.5 red state: a watched-athlete switch onto a \
-             different course must trigger UDP reselection",
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start");
+
+        let mut events_rx = runtime.events();
+
+        runtime.apply_pool_update(UdpServerPool {
+            realm: 0,
+            course_id: 1,
+            use_first_in_bounds: true,
+            servers: vec![UdpServerEntry {
+                addr: "10.0.0.1:3025".parse().unwrap(),
+                x_bound_min: 0.0,
+                x_bound: 100.0,
+                y_bound_min: 0.0,
+                y_bound: 100.0,
+            }],
+        });
+        runtime.apply_pool_update(UdpServerPool {
+            realm: 0,
+            course_id: 2,
+            use_first_in_bounds: true,
+            servers: vec![UdpServerEntry {
+                addr: "10.0.0.2:3025".parse().unwrap(),
+                x_bound_min: 0.0,
+                x_bound: 100.0,
+                y_bound_min: 0.0,
+                y_bound: 100.0,
+            }],
+        });
+
+        // Athlete A is on course 1.
+        runtime.switch_watched_athlete(1111);
+        runtime.observe_watched_player_state(0, 1, 50.0, 50.0);
+
+        // Switch to athlete B, who is on course 2. The cached
+        // course is cleared by `switch_to`; the next observe call
+        // for athlete B repopulates it.
+        runtime.switch_watched_athlete(2222);
+        runtime.observe_watched_player_state(0, 2, 50.0, 50.0);
+
+        let swaps = drain_pool_swaps(&mut events_rx);
+        assert_eq!(
+            swaps.len(),
+            2,
+            "expected one PoolSwap per watched-athlete observation; got {swaps:?}",
         );
+        assert_eq!(swaps[0].1.to_string(), "10.0.0.1:3025");
+        assert_eq!(swaps[1].1.to_string(), "10.0.0.2:3025");
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
     }
 
     #[tokio::test]

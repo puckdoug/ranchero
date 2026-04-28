@@ -125,15 +125,21 @@ pub enum CaptureError {
 
 // --- writer --------------------------------------------------------
 
-/// Append-only writer for wire captures. Owns a background task that
-/// drains a bounded channel and writes to disk. The hot-path
+/// Append-only writer for wire captures. Owns a background task
+/// that drains a bounded channel and writes to disk. The hot-path
 /// [`Self::record`] is sync and non-blocking — capture must never
 /// affect live network behavior.
+///
+/// The writer is designed for shared ownership through `Arc`. The
+/// internal sender and writer-task handle live behind an interior
+/// mutex so that [`Self::flush_and_close`] can be called by any
+/// holder of an `Arc<CaptureWriter>`. Calls after the first close
+/// are no-ops.
 #[derive(Debug)]
 pub struct CaptureWriter {
-    sender: mpsc::Sender<CaptureRecord>,
-    dropped_count: Arc<AtomicU64>,
-    writer_task: Option<JoinHandle<std::io::Result<()>>>,
+    sender: std::sync::Mutex<Option<mpsc::Sender<CaptureRecord>>>,
+    dropped_count: AtomicU64,
+    writer_task: std::sync::Mutex<Option<JoinHandle<std::io::Result<()>>>>,
 }
 
 impl CaptureWriter {
@@ -155,18 +161,25 @@ impl CaptureWriter {
         let writer_task = tokio::spawn(writer_task(file, receiver));
 
         Ok(Self {
-            sender,
-            dropped_count: Arc::new(AtomicU64::new(0)),
-            writer_task: Some(writer_task),
+            sender: std::sync::Mutex::new(Some(sender)),
+            dropped_count: AtomicU64::new(0),
+            writer_task: std::sync::Mutex::new(Some(writer_task)),
         })
     }
 
     pub fn record(&self, record: CaptureRecord) {
-        if self.sender.try_send(record).is_err() {
-            // Either Full (slow disk) or Closed (writer task died).
-            // Either way, count it as dropped — capture must never
-            // backpressure the channel hot path.
-            self.dropped_count.fetch_add(1, Ordering::Relaxed);
+        let guard = self.sender.lock().expect("capture sender mutex");
+        if let Some(sender) = guard.as_ref() {
+            if sender.try_send(record).is_err() {
+                // Either Full (slow disk) or Closed (writer task
+                // died). Either way, count it as dropped —
+                // capture must never backpressure the hot path.
+                self.dropped_count.fetch_add(1, Ordering::Relaxed);
+            }
+        } else {
+            // After flush_and_close: drop silently. Counting these
+            // would inflate dropped_count for callers that
+            // legitimately stopped using the writer.
         }
     }
 
@@ -174,24 +187,33 @@ impl CaptureWriter {
         self.dropped_count.load(Ordering::Relaxed)
     }
 
-    pub async fn flush_and_close(mut self) -> std::io::Result<()> {
-        // Drop the sender so the writer task sees `recv() -> None` and
-        // exits cleanly.
-        let CaptureWriter {
-            sender,
-            writer_task,
-            ..
-        } = &mut self;
-        drop(std::mem::replace(sender, mpsc::channel(1).0));
-        if let Some(handle) = writer_task.take() {
-            match handle.await {
+    /// Flush pending records, await the writer task, and close
+    /// the file. Idempotent: subsequent calls return `Ok(())`.
+    /// Takes `&self` so that `Arc<CaptureWriter>` holders can call
+    /// it without consuming the inner value.
+    pub async fn flush_and_close(&self) -> std::io::Result<()> {
+        // Drop the sender so the writer task sees `recv() -> None`
+        // and exits cleanly. Subsequent `record()` calls become
+        // no-ops.
+        let _ = self.sender.lock().expect("capture sender mutex").take();
+
+        // Take the writer task out (must release the lock before
+        // awaiting). If a concurrent `flush_and_close` already
+        // took it, this call sees `None` and returns Ok.
+        let handle = self
+            .writer_task
+            .lock()
+            .expect("capture writer-task mutex")
+            .take();
+
+        match handle {
+            Some(h) => match h.await {
                 Ok(result) => result,
                 Err(join_err) => Err(std::io::Error::other(format!(
                     "capture writer task panicked: {join_err}"
                 ))),
-            }
-        } else {
-            Ok(())
+            },
+            None => Ok(()),
         }
     }
 }
