@@ -34,47 +34,43 @@ tests). The connectivity-proof framing was discussed verbally but
 did not survive into the written plan.
 
 The work required to actually exercise the capture mechanism
-end-to-end was deferred to "STEP 12's supervisor". STEP-12, as
-originally written, was a 26-line sketch covering only routing
-decisions inside an already-running supervisor:
-`findBestUDPServer`, idle-suspension FSM, and watched-athlete
-switching. That sketch did not own the work that makes the
-supervisor exist in the first place: the auth bootstrap, the
-relay-session login wiring, the daemon integration, the CLI
-plumbing, the heartbeat scheduler, the capture lifecycle, the
-tracing log, the shutdown coordination, or the live validation.
-
-This expanded plan replaces that sketch. STEP-12 now owns
-sustainable end-to-end connectivity. The first sub-step, STEP-12.1,
-delivers a TCP-only smoke that is bounded by a server-side timeout
-(roughly 30 s without a UDP heartbeat); the rest of STEP-12 adds
-the UDP channel and heartbeat that make the connection
-indefinitely sustainable, plus the routing and suspension logic
-that the original sketch already named.
+end-to-end was originally deferred to a separate plan document.
+That separation was a mistake: the missing pieces — auth bootstrap,
+relay-session login wiring, daemon and CLI integration, capture
+lifecycle, tracing log emission, and shutdown coordination — are
+the foundation on which the rest of the GameMonitor's work
+(routing, suspension, watched-athlete switching) builds. They
+belong in this plan as the first sub-step. STEP-12 now owns
+sustainable end-to-end connectivity from the orchestrator
+construction onward.
 
 ## Sub-steps and order
 
-| Sub-step | Scope | File |
-|---|---|---|
-| 12.1 | TCP-only end-to-end smoke. Auth + relay-session login + a single TCP channel + capture writer + tracing log + daemon and CLI integration. | [STEP-12.1-tcp-end-to-end-smoke.md](STEP-12.1-tcp-end-to-end-smoke.md) |
-| 12.2 | `ranchero follow <file>` command for live capture-file tailing. Adds a `CaptureFollower` and a top-level subcommand that reads a wire-capture file as it is being written and prints each record (optionally decoded) to standard output. Used to validate STEP-12.1 from a second terminal and as a general protocol-level debugging aid for every subsequent sub-step. | [STEP-12.2-follow-command.md](STEP-12.2-follow-command.md) |
-| 12.3 | UDP channel + 1 Hz heartbeat. Brings up the UDP transport, runs the existing hello-loop / SNTP-style time sync, and adds the heartbeat scheduler that prevents server-side timeout. After 12.3, the connection is sustainable indefinitely. | this file, "Sub-step 12.3" below |
-| 12.4 | `udpConfigVOD` parsing + `findBestUDPServer`. Builds and updates the per-`(realm, courseId)` pool from inbound TCP messages and selects the right UDP server by the watched athlete's position. Adds per-course UDP reselection. | this file, "Sub-step 12.4" below |
-| 12.5 | Idle suspension FSM + watched-athlete switching + the `GameEvent` enum that downstream consumers will subscribe to. | this file, "Sub-step 12.5" below |
+| Sub-step | Scope |
+|---|---|
+| 12.1 | TCP-only foundation. Builds the `RelayRuntime` orchestrator, performs auth and relay-session login, opens a single TCP channel, wires the capture writer and tracing log, and integrates with the daemon and CLI. The TCP-only window is bounded by a server-side timeout (roughly 30 s without a UDP heartbeat); 12.3 closes that gap. |
+| 12.3 | UDP channel + 1 Hz heartbeat. Brings up the UDP transport, runs the existing hello-loop / SNTP-style time sync, and adds the heartbeat scheduler that prevents server-side timeout. After 12.3, the connection is sustainable indefinitely. |
+| 12.4 | `udpConfigVOD` parsing + `findBestUDPServer`. Builds and updates the per-`(realm, courseId)` pool from inbound TCP messages and selects the right UDP server by the watched athlete's position. Adds per-course UDP reselection. |
+| 12.5 | Idle suspension FSM + watched-athlete switching + the `GameEvent` enum that downstream consumers will subscribe to. |
 
-12.1 and 12.2 have their own plan files because each is a focused
-deliverable that stands on its own. 12.3, 12.4, and 12.5 are
-described inline below; if any of them grows large enough to
-warrant its own file during implementation, that file may be
-extracted at that time.
+The internal sub-step labelling skips 12.2 to avoid colliding with
+the separate plan document `STEP-12.2-follow-command.md`, which is
+unrelated to STEP-12's internal structure despite the digit
+overlap. The numbering starts at 12.1 and continues 12.3, 12.4,
+12.5; this is intentional.
 
 ## Scope
 
 In scope:
 
-- All of 12.1's scope (auth bootstrap, relay session,
-  single TCP channel, capture writer, tracing log, daemon and
-  CLI integration, removal of the STEP-11.6 Fix-D guard).
+- The `RelayRuntime` orchestrator: a type that owns the lifetime
+  of the relay session, the TCP channel, the UDP channel(s), the
+  optional capture writer, and the tracing emission.
+- Auth bootstrap: construct `zwift_api::ZwiftAuth` from
+  `ResolvedConfig`, perform the OAuth login.
+- Relay-session login and refresh supervisor.
+- TCP channel establishment and the initial `ClientToServer`
+  hello.
 - UDP channel establishment using the existing
   `zwift_relay::UdpChannel` (hello-loop and time-sync are
   already implemented in STEP-10).
@@ -107,16 +103,20 @@ In scope:
 - Capture wiring on the UDP channel as well as the TCP
   channel; both feed the same `Arc<CaptureWriter>` so that the
   capture file records the complete bidirectional stream.
-- Tracing log records for UDP events (`relay.udp.*`) on the
-  same target prefix as the TCP events from 12.1.
+- Tracing log records on the `ranchero::relay` target prefix
+  for every observable channel event.
 - A graceful shutdown sequence that cancels outbound
   heartbeats first, then the UDP channel, then the TCP
   channel, then `flush_and_close()` on the capture writer,
   then the relay session supervisor.
-- Sustained live validation: a multi-minute run against
-  production Zwift confirming that the connection survives
-  past the TCP-only timeout window and that all observed
-  traffic is captured and logged.
+- CLI and daemon integration: the existing daemon's
+  placeholder `run_daemon` becomes the host for the
+  orchestrator; `--capture <path>` opens a `CaptureWriter` and
+  passes it through `daemon::start`; the STEP-11.6 Fix-D guard
+  is removed.
+- Live validation against production Zwift, both as a bounded
+  TCP-only smoke at the end of sub-step 12.1 and as a
+  sustained multi-minute run at the end of STEP-12.
 
 Out of scope (deferred to later steps):
 
@@ -134,11 +134,9 @@ Out of scope (deferred to later steps):
 
 ## Architecture overview
 
-The orchestrator lives in `src/daemon/relay.rs` (introduced by
-STEP-12.1) and grows through 12.3 to 12.5. The 12.2 sub-step adds
-a separate `ranchero follow` command surface that reads from the
-capture files the orchestrator produces; it does not modify the
-orchestrator itself. The component map at the end of STEP-12 is:
+The orchestrator lives in `src/daemon/relay.rs`, alongside the
+existing daemon run loop. The component map at the end of STEP-12
+is:
 
 ```
                     ┌────────────────────────────────────────┐
@@ -186,6 +184,314 @@ heartbeat scheduler, the pool router, and the watched-athlete
 state are all owned by `RelayRuntime` and are pure-state /
 pure-logic where possible so that they can be unit-tested without
 the network.
+
+## Sub-step 12.1 — TCP-only foundation
+
+### What it adds
+
+A `ranchero start` invocation that authenticates against Zwift,
+establishes a relay session, opens a TCP channel to a Zwift relay
+server, receives `ServerToClient` messages, and logs each arrival
+to the configured log file. When `--capture <path>` is passed,
+the same byte stream is also written to a wire-capture file
+readable by `ranchero replay`.
+
+This sub-step delivers the orchestrator construction and the
+TCP-only path. It does not deliver sustained operation: without
+the 1 Hz UDP heartbeat (added in 12.3), the Zwift server will
+terminate the TCP connection within roughly 30 s of client
+silence per the client-driven liveness model documented in spec
+§7.12. That bounded window is sufficient to prove that the
+protocol stack works against the production Zwift servers.
+
+### Module layout
+
+The orchestrator is owned by the `ranchero` root crate and lives
+under the daemon module, alongside the existing run loop, because
+its lifetime is bound to the daemon's lifetime.
+
+```
+src/daemon/
+├── mod.rs              (existing, exports unchanged)
+├── control.rs          (existing)
+├── pidfile.rs          (existing)
+├── probe.rs            (existing)
+├── runtime.rs          (existing; modified — see below)
+└── relay.rs            (NEW — the orchestrator)
+```
+
+`relay.rs` holds the orchestrator type, its construction logic,
+and its shutdown handle. `runtime.rs` is modified to instantiate
+the orchestrator, run it alongside the UDS control loop, and
+coordinate shutdown.
+
+Sub-steps 12.3, 12.4, and 12.5 extend `relay.rs`; the file may be
+split into multiple files as the orchestrator grows.
+
+### Public API surface
+
+```rust
+// src/daemon/relay.rs
+
+pub struct RelayRuntime {
+    join_handle: tokio::task::JoinHandle<Result<(), RelayRuntimeError>>,
+    shutdown:    Arc<tokio::sync::Notify>,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum RelayRuntimeError {
+    #[error("missing main account email; configure via `ranchero configure`")]
+    MissingEmail,
+
+    #[error("missing main account password; store one via `ranchero configure`")]
+    MissingPassword,
+
+    #[error("auth: {0}")]
+    Auth(#[from] zwift_api::Error),
+
+    #[error("relay session: {0}")]
+    Session(#[from] zwift_relay::SessionError),
+
+    #[error("TCP channel: {0}")]
+    TcpChannel(#[from] zwift_relay::TcpError),
+
+    #[error("relay session reported no TCP servers")]
+    NoTcpServers,
+
+    #[error("capture writer I/O: {0}")]
+    CaptureIo(std::io::Error),
+}
+
+impl RelayRuntime {
+    /// Build the runtime, perform the auth and relay-session
+    /// login synchronously, open the capture writer if a path is
+    /// given, then spawn the recv-loop task. Returns once the
+    /// TCP channel has emitted `Established` (or once login
+    /// fails, whichever is first).
+    pub async fn start(
+        cfg: &ResolvedConfig,
+        capture_path: Option<PathBuf>,
+    ) -> Result<Self, RelayRuntimeError>;
+
+    /// Request a graceful shutdown. The recv loop drains, the
+    /// channel is closed, and the capture writer is flushed and
+    /// closed. Idempotent.
+    pub fn shutdown(&self);
+
+    /// Await orchestrator completion. Resolves either when
+    /// `shutdown` is called or when the orchestrator exits on
+    /// its own (for example, on a fatal recv error or a
+    /// server-side TCP timeout).
+    pub async fn join(self) -> Result<(), RelayRuntimeError>;
+}
+```
+
+The signature is forward-compatible with sub-steps 12.3 to 12.5:
+those sub-steps add a UDP channel, attach a heartbeat scheduler,
+and consume inbound TCP messages to update the UDP pool — none of
+which changes the public surface seen by `daemon::runtime`.
+
+### CLI and daemon changes
+
+The STEP-11.6 Fix-D guard is removed. The `Command::Start` arm
+of `cli::dispatch` passes `cli.global.capture` through to
+`daemon::start`:
+
+```rust
+Command::Start => {
+    let log_opts = crate::logging::LogOpts {
+        verbose: cli.global.verbose,
+        debug: cli.global.debug,
+    };
+    Ok(daemon::start(
+        &resolved,
+        cli.global.foreground,
+        log_opts,
+        cli.global.capture.clone(),
+    )?)
+}
+```
+
+`daemon::start`'s signature is extended to accept the capture
+path:
+
+```rust
+pub fn start(
+    cfg: &ResolvedConfig,
+    foreground: bool,
+    log_opts: LogOpts,
+    capture_path: Option<PathBuf>,
+) -> Result<ExitCode, DaemonError> {
+    runtime::start(cfg, foreground, log_opts, capture_path)
+}
+```
+
+`run_daemon` is extended to own a `RelayRuntime` alongside the
+existing UDS listener. The `select!` loop gains a third
+non-shutdown branch (the orchestrator's `join_handle`); on any
+of the three shutdown signals (UDS shutdown, `Ctrl-C`, or
+`SIGTERM`) the orchestrator's `shutdown()` method is called,
+the join handle is awaited with a timeout, and only then does
+the function return.
+
+A representative shape:
+
+```rust
+let relay = RelayRuntime::start(cfg, capture_path).await?;
+
+loop {
+    tokio::select! {
+        biased;
+        _ = shutdown_rx.recv() => break,
+        _ = tokio::signal::ctrl_c() => break,
+        _ = sigterm.recv() => break,
+        accept = listener.accept() => {
+            // existing UDS handling
+        }
+    }
+}
+
+relay.shutdown();
+relay.join().await?;
+```
+
+### Tests
+
+The orchestrator depends on real network endpoints (HTTPS for
+auth, HTTPS for relay session, TCP for the channel). The tests
+use the same mock infrastructure already in use by the lower
+crates: `wiremock` for the two HTTPS endpoints (already used in
+`zwift-api/tests/auth.rs` and `zwift-relay/tests/session.rs`),
+and the existing mock `TcpTransport` used in
+`zwift-relay/tests/tcp.rs`. Dependency-injection points are
+introduced on `RelayRuntime` so that tests can substitute the
+transport without going through the kernel.
+
+Unit tests in `src/daemon/relay.rs`:
+
+| Test | Asserts |
+|---|---|
+| `start_fails_when_email_missing` | A `ResolvedConfig` with `main_email = None` returns `Err(RelayRuntimeError::MissingEmail)`. |
+| `start_fails_when_password_missing` | A `ResolvedConfig` with `main_email = Some(...)` and `main_password = None` returns `Err(RelayRuntimeError::MissingPassword)`. |
+| `start_calls_auth_login_then_session_login_then_tcp_connect` | Using a stub `AuthLogin`, a stub `SessionLogin`, and a stub `TcpTransportFactory`, the call sequence is observed in order. |
+| `start_propagates_auth_error` | A stub auth that returns `Err` propagates the error without attempting the relay-session login. |
+| `start_propagates_session_error` | A stub that returns `Err` from session login surfaces it without attempting the TCP connect. |
+| `start_returns_after_first_established_event` | A stub TCP transport that emits `Established` immediately allows `start` to return; subsequent `Inbound` events are processed by the spawned task. |
+| `inbound_events_emit_debug_tracing_records` | Using `tracing-test` (or an in-memory subscriber), drive a fixture inbound packet and assert the recorded event is at DEBUG with the expected fields. |
+| `recv_error_emits_warn_tracing_record` | A stub transport returns a `RecvError`; the orchestrator emits a single WARN event and continues. |
+| `shutdown_drains_capture_writer_and_calls_flush_and_close` | A capture writer is opened, three records are pushed via inbound stub events, `shutdown()` is called; the resulting capture file contains exactly three records when read back. |
+| `shutdown_is_idempotent` | Two consecutive `shutdown()` calls do not panic and `join()` resolves cleanly. |
+| `start_returns_no_tcp_servers_error_when_session_returns_empty_pool` | A stub session whose `tcp_servers` list is empty returns `RelayRuntimeError::NoTcpServers` without attempting a connect. |
+
+CLI test in `tests/cli_args.rs`:
+
+| Test | Asserts |
+|---|---|
+| `dispatch_start_passes_capture_path_to_daemon` | A stub `daemon::start` recorded by an injection point receives `capture_path = Some("/tmp/x.cap")` when the user invokes `start --capture /tmp/x.cap`. |
+
+The Fix-D test (`dispatch_start_with_capture_errors_until_step12`)
+must be deleted as part of this sub-step. Its presence would
+block the positive behaviour from being exercised.
+
+Integration tests in `tests/relay_runtime.rs`:
+
+| Test | Asserts |
+|---|---|
+| `runtime_writes_capture_file_for_inbound_packets` | Stand up `wiremock` for `/auth/realms/zwift/protocol/openid-connect/token` and `/api/users/login`, plus a fake TCP server on a localhost ephemeral port that emits a single encrypted `ServerToClient` frame. Run `RelayRuntime::start` with a capture path, wait for one `Inbound` event to fire, call `shutdown`, then read the capture file with `CaptureReader` and assert one record. |
+| `runtime_logs_login_and_established_at_info` | Same setup; assert that `relay.login.ok` and `relay.tcp.established` records are produced. |
+
+The integration tests are feasible because `wiremock` already
+covers the HTTPS endpoints and `TokioTcpTransport::connect` will
+accept an arbitrary `SocketAddr`. The orchestrator's `start`
+accepts a configuration that points at the mocked endpoints.
+
+### Implementation outline
+
+1. Define `RelayRuntime`, `RelayRuntimeError`, the dependency-
+   injection traits (`AuthLogin`, `SessionLogin`,
+   `TcpTransportFactory`), and their default implementations
+   that delegate to `zwift_api::ZwiftAuth`, `zwift_relay::login`,
+   and `TokioTcpTransport::connect`.
+2. Implement `RelayRuntime::start`. The function reads
+   credentials from `ResolvedConfig` (email and the redacted
+   password), opens the capture writer if a path is given,
+   performs the auth login synchronously, calls
+   `RelaySessionSupervisor::start`, picks
+   `session.tcp_servers[0]`, constructs the initial
+   `ClientToServer` hello (player id from the relay session,
+   server realm 1, world-attribute timestamp 0), establishes
+   the TCP channel with the capture writer wired into the
+   channel configuration, and sends the hello.
+3. Spawn the recv-loop task. The task subscribes to
+   `TcpChannelEvent`, emits the corresponding tracing events,
+   and exits on `Shutdown`.
+4. Implement `RelayRuntime::shutdown`: notify the recv loop,
+   await the channel via `shutdown_and_wait`, call
+   `flush_and_close` on the capture writer, and signal the
+   relay session supervisor to stop.
+5. Update `daemon::start` and `daemon::runtime::run_daemon` to
+   instantiate the runtime and run it alongside the UDS control
+   loop.
+6. Update `cli.rs`: remove the Fix-D guard; pass the capture
+   path to `daemon::start`. Delete the corresponding negative
+   test in `tests/cli_args.rs`.
+7. Update
+   `docs/plans/done/STEP-11.6-capture-consistency-review.md` to
+   record that Fix-D has been superseded by sub-step 12.1.
+
+### Live validation at the end of 12.1
+
+Live validation is a manual acceptance step rather than an
+automated test. It must be performed before sub-step 12.1 is
+considered complete. Because UDP heartbeats are out of scope at
+this point, the validation window ends either at the first
+server-side timeout or at a manual stop, whichever is first.
+
+1. Configure ranchero with valid Zwift credentials via
+   `ranchero configure`. Confirm with `ranchero auth-check`
+   that the credential resolution chain reports the expected
+   email and a non-zero password length.
+2. Start the daemon in the foreground with capture and verbose
+   logging:
+   ```
+   ranchero start --foreground -v --capture /tmp/ranchero-smoke.cap
+   ```
+3. Confirm the log lines include `relay.login.ok`,
+   `relay.tcp.connecting`, and `relay.tcp.established`.
+   Subsequent `relay.tcp.inbound` records (at DEBUG, so add
+   `-D` if needed) confirm that frames are arriving.
+4. Allow the daemon to run until either a server-side timeout
+   or a manual stop. Stop it with `ranchero stop` (from a
+   second terminal) or `Ctrl-C`. The expected behaviour is
+   that the server closes the connection after roughly 30 s of
+   silence; this is acceptable at this sub-step and confirms
+   the need for the heartbeat work in 12.3.
+5. Confirm `relay.tcp.shutdown` and `relay.capture.closed`
+   records are present in the log file.
+6. Run `ranchero replay /tmp/ranchero-smoke.cap` and confirm a
+   non-zero record count. Run with `--verbose` to confirm the
+   per-record summary.
+
+If the smoke fails, the most likely failure modes and their
+implications are:
+
+- A 401 from
+  `/auth/realms/zwift/protocol/openid-connect/token` indicates
+  a credentials mismatch or an OAuth body-format defect in
+  `zwift-api`. Re-check the form encoding against the current
+  Zwift OAuth contract.
+- A 4xx from `/api/users/login` indicates a relay-session
+  request defect in `zwift-relay::session`. Re-check the
+  protobuf encoding and the headers (`Source`, `User-Agent`).
+- An immediate TCP disconnect after the hello indicates
+  either an incorrect AES key derivation, an incorrect hello
+  payload, or a server-side rate limit. Re-check `RelayIv`
+  construction and the `ClientToServer` hello field set
+  against `docs/ARCHITECTURE-AND-RUST-SPEC.md` §4.4.
+- A long silence followed by a `Timeout` event after roughly
+  30 s indicates that the server expects a 1 Hz UDP
+  heartbeat. This is the expected behaviour for a TCP-only
+  run and confirms the need for sub-step 12.3.
 
 ## Sub-step 12.3 — UDP channel and 1 Hz heartbeat
 
@@ -399,53 +705,79 @@ second.
 
 ## Implementation phases
 
-A recommended order. Each phase ends with a green `cargo test
---workspace` and, where the phase touches the network surface, a
-manual smoke against production Zwift.
+A recommended order. Each phase ends with a green
+`cargo test --workspace` and, where the phase touches the
+network surface, a manual smoke against production Zwift.
 
-1. **STEP-12.1** — TCP-only smoke.
-2. **STEP-12.2** — `ranchero follow <file>` command. Lands
-   immediately after 12.1 so that every subsequent phase has
-   an interactive way to watch traffic in a second terminal.
-3. **12.3a** — `HeartbeatScheduler` and `WorldTimer` plumbing,
+1. **12.1a** — Define `RelayRuntime`, `RelayRuntimeError`, the
+   DI traits, and their default implementations.
+2. **12.1b** — Implement `RelayRuntime::start` for the TCP-only
+   path and the recv-loop tracing emission.
+3. **12.1c** — Update `daemon::start`, `daemon::runtime::run_daemon`,
+   and `cli::dispatch`. Delete the Fix-D test and add the
+   positive replacement.
+4. **12.1d** — Bounded TCP-only live smoke against production
+   Zwift. Confirm the lifecycle records and a non-zero
+   capture-record count before proceeding.
+5. **12.3a** — `HeartbeatScheduler` and `WorldTimer` plumbing,
    tested against a mock UDP transport.
-4. **12.3b** — Wire `UdpChannel::establish` into `RelayRuntime`
+6. **12.3b** — Wire `UdpChannel::establish` into `RelayRuntime`
    using either Option A or Option B for initial UDP-server
    selection. Sustained live validation at the end of this
    phase confirms the connection survives past the TCP-only
    timeout.
-5. **12.4a** — `udpConfigVOD` parsing into a `UdpPoolRouter`
+7. **12.4a** — `udpConfigVOD` parsing into a `UdpPoolRouter`
    structure, with table-driven tests on synthetic inbound
    messages.
-6. **12.4b** — `findBestUDPServer` port from
+8. **12.4b** — `findBestUDPServer` port from
    `zwift.mjs:2295-2317`, with the table-driven tests listed
    above.
-7. **12.4c** — Wire the router and the watched-athlete state
+9. **12.4c** — Wire the router and the watched-athlete state
    into `RelayRuntime`, including UDP channel swap on server
    change.
-8. **12.5a** — `IdleFSM` standalone, with state-transition
-   tests.
-9. **12.5b** — Wire the `IdleFSM` into the orchestrator: it
-   shuts down UDP on the suspend transition and re-establishes
-   on the resume transition.
-10. **12.5c** — Watched-athlete switching, including the
+10. **12.5a** — `IdleFSM` standalone, with state-transition
+    tests.
+11. **12.5b** — Wire the `IdleFSM` into the orchestrator: it
+    shuts down UDP on the suspend transition and re-establishes
+    on the resume transition.
+12. **12.5c** — Watched-athlete switching, including the
     broadcast-channel control message that selects a new
     athlete.
-11. **12.5d** — `GameEvent` enum and the `events()` broadcast
+13. **12.5d** — `GameEvent` enum and the `events()` broadcast
     surface. Existing emitters are reorganised to feed the
     enum.
 
 ## CLI and daemon integration
 
-12.1 owns the CLI and `daemon::start` changes for the
-orchestrator. 12.2 adds a separate `ranchero follow` command that
-reads capture files; its CLI surface is described in its own plan
-file. No additional CLI surface is added by 12.3, 12.4, or 12.5.
-A future `--watch <athlete-id>` flag (and a control-socket message
-that switches the watched athlete at runtime) is anticipated but
-is deferred; by default the watched athlete is the logged-in user.
+Sub-step 12.1 owns the CLI and `daemon::start` changes for the
+orchestrator; the details are in the "CLI and daemon changes"
+section under sub-step 12.1 above. No additional CLI surface is
+added by 12.3, 12.4, or 12.5. A future `--watch <athlete-id>`
+flag (and a control-socket message that switches the watched
+athlete at runtime) is anticipated but is deferred; by default
+the watched athlete is the logged-in user.
 
-## Logging contract (extensions to 12.1)
+## Logging contract
+
+The orchestrator emits the following `tracing` events. Targets
+are prefixed with `ranchero::relay` so that `RUST_LOG`-style
+filtering can reach them precisely.
+
+Sub-step 12.1 (TCP-only foundation):
+
+| Level | Event                                | Fields |
+|-------|--------------------------------------|--------|
+| INFO  | `relay.login.ok`                     | `email`, `relay_id`, `tcp_server_count` |
+| INFO  | `relay.tcp.connecting`               | `addr`, `port` |
+| INFO  | `relay.tcp.established`              | `addr`, `port` |
+| INFO  | `relay.tcp.timeout`                  |  |
+| WARN  | `relay.tcp.recv_error`               | `error` |
+| INFO  | `relay.tcp.shutdown`                 |  |
+| DEBUG | `relay.tcp.inbound`                  | `payload_len`, summary fields drawn from the decoded `ServerToClient` |
+| INFO  | `relay.capture.opened`               | `path` |
+| INFO  | `relay.capture.closed`               | `dropped_count` |
+
+Extensions added by 12.3, 12.4, and 12.5:
 
 | Level | Event                          | Fields |
 |-------|--------------------------------|--------|
@@ -461,6 +793,13 @@ is deferred; by default the watched athlete is the logged-in user.
 | INFO  | `relay.idle.suspend`           |  |
 | INFO  | `relay.idle.resume`            |  |
 | INFO  | `relay.watched_athlete.switch` | `from_id`, `to_id` |
+
+`relay.tcp.inbound` and `relay.udp.inbound` are at DEBUG so that
+a long-running session does not flood the default log at INFO.
+The default backgrounded configuration (per STEP 04) emits INFO
+on ranchero crates, which is sufficient to confirm that the
+daemon connected and remained connected without recording each
+frame. `-v` or `-D` reaches the per-frame records.
 
 ## Live validation procedure (sustained smoke)
 
@@ -513,7 +852,7 @@ requested) the capture file.
 
 ## Acceptance criteria
 
-- All four sub-steps' tests pass: the new tests in
+- All sub-steps' tests pass: the new tests in
   `src/daemon/relay.rs`, `tests/cli_args.rs`, and
   `tests/relay_runtime.rs` (added by 12.1), plus the unit
   tests for `HeartbeatScheduler`, `UdpPoolRouter`,
@@ -521,12 +860,14 @@ requested) the capture file.
 - `cargo test --workspace` and
   `cargo clippy --workspace --all-targets -- -D warnings` are
   both green.
-- The sustained live-validation procedure has been performed
-  for at least 30 minutes against production Zwift. The
-  results are appended to this file under "Live validation
-  results", showing no server-side timeout, the expected
-  lifecycle records, and a non-zero capture-record count for
-  both transports in both directions.
+- The bounded TCP-only live validation (end of 12.1) and the
+  sustained live validation (end of STEP-12) have both been
+  performed at least once against production Zwift. The
+  results are appended to this file under a "Live validation
+  results" section, showing no server-side timeout during the
+  sustained run, the expected lifecycle records, and a
+  non-zero capture-record count for both transports in both
+  directions.
 - `ranchero stop` performs a clean teardown that flushes the
   capture writer (zero truncation, every accepted record
   readable on replay) and shuts down the relay session.
@@ -534,6 +875,9 @@ requested) the capture file.
   reproducibly readable by `ranchero replay`. The replay
   summary reports inbound and outbound counts for both UDP
   and TCP.
+- The STEP-11.6 Fix-D guard is removed from `src/cli.rs` and
+  the corresponding negative test is removed from
+  `tests/cli_args.rs`.
 
 ## Open verification points
 
@@ -581,14 +925,21 @@ than in this plan.
 | v1 / v2 payload formatters | STEP 18 |
 | Compatibility test battery against captured fixtures | STEP 19 |
 
+## Related but separate work
+
+`docs/plans/STEP-12.2-follow-command.md` describes the
+`ranchero follow <file>` command, a live tailing reader for
+wire-capture files. Its content shares the digit prefix with
+this plan but is a separate piece of work, not a sub-step of
+STEP-12. It depends on the file format from STEP-11.5 and on
+capture files produced by sub-step 12.1, but it does not modify
+the orchestrator and it can be implemented independently.
+
 ## Cross-references
 
-- `docs/plans/STEP-12.1-tcp-end-to-end-smoke.md` — the first
-  sub-step.
 - `docs/plans/STEP-12.2-follow-command.md` — the
   `ranchero follow <file>` command for live capture-file
-  tailing, which lands immediately after 12.1 so that 12.3
-  onward can be validated interactively.
+  tailing. Independent of this plan.
 - `docs/plans/done/STEP-09-relay-session.md` — the relay
   session and supervisor used by `RelayRuntime`.
 - `docs/plans/done/STEP-10-udp-channel.md` — the UDP channel
@@ -597,7 +948,8 @@ than in this plan.
 - `docs/plans/done/STEP-11.5-wire-capture.md` — the capture
   mechanism wired into both channels.
 - `docs/plans/done/STEP-11.6-capture-consistency-review.md` —
-  the consistency review whose Fix-D guard is removed by 12.1.
+  the consistency review whose Fix-D guard is removed by
+  sub-step 12.1.
 - `docs/ARCHITECTURE-AND-RUST-SPEC.md` — §4.4
   (`ClientToServer` hello fields), §4.8 (UDP server
   selection), §4.13 (idle suspension), §7.12 (client-driven

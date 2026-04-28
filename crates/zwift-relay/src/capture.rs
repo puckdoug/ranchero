@@ -381,7 +381,7 @@ pub fn record_outbound(
     }
 }
 
-// --- follower (STEP-12.2 stub) ------------------------------------
+// --- follower (STEP-12.2) -----------------------------------------
 
 /// Tailing reader over a wire-capture file. Like
 /// [`CaptureReader`], but on end-of-file or a truncated-record
@@ -391,11 +391,15 @@ pub fn record_outbound(
 /// configured idle timeout elapses) or when the caller drops the
 /// iterator.
 ///
-/// STEP-12.2 stub: every method panics with `unimplemented!()`.
-/// See `docs/plans/STEP-12.2-follow-command.md` for the design.
+/// The follower opens the file with `std::fs::File` directly
+/// rather than wrapping it in a `BufReader`, so that data
+/// appended by another process (or another task on the same
+/// process) becomes visible on the next `read` call without
+/// waiting for a buffer flush.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct CaptureFollower {
+    file: std::fs::File,
+    version: u16,
     poll_interval: Duration,
     idle_timeout: Option<Duration>,
 }
@@ -404,12 +408,30 @@ impl CaptureFollower {
     /// Open `path`, validate the file header, return a follower
     /// with default tuning (`poll_interval = 100 ms`,
     /// `idle_timeout = None`).
-    pub fn open(_path: impl AsRef<Path>) -> Result<Self, CaptureError> {
-        unimplemented!("STEP-12.2: CaptureFollower::open")
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, CaptureError> {
+        let mut file = std::fs::File::open(path.as_ref())?;
+        let mut header = [0u8; FILE_HEADER_LEN];
+        let n = read_partial_io(&mut file, &mut header)?;
+        if n < FILE_HEADER_LEN {
+            return Err(CaptureError::BadMagic);
+        }
+        if &header[0..8] != MAGIC {
+            return Err(CaptureError::BadMagic);
+        }
+        let version = u16::from_le_bytes([header[8], header[9]]);
+        if version != VERSION {
+            return Err(CaptureError::UnsupportedVersion(version));
+        }
+        Ok(Self {
+            file,
+            version,
+            poll_interval: Duration::from_millis(100),
+            idle_timeout: None,
+        })
     }
 
     /// Override the polling interval used between end-of-file
-    /// retries.
+    /// retries. Lower values reduce latency at the cost of CPU.
     pub fn with_poll_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
         self
@@ -417,6 +439,7 @@ impl CaptureFollower {
 
     /// Set an idle timeout. When the follower has not observed a
     /// new record for this duration, the iterator returns `None`.
+    /// `None` (the default) means "run until interrupted".
     pub fn with_idle_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.idle_timeout = timeout;
         self
@@ -424,7 +447,7 @@ impl CaptureFollower {
 
     /// Format version from the file header (currently always 1).
     pub fn version(&self) -> u16 {
-        unimplemented!("STEP-12.2: CaptureFollower::version")
+        self.version
     }
 }
 
@@ -432,6 +455,94 @@ impl Iterator for CaptureFollower {
     type Item = Result<CaptureRecord, CaptureError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        unimplemented!("STEP-12.2: CaptureFollower::next")
+        use std::io::Seek as _;
+
+        let last_progress = std::time::Instant::now();
+        let pos_before_record = match self.file.stream_position() {
+            Ok(p) => p,
+            Err(e) => return Some(Err(CaptureError::Io(e))),
+        };
+
+        loop {
+            let mut header = [0u8; RECORD_HEADER_LEN];
+            let n = match read_partial_io(&mut self.file, &mut header) {
+                Ok(n) => n,
+                Err(e) => return Some(Err(CaptureError::Io(e))),
+            };
+
+            if n < RECORD_HEADER_LEN {
+                if let Err(e) =
+                    self.file.seek(std::io::SeekFrom::Start(pos_before_record))
+                {
+                    return Some(Err(CaptureError::Io(e)));
+                }
+                if let Some(timeout) = self.idle_timeout {
+                    if last_progress.elapsed() >= timeout {
+                        return None;
+                    }
+                }
+                std::thread::sleep(self.poll_interval);
+                continue;
+            }
+
+            let ts_unix_ns = u64::from_le_bytes(header[0..8].try_into().unwrap());
+            let direction = match Direction::from_byte(header[8]) {
+                Ok(d) => d,
+                Err(e) => return Some(Err(e)),
+            };
+            let transport = match TransportKind::from_byte(header[9]) {
+                Ok(t) => t,
+                Err(e) => return Some(Err(e)),
+            };
+            let flags = header[10];
+            let hello = (flags & FLAG_HELLO) != 0;
+            let len = u32::from_le_bytes(header[11..15].try_into().unwrap()) as usize;
+
+            let mut payload = vec![0u8; len];
+            let got = match read_partial_io(&mut self.file, &mut payload) {
+                Ok(n) => n,
+                Err(e) => return Some(Err(CaptureError::Io(e))),
+            };
+
+            if got < len {
+                if let Err(e) =
+                    self.file.seek(std::io::SeekFrom::Start(pos_before_record))
+                {
+                    return Some(Err(CaptureError::Io(e)));
+                }
+                if let Some(timeout) = self.idle_timeout {
+                    if last_progress.elapsed() >= timeout {
+                        return None;
+                    }
+                }
+                std::thread::sleep(self.poll_interval);
+                continue;
+            }
+
+            return Some(Ok(CaptureRecord {
+                ts_unix_ns,
+                direction,
+                transport,
+                hello,
+                payload,
+            }));
+        }
     }
+}
+
+/// Generic partial-read helper used by `CaptureFollower`.
+/// Distinguishes "clean EOF" (returns 0) from "partial read"
+/// (returns 0 < n < buf.len()) so the follower can detect a
+/// mid-record truncation precisely.
+fn read_partial_io<R: std::io::Read>(reader: &mut R, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut total = 0;
+    while total < buf.len() {
+        match reader.read(&mut buf[total..]) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(total)
 }

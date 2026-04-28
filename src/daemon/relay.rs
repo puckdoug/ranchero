@@ -159,42 +159,68 @@ pub struct UdpServerEntry {
 
 /// Selects the appropriate UDP server from a pool given the
 /// watched athlete's `(x, y)` position. Ports
-/// `zwift.mjs:2295-2317`.
-///
-/// STEP-12.4 stub: panics with `unimplemented!()`.
+/// `zwift.mjs:2295-2317`. With `use_first_in_bounds` set, the
+/// first server whose bounding box contains the position is
+/// returned. Otherwise, or if no server is in bounds, the result
+/// is the server whose bound centre minimises the Euclidean
+/// distance to the position.
 pub fn find_best_udp_server<'a>(
-    _pool: &'a UdpServerPool,
-    _x: f64,
-    _y: f64,
+    pool: &'a UdpServerPool,
+    x: f64,
+    y: f64,
 ) -> Option<&'a UdpServerEntry> {
-    unimplemented!("STEP-12.4: find_best_udp_server")
+    if pool.servers.is_empty() {
+        return None;
+    }
+    if pool.use_first_in_bounds {
+        for server in &pool.servers {
+            if x >= server.x_bound_min
+                && x <= server.x_bound
+                && y >= server.y_bound_min
+                && y <= server.y_bound
+            {
+                return Some(server);
+            }
+        }
+    }
+    pool.servers.iter().min_by(|a, b| {
+        let da = euclidean_distance_to_centre(a, x, y);
+        let db = euclidean_distance_to_centre(b, x, y);
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    })
+}
+
+fn euclidean_distance_to_centre(server: &UdpServerEntry, x: f64, y: f64) -> f64 {
+    let cx = (server.x_bound_min + server.x_bound) / 2.0;
+    let cy = (server.y_bound_min + server.y_bound) / 2.0;
+    let dx = cx - x;
+    let dy = cy - y;
+    (dx * dx + dy * dy).sqrt()
 }
 
 /// Maintains a per-`(realm, courseId)` table of UDP server pools.
 /// Updates arrive as inbound `udpConfigVOD` messages on TCP; the
 /// latest update for a given key replaces the previous entry.
-///
-/// STEP-12.4 stub: every method panics.
 #[derive(Debug, Default)]
-#[allow(dead_code)]
 pub struct UdpPoolRouter {
-    placeholder: (),
+    pools: std::collections::HashMap<(i32, i32), UdpServerPool>,
 }
 
 impl UdpPoolRouter {
     pub fn new() -> Self {
-        unimplemented!("STEP-12.4: UdpPoolRouter::new")
+        Self { pools: std::collections::HashMap::new() }
     }
 
     /// Apply an inbound `udpConfigVOD` update. Replaces any
     /// existing pool for the same `(realm, courseId)` key.
-    pub fn apply_pool_update(&mut self, _pool: UdpServerPool) {
-        unimplemented!("STEP-12.4: UdpPoolRouter::apply_pool_update")
+    pub fn apply_pool_update(&mut self, pool: UdpServerPool) {
+        let key = (pool.realm, pool.course_id);
+        self.pools.insert(key, pool);
     }
 
     /// Look up the pool for a given `(realm, courseId)`.
-    pub fn pool_for(&self, _realm: i32, _course_id: i32) -> Option<&UdpServerPool> {
-        unimplemented!("STEP-12.4: UdpPoolRouter::pool_for")
+    pub fn pool_for(&self, realm: i32, course_id: i32) -> Option<&UdpServerPool> {
+        self.pools.get(&(realm, course_id))
     }
 }
 
@@ -215,43 +241,90 @@ pub enum IdleState {
     Suspended,
 }
 
+/// Default idle window per spec §4.13. The implementation matches
+/// sauce4zwift's constant; if a future audit of the upstream
+/// source reveals a different value, this constant is the only
+/// place that needs to be updated.
+const IDLE_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Per spec §4.13: when the watched athlete shows zero motion for
 /// approximately 60 s, suspend UDP. Resume on any motion.
-///
-/// STEP-12.5 stub: every method panics.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct IdleFSM {
     state: IdleState,
+    idle_elapsed: std::time::Duration,
+    idle_window: std::time::Duration,
+}
+
+impl Default for IdleFSM {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IdleFSM {
     pub fn new() -> Self {
-        unimplemented!("STEP-12.5: IdleFSM::new")
+        Self {
+            state: IdleState::Active,
+            idle_elapsed: std::time::Duration::ZERO,
+            idle_window: IDLE_WINDOW,
+        }
+    }
+
+    /// For tests that need a shorter idle window than 60 s.
+    #[cfg(test)]
+    pub fn with_idle_window(window: std::time::Duration) -> Self {
+        Self {
+            state: IdleState::Active,
+            idle_elapsed: std::time::Duration::ZERO,
+            idle_window: window,
+        }
     }
 
     pub fn current(&self) -> IdleState {
-        unimplemented!("STEP-12.5: IdleFSM::current")
+        self.state
     }
 
     /// Apply a motion observation: `(speed, cadence, power)` from
-    /// the watched athlete's `PlayerState`. Drives state
-    /// transitions according to the spec.
-    pub fn observe_motion(&mut self, _speed: i32, _cadence: i32, _power: i32) {
-        unimplemented!("STEP-12.5: IdleFSM::observe_motion")
+    /// the watched athlete's `PlayerState`. Any non-zero field
+    /// returns the FSM to `Active`; all-zero motion when in
+    /// `Active` transitions to `Idle` and starts the suspension
+    /// timer.
+    pub fn observe_motion(&mut self, speed: i32, cadence: i32, power: i32) {
+        let in_motion = speed != 0 || cadence != 0 || power != 0;
+        if in_motion {
+            self.state = IdleState::Active;
+            self.idle_elapsed = std::time::Duration::ZERO;
+            return;
+        }
+        // Zero motion observed.
+        if self.state == IdleState::Active {
+            self.state = IdleState::Idle;
+            self.idle_elapsed = std::time::Duration::ZERO;
+        }
+        // In `Idle` or `Suspended` we remain in the current state
+        // until a timer tick or a fresh motion observation drives
+        // the next transition.
     }
 
-    /// Apply a tick: advance the internal timer. Returns `true`
-    /// if a state transition occurred.
-    pub fn tick(&mut self, _elapsed: std::time::Duration) -> bool {
-        unimplemented!("STEP-12.5: IdleFSM::tick")
+    /// Apply a tick: advance the suspension timer when in `Idle`.
+    /// Returns `true` if a state transition occurred (specifically,
+    /// the `Idle → Suspended` transition).
+    pub fn tick(&mut self, elapsed: std::time::Duration) -> bool {
+        if self.state == IdleState::Idle {
+            self.idle_elapsed += elapsed;
+            if self.idle_elapsed >= self.idle_window {
+                self.state = IdleState::Suspended;
+                return true;
+            }
+        }
+        false
     }
 }
 
 /// State for the currently watched athlete. Updated from inbound
 /// `PlayerState` messages.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub struct WatchedAthleteState {
     pub athlete_id: i64,
     pub realm: i32,
@@ -260,15 +333,23 @@ pub struct WatchedAthleteState {
 }
 
 impl WatchedAthleteState {
-    pub fn for_athlete(_athlete_id: i64) -> Self {
-        unimplemented!("STEP-12.5: WatchedAthleteState::for_athlete")
+    pub fn for_athlete(athlete_id: i64) -> Self {
+        Self {
+            athlete_id,
+            realm: 0,
+            course_id: 0,
+            position: (0.0, 0.0),
+        }
     }
 
     /// Switch the watched athlete. Clears the cached
     /// `(realm, courseId, x, y)` so that the next observed
     /// `PlayerState` for the new athlete repopulates it.
-    pub fn switch_to(&mut self, _new_athlete_id: i64) {
-        unimplemented!("STEP-12.5: WatchedAthleteState::switch_to")
+    pub fn switch_to(&mut self, new_athlete_id: i64) {
+        self.athlete_id = new_athlete_id;
+        self.realm = 0;
+        self.course_id = 0;
+        self.position = (0.0, 0.0);
     }
 }
 

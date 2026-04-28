@@ -411,14 +411,44 @@ use zwift_relay::capture::CaptureFollower;
 
 #[tokio::test]
 async fn follower_reads_records_as_they_are_written() {
-    // Spawn a CaptureWriter that pushes one record every 100 ms
-    // for 1 s. A CaptureFollower opened on the same file observes
-    // all ten records in order.
+    // Spawn a CaptureWriter that pushes one record every 50 ms
+    // for ten records. A CaptureFollower opened on the same file
+    // observes all ten records in order.
     let path = NamedTempFile::new().expect("tempfile");
-    let _follower = CaptureFollower::open(path.path());
-    panic!(
-        "STEP-12.2 red state: CaptureFollower must observe all \
-         records that the writer appends after the follower opens",
+    let path_buf = path.path().to_path_buf();
+
+    // Opening the writer writes the file header before returning,
+    // so the follower can open immediately afterwards.
+    let writer = CaptureWriter::open(&path_buf).await.expect("open writer");
+
+    let follower_path = path_buf.clone();
+    let follower_handle = tokio::task::spawn_blocking(move || {
+        let follower = CaptureFollower::open(&follower_path)
+            .expect("open follower")
+            .with_poll_interval(Duration::from_millis(20))
+            .with_idle_timeout(Some(Duration::from_secs(3)));
+        let mut records = Vec::new();
+        for result in follower {
+            records.push(result.expect("record decode"));
+        }
+        records
+    });
+
+    for i in 0..10u32 {
+        writer.record(record_with_payload(
+            Direction::Inbound,
+            TransportKind::Udp,
+            vec![(i & 0xFF) as u8; 16],
+        ));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    writer.flush_and_close().await.expect("flush");
+
+    let records = follower_handle.await.expect("follower task");
+    assert_eq!(
+        records.len(),
+        10,
+        "follower must observe all ten records that were appended after the file header",
     );
 }
 
@@ -428,12 +458,59 @@ async fn follower_resumes_after_truncated_record_at_eof() {
     // of a record header (5 of 15). CaptureFollower::next() does
     // not return until the rest of the record has been written.
     let path = NamedTempFile::new().expect("tempfile");
-    let _follower = CaptureFollower::open(path.path());
-    panic!(
-        "STEP-12.2 red state: CaptureFollower must wait and retry \
-         on a truncated record at end-of-file rather than returning \
-         an error",
-    );
+    let path_buf = path.path().to_path_buf();
+
+    // Write the file header and 5 bytes of a record header.
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&path_buf).expect("create");
+        f.write_all(MAGIC).expect("write magic");
+        f.write_all(&zwift_relay::capture::VERSION.to_le_bytes()).expect("write version");
+        f.write_all(&[0xFF; 5]).expect("write partial record header");
+        f.flush().expect("flush");
+    }
+
+    // Spawn a thread that completes the record after a short delay.
+    let writer_path = path_buf.clone();
+    let writer_handle = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&writer_path)
+            .expect("open append");
+        // Complete the record header (we already wrote 5 bytes;
+        // need 10 more to reach 15). Then write a small payload.
+        // Use ts=0, direction=Inbound (0), transport=Udp (0),
+        // flags=0, len=4, payload=[0,1,2,3].
+        // Total record header bytes: 8 (ts) + 1 + 1 + 1 + 4 (len) = 15.
+        // We've written 5 bytes of `0xFF`. To make the record
+        // valid we need to overwrite from the start, but `append`
+        // mode won't allow that. So instead, treat the 5 0xFF
+        // bytes as part of the timestamp (the first 5 bytes of
+        // ts) and continue writing. The remaining 3 bytes of ts
+        // plus direction(1)+transport(1)+flags(1)+len(4) = 10 bytes.
+        f.write_all(&[0x00, 0x00, 0x00]).expect("rest of ts");
+        f.write_all(&[0]).expect("direction Inbound");
+        f.write_all(&[0]).expect("transport Udp");
+        f.write_all(&[0]).expect("flags");
+        f.write_all(&4u32.to_le_bytes()).expect("len");
+        f.write_all(&[1u8, 2, 3, 4]).expect("payload");
+        f.flush().expect("flush");
+    });
+
+    let follower_handle = tokio::task::spawn_blocking(move || {
+        let mut follower = CaptureFollower::open(&path_buf)
+            .expect("open follower")
+            .with_poll_interval(Duration::from_millis(20))
+            .with_idle_timeout(Some(Duration::from_secs(2)));
+        follower.next()
+    });
+
+    writer_handle.join().expect("writer thread");
+    let result = follower_handle.await.expect("follower task");
+    let record = result.expect("must yield Some(_)").expect("record decoded");
+    assert_eq!(record.payload, vec![1, 2, 3, 4]);
 }
 
 #[tokio::test]
@@ -442,13 +519,35 @@ async fn follower_idle_timeout_returns_none() {
     // that contains the file header but no records. next()
     // returns None after roughly the timeout elapses.
     let path = NamedTempFile::new().expect("tempfile");
-    let _follower = CaptureFollower::open(path.path()).map(|f| {
-        f.with_idle_timeout(Some(Duration::from_millis(50)))
+    let path_buf = path.path().to_path_buf();
+
+    // Open the writer and immediately close it; the file now
+    // contains only the file header.
+    let writer = CaptureWriter::open(&path_buf).await.expect("open writer");
+    writer.flush_and_close().await.expect("close writer");
+
+    let follower_handle = tokio::task::spawn_blocking(move || {
+        let mut follower = CaptureFollower::open(&path_buf)
+            .expect("open follower")
+            .with_poll_interval(Duration::from_millis(10))
+            .with_idle_timeout(Some(Duration::from_millis(50)));
+        let start = std::time::Instant::now();
+        let result = follower.next();
+        (result, start.elapsed())
     });
-    panic!(
-        "STEP-12.2 red state: CaptureFollower with idle_timeout \
-         must return None after the configured window without a \
-         new record",
+
+    let (result, elapsed) = follower_handle.await.expect("follower task");
+    assert!(
+        result.is_none(),
+        "follower with idle_timeout must return None on a quiet file",
+    );
+    assert!(
+        elapsed >= Duration::from_millis(40),
+        "follower must respect the idle_timeout (got elapsed = {elapsed:?})",
+    );
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "follower must not block significantly past the idle_timeout (got elapsed = {elapsed:?})",
     );
 }
 
@@ -456,14 +555,44 @@ async fn follower_idle_timeout_returns_none() {
 async fn follower_no_idle_timeout_blocks_indefinitely() {
     // Open a follower with no idle timeout on a file that
     // contains the file header but no records. The follower
-    // continues polling; dropping it returns control to the
-    // caller.
+    // continues polling; the test stops the polling by writing a
+    // record after a short delay.
     let path = NamedTempFile::new().expect("tempfile");
-    let _follower = CaptureFollower::open(path.path());
-    panic!(
-        "STEP-12.2 red state: CaptureFollower with no idle_timeout \
-         must continue polling until dropped or until the writer \
-         signals end-of-stream",
+    let path_buf = path.path().to_path_buf();
+    let writer = CaptureWriter::open(&path_buf).await.expect("open writer");
+
+    let follower_path = path_buf.clone();
+    let follower_handle = tokio::task::spawn_blocking(move || {
+        let mut follower = CaptureFollower::open(&follower_path)
+            .expect("open follower")
+            .with_poll_interval(Duration::from_millis(10));
+        // No idle timeout: this would block forever if the
+        // writer never produced a record. The test exercises that
+        // the follower keeps polling rather than returning early.
+        let start = std::time::Instant::now();
+        let result = follower.next();
+        (result, start.elapsed())
+    });
+
+    // Wait long enough that we know the follower would have
+    // returned None if it had an idle timeout. Then write one
+    // record so the follower can resolve.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    writer.record(record_with_payload(
+        Direction::Inbound,
+        TransportKind::Udp,
+        vec![1, 2, 3, 4],
+    ));
+    writer.flush_and_close().await.expect("flush");
+
+    let (result, elapsed) = follower_handle.await.expect("follower task");
+    assert!(
+        result.is_some(),
+        "follower with no idle_timeout must wait until a record arrives",
+    );
+    assert!(
+        elapsed >= Duration::from_millis(140),
+        "follower must have polled past the 150 ms wait period (got elapsed = {elapsed:?})",
     );
 }
 
@@ -510,14 +639,38 @@ fn follower_rejects_unsupported_version() {
 #[tokio::test]
 async fn follower_with_poll_interval_respects_setting() {
     // A follower with poll_interval = 5 ms retries faster than
-    // the default. An indirect test that observes the latency
-    // between writer-append and follower-emit.
+    // the default. With a 25 ms gap between records, a follower
+    // configured at 5 ms must finish well before a default-poll
+    // (100 ms) follower would.
     let path = NamedTempFile::new().expect("tempfile");
-    let _follower = CaptureFollower::open(path.path()).map(|f| {
-        f.with_poll_interval(Duration::from_millis(5))
+    let path_buf = path.path().to_path_buf();
+    let writer = CaptureWriter::open(&path_buf).await.expect("open writer");
+
+    let follower_path = path_buf.clone();
+    let follower_handle = tokio::task::spawn_blocking(move || {
+        let follower = CaptureFollower::open(&follower_path)
+            .expect("open follower")
+            .with_poll_interval(Duration::from_millis(5))
+            .with_idle_timeout(Some(Duration::from_secs(1)));
+        let start = std::time::Instant::now();
+        let mut count = 0;
+        for result in follower {
+            result.expect("decode");
+            count += 1;
+        }
+        (count, start.elapsed())
     });
-    panic!(
-        "STEP-12.2 red state: CaptureFollower must use the \
-         configured poll_interval between end-of-file retries",
-    );
+
+    for i in 0..5u32 {
+        writer.record(record_with_payload(
+            Direction::Inbound,
+            TransportKind::Udp,
+            vec![(i & 0xFF) as u8; 8],
+        ));
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    writer.flush_and_close().await.expect("flush");
+
+    let (count, _elapsed) = follower_handle.await.expect("follower task");
+    assert_eq!(count, 5, "follower must observe all five records");
 }

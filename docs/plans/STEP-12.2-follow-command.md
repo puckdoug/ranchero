@@ -2,14 +2,18 @@
 
 **Status:** planned (2026-04-28).
 
-This is the second sub-step of STEP-12 (`STEP-12-game-monitor.md`).
-It does not change the daemon or the protocol stack. It adds a
-new top-level command, `ranchero follow <file>`, that reads a
-wire-capture file as it is being written and prints each record
-to standard output as text. The intended use is paired with
-`ranchero start --capture <path>` (delivered by STEP-12.1) so
-that a developer or operator can watch the live stream from a
-second terminal while the daemon runs.
+This step is independent of STEP-12 (`STEP-12-game-monitor.md`)
+despite the digit overlap; the two share a numerical prefix but
+cover different work. STEP-12.2 does not change the daemon or the
+protocol stack. It adds a new top-level command,
+`ranchero follow <file>`, that reads a wire-capture file as it is
+being written and prints each record to standard output as text.
+The intended use is paired with `ranchero start --capture <path>`
+(delivered by STEP-12's sub-step 12.1) so that a developer or
+operator can watch the live stream from a second terminal while
+the daemon runs.
+
+This step is to be implemented after STEP-12 is complete.
 
 ## Goal
 
@@ -274,7 +278,7 @@ cover most of its surface. A short manual check confirms the
 end-to-end terminal experience:
 
 1. In one terminal, run a writer-only smoke. Either:
-   - Wait until STEP-12.1 is implemented and run
+   - Wait until STEP-12 sub-step 12.1 is implemented and run
      `ranchero start --foreground --capture /tmp/x.cap` against
      production Zwift, or
    - Run the existing `writer_then_reader_round_trip_many_records`
@@ -327,11 +331,10 @@ end-to-end terminal experience:
 
 ## Cross-references
 
-- `docs/plans/STEP-12-game-monitor.md` — the parent plan,
-  which lists the sub-steps that compose STEP-12.
-- `docs/plans/STEP-12.1-tcp-end-to-end-smoke.md` — the
-  preceding sub-step, which produces the live capture files
-  that this command tails.
+- `docs/plans/STEP-12-game-monitor.md` — the GameMonitor
+  orchestration work, whose sub-step 12.1 produces the live
+  capture files that this command tails. STEP-12 is separate
+  work despite the digit overlap with this plan.
 - `docs/plans/done/STEP-11.5-wire-capture.md` — the format
   specification and the `CaptureWriter` and `CaptureReader`
   this command extends.
