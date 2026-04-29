@@ -39,12 +39,12 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
 struct StubAuth;
 
 impl AuthLogin for StubAuth {
-    fn login(
+    async fn login(
         &self,
         _email: &str,
         _password: &str,
-    ) -> impl std::future::Future<Output = Result<(), zwift_api::Error>> + Send {
-        async { Ok(()) }
+    ) -> Result<(), zwift_api::Error> {
+        Ok(())
     }
 }
 
@@ -83,18 +83,13 @@ impl SessionLogin for StubSession {
 struct NoopTcpTransport;
 
 impl zwift_relay::TcpTransport for NoopTcpTransport {
-    fn write_all(
-        &self,
-        _bytes: &[u8],
-    ) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
-        async { Ok(()) }
+    async fn write_all(&self, _bytes: &[u8]) -> std::io::Result<()> {
+        Ok(())
     }
 
-    fn read_chunk(&self) -> impl std::future::Future<Output = std::io::Result<Vec<u8>>> + Send {
-        async {
-            std::future::pending::<()>().await;
-            unreachable!()
-        }
+    async fn read_chunk(&self) -> std::io::Result<Vec<u8>> {
+        std::future::pending::<()>().await;
+        unreachable!()
     }
 }
 

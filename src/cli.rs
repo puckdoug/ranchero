@@ -234,26 +234,82 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
 /// STEP-12.2: tail a wire-capture file and print each record to
 /// the supplied writer as text. This is the testable surface; the
 /// production dispatcher in [`dispatch`] wraps it with
-/// `std::io::stdout`. The implementation is described in
-/// `docs/plans/STEP-12.2-follow-command.md`; until it lands, every
-/// call panics with `unimplemented!()`.
+/// `std::io::stdout`. See
+/// `docs/plans/STEP-12.2-follow-command.md` for the design.
+///
+/// The function writes a header (file path + format version), then
+/// iterates the [`zwift_relay::capture::CaptureFollower`] until
+/// the supplied idle timeout expires (or the file is truncated /
+/// removed under the follower). Each record produces a one-line
+/// summary; with `decode = true`, an additional pretty-printed
+/// `Debug` block of the decoded `ServerToClient` (inbound) or
+/// `ClientToServer` (outbound) message follows.
 pub fn print_follow_to<W: std::io::Write>(
-    _out: W,
-    _path: &std::path::Path,
-    _decode: bool,
-    _idle_timeout_secs: Option<u64>,
+    mut out: W,
+    path: &std::path::Path,
+    decode: bool,
+    idle_timeout_secs: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    unimplemented!("STEP-12.2: print_follow_to")
+    use prost::Message as _;
+    use std::time::Duration;
+    use zwift_relay::capture::{CaptureFollower, Direction, TransportKind};
+
+    let mut follower = CaptureFollower::open(path)?;
+    if let Some(secs) = idle_timeout_secs {
+        follower = follower.with_idle_timeout(Some(Duration::from_secs(secs)));
+    }
+
+    writeln!(out, "ranchero follow {}", path.display())?;
+    writeln!(out, "Format version: {}", follower.version())?;
+    writeln!(out)?;
+
+    for (idx, result) in follower.enumerate() {
+        let record = result?;
+        let dir = match record.direction {
+            Direction::Inbound => "in ",
+            Direction::Outbound => "out",
+        };
+        let xport = match record.transport {
+            TransportKind::Udp => "UDP",
+            TransportKind::Tcp => "TCP",
+        };
+        let hello = if record.hello { " hello" } else { "" };
+        writeln!(
+            out,
+            "  #{idx:>6}  {dir} {xport}  ts={}ns  len={:>5}{hello}",
+            record.ts_unix_ns,
+            record.payload.len(),
+        )?;
+
+        if decode {
+            match record.direction {
+                Direction::Inbound => {
+                    match zwift_proto::ServerToClient::decode(record.payload.as_slice()) {
+                        Ok(msg) => writeln!(out, "{msg:#?}")?,
+                        Err(e) => writeln!(out, "  (decode error: {e})")?,
+                    }
+                }
+                Direction::Outbound => {
+                    match zwift_proto::ClientToServer::decode(record.payload.as_slice()) {
+                        Ok(msg) => writeln!(out, "{msg:#?}")?,
+                        Err(e) => writeln!(out, "  (decode error: {e})")?,
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// STEP-12.2 stub: dispatch arm wrapper. Forwards to
 /// [`print_follow_to`] with `std::io::stdout` as the destination.
 fn print_follow(
-    path: &PathBuf,
+    path: &std::path::Path,
     decode: bool,
     idle_timeout: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    print_follow_to(std::io::stdout(), path.as_path(), decode, idle_timeout)
+    print_follow_to(std::io::stdout(), path, decode, idle_timeout)
 }
 
 /// Render an "auth-check" report: for each configured account, show the
@@ -365,7 +421,7 @@ fn print_auth_check(
 /// summary (record counts by direction/transport, time range, total
 /// bytes); `--verbose` prints one line per record. Surfaces any
 /// `CaptureError` to the caller via `?`.
-fn print_replay(path: &PathBuf, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn print_replay(path: &std::path::Path, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
     use zwift_relay::capture::{CaptureReader, Direction, TransportKind};
 
     let reader = CaptureReader::open(path)?;

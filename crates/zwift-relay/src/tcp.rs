@@ -120,7 +120,10 @@ impl Default for TcpChannelConfig {
 #[derive(Debug, Clone)]
 pub enum TcpChannelEvent {
     Established,
-    Inbound(zwift_proto::ServerToClient),
+    /// `ServerToClient` is large; boxing keeps the `TcpChannelEvent`
+    /// itself small enough not to bloat the broadcast ring buffer
+    /// or every stack frame that holds the enum.
+    Inbound(Box<zwift_proto::ServerToClient>),
     Timeout,
     RecvError(String),
     Shutdown,
@@ -312,13 +315,13 @@ fn process_inbound(
     let aad = &bytes[..parsed.consumed];
     let cipher = &bytes[parsed.consumed..];
 
-    if let Some(rid) = parsed.header.relay_id {
-        if rid != expected_relay_id {
-            return Err(Error::BadRelayId {
-                expected: expected_relay_id,
-                got: rid,
-            });
-        }
+    if let Some(rid) = parsed.header.relay_id
+        && rid != expected_relay_id
+    {
+        return Err(Error::BadRelayId {
+            expected: expected_relay_id,
+            got: rid,
+        });
     }
     if let Some(cid) = parsed.header.conn_id {
         *recv_iv_conn_id = cid;
@@ -397,7 +400,7 @@ async fn recv_loop<T: TcpTransport>(
                             record_inbound(capture.as_ref(), TransportKind::Tcp, &plaintext);
                             match zwift_proto::ServerToClient::decode(plaintext.as_slice()) {
                                 Ok(stc) => {
-                                    let _ = events_tx.send(TcpChannelEvent::Inbound(stc));
+                                    let _ = events_tx.send(TcpChannelEvent::Inbound(Box::new(stc)));
                                 }
                                 Err(e) => {
                                     let _ = events_tx.send(TcpChannelEvent::RecvError(e.to_string()));

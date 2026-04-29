@@ -498,10 +498,10 @@ impl Iterator for CaptureFollower {
                 {
                     return Some(Err(CaptureError::Io(e)));
                 }
-                if let Some(timeout) = self.idle_timeout {
-                    if last_progress.elapsed() >= timeout {
-                        return None;
-                    }
+                if let Some(timeout) = self.idle_timeout
+                    && last_progress.elapsed() >= timeout
+                {
+                    return None;
                 }
                 std::thread::sleep(self.poll_interval);
                 continue;
@@ -532,10 +532,10 @@ impl Iterator for CaptureFollower {
                 {
                     return Some(Err(CaptureError::Io(e)));
                 }
-                if let Some(timeout) = self.idle_timeout {
-                    if last_progress.elapsed() >= timeout {
-                        return None;
-                    }
+                if let Some(timeout) = self.idle_timeout
+                    && last_progress.elapsed() >= timeout
+                {
+                    return None;
                 }
                 std::thread::sleep(self.poll_interval);
                 continue;

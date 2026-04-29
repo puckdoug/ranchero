@@ -46,7 +46,7 @@ fn synthetic_server_to_client_preserves_player_state_fields() {
     };
     let original = ServerToClient {
         seqno: Some(1),
-        player_states: vec![player.clone()],
+        player_states: vec![player],
         ..Default::default()
     };
     let mut bytes = Vec::new();

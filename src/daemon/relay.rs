@@ -97,7 +97,16 @@ pub trait TcpTransportFactory: Send + Sync + 'static {
 
 /// Internal state owned by the runtime, shared between the
 /// recv-loop task and any test-only injection points.
+///
+/// In production builds the orchestrator does not yet auto-update
+/// these fields from inbound TCP messages (the recv-loop only
+/// emits `GameEvent::PlayerState` for every observed state today).
+/// Until that auto-extraction lands, the fields are written via
+/// the `#[cfg(test)]` injection methods only, so production builds
+/// never read them. The `dead_code` allowance documents that
+/// asymmetry rather than silently masking a real defect.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct RuntimeInner {
     pool_router: std::sync::Mutex<UdpPoolRouter>,
     watched_state: std::sync::Mutex<WatchedAthleteState>,
@@ -263,11 +272,11 @@ pub struct UdpServerEntry {
 /// returned. Otherwise, or if no server is in bounds, the result
 /// is the server whose bound centre minimises the Euclidean
 /// distance to the position.
-pub fn find_best_udp_server<'a>(
-    pool: &'a UdpServerPool,
+pub fn find_best_udp_server(
+    pool: &UdpServerPool,
     x: f64,
     y: f64,
-) -> Option<&'a UdpServerEntry> {
+) -> Option<&UdpServerEntry> {
     if pool.servers.is_empty() {
         return None;
     }
@@ -823,6 +832,7 @@ impl RelayRuntime {
         watched.switch_to(new_athlete_id);
     }
 
+    #[cfg(test)]
     fn recompute_udp_selection(&self) {
         let watched = self
             .inner
@@ -1213,13 +1223,6 @@ mod tests {
                 transport: StdMutex::new(Some(MockTcpTransport::new())),
             }
         }
-
-        fn err_no_transport(counter: Arc<CallCounter>) -> Self {
-            Self {
-                counter,
-                transport: StdMutex::new(None),
-            }
-        }
     }
 
     impl TcpTransportFactory for StubTcpFactory {
@@ -1410,7 +1413,7 @@ mod tests {
             world_time: Some(123_456),
             ..Default::default()
         };
-        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(stc));
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
 
         // Allow the recv-loop task to process the injected event.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1596,7 +1599,7 @@ mod tests {
         let recorded = sent.lock().unwrap();
         let seqnos: Vec<u32> = recorded
             .iter()
-            .map(|p| p.seqno.expect("seqno present") as u32)
+            .map(|p| p.seqno.expect("seqno present"))
             .collect();
         assert_eq!(seqnos, vec![1, 2, 3], "seqno must increment by one per send");
         assert_eq!(scheduler.seqno(), 3, "scheduler seqno reports total sends");
@@ -1642,9 +1645,7 @@ mod tests {
             .await
             .expect("start");
 
-        runtime.inject_udp_event(zwift_relay::ChannelEvent::Inbound(
-            zwift_proto::ServerToClient::default(),
-        ));
+        runtime.inject_udp_event(zwift_relay::ChannelEvent::Inbound(Box::default()));
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -2101,7 +2102,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(stc));
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
 
         let event = tokio::time::timeout(
             std::time::Duration::from_millis(500),
