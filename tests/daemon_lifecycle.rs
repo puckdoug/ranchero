@@ -5,12 +5,13 @@
 #![cfg(unix)]
 
 use std::path::PathBuf;
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const RELAY_FAIL_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_ranchero")
@@ -54,6 +55,31 @@ impl DaemonHarness {
         }
     }
 
+    /// Harness configured so that `RelayRuntime::start` will fail immediately.
+    /// No credentials are present, so the missing-email check fails before any
+    /// network activity. The `auth_base` URL is also set to an unreachable
+    /// address as a secondary guard.
+    fn new_failing_relay() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("ranchero.toml");
+        let state = dir.path().join("s");
+        std::fs::create_dir_all(&state).unwrap();
+        let pidfile_path = state.join("ranchero.pid");
+        let socket_path = state.join("ranchero.sock");
+
+        let toml = format!(
+            "schema_version = 1\n\
+             [daemon]\n\
+             pidfile = \"{}\"\n\
+             [zwift]\n\
+             auth_base = \"http://127.0.0.1:1\"\n",
+            pidfile_path.display()
+        );
+        std::fs::write(&config_path, toml).unwrap();
+
+        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, child: None }
+    }
+
     fn config_args(&self) -> Vec<String> {
         vec!["--config".into(), self.config_path.to_string_lossy().into_owned()]
     }
@@ -90,6 +116,20 @@ impl DaemonHarness {
                 && self.socket_path.exists()
             {
                 return Some(pid);
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+        None
+    }
+
+    fn wait_for_child_exit(&mut self, timeout: Duration) -> Option<ExitStatus> {
+        let child = self.child.as_mut()?;
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) => {}
+                Err(_) => return None,
             }
             std::thread::sleep(POLL_INTERVAL);
         }
@@ -284,5 +324,46 @@ fn debug_flag_keeps_process_in_foreground() {
         child_pid, daemon_pid,
         "with --debug the spawned process should be the daemon (no fork); \
          spawned={child_pid} pidfile={daemon_pid}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Defect 1 — relay.start failure must propagate (not continue in degraded mode)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn start_exits_nonzero_when_relay_start_fails() {
+    let mut h = DaemonHarness::new_failing_relay();
+    h.spawn_foreground(false);
+    let status = h
+        .wait_for_child_exit(RELAY_FAIL_TIMEOUT)
+        .expect("process should exit within 5 s when relay.start fails; it hung instead");
+    assert!(
+        !status.success(),
+        "expected non-zero exit when relay.start fails, got: {status:?}"
+    );
+}
+
+#[test]
+fn start_removes_pidfile_when_relay_start_fails() {
+    let mut h = DaemonHarness::new_failing_relay();
+    h.spawn_foreground(false);
+    h.wait_for_child_exit(RELAY_FAIL_TIMEOUT)
+        .expect("process should exit within 5 s when relay.start fails; it hung instead");
+    assert!(
+        !h.pidfile_path.exists(),
+        "pidfile should be removed after failed relay.start"
+    );
+}
+
+#[test]
+fn start_removes_socket_when_relay_start_fails() {
+    let mut h = DaemonHarness::new_failing_relay();
+    h.spawn_foreground(false);
+    h.wait_for_child_exit(RELAY_FAIL_TIMEOUT)
+        .expect("process should exit within 5 s when relay.start fails; it hung instead");
+    assert!(
+        !h.socket_path.exists(),
+        "control socket should be removed after failed relay.start"
     );
 }
