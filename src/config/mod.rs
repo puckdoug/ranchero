@@ -502,4 +502,122 @@ mod tests {
         let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap();
         assert_eq!(r.editing_mode, EditingMode::Emacs);
     }
+
+    // -----------------------------------------------------------------
+    // STEP-12.5 §F.3.1, §F.3.2 — Zwift endpoint configuration.
+    //
+    // The orchestrator's HTTPS endpoints (`auth_base`, `api_base`)
+    // are operator-configurable to support staging, self-hosted
+    // relays, and local mock servers used by tests. The schema
+    // section lives in `[zwift]` of the TOML file; the existing
+    // CLI → env → file precedence pattern resolves it through
+    // `RANCHERO_ZWIFT_AUTH_BASE` and `RANCHERO_ZWIFT_API_BASE`.
+    // See `docs/plans/STEP-12.5-still-not-doing-the-job-as-specified.md`
+    // §F for the rationale.
+    // -----------------------------------------------------------------
+
+    /// §F.3.1 — `[zwift]` section defaults match production Zwift
+    /// hosts. The string values here are duplicated against the
+    /// `zwift_api::DEFAULT_AUTH_HOST` / `DEFAULT_API_HOST`
+    /// constants on purpose: a future change to either side must
+    /// be a deliberate operator-visible decision, not a silent
+    /// drift.
+    #[test]
+    fn zwift_section_defaults_match_production_hosts() {
+        let cfg = ZwiftConfig::default();
+        assert_eq!(cfg.auth_base, "https://secure.zwift.com");
+        assert_eq!(cfg.api_base, "https://us-or-rly101.zwift.com");
+    }
+
+    /// §F.3.1 — A `[zwift]` section in TOML round-trips through
+    /// the `ConfigFile` parser without losing field values.
+    #[test]
+    fn zwift_section_round_trips_through_toml() {
+        let toml = "\
+            schema_version = 1\n\
+            [zwift]\n\
+            auth_base = \"https://staging.zwift.example\"\n\
+            api_base  = \"https://api.staging.zwift.example\"\n\
+        ";
+        let parsed: ConfigFile = toml::from_str(toml).expect("toml parse");
+        assert_eq!(parsed.zwift.auth_base, "https://staging.zwift.example");
+        assert_eq!(parsed.zwift.api_base, "https://api.staging.zwift.example");
+    }
+
+    /// §F.3.1 — A TOML file without a `[zwift]` section yields the
+    /// production defaults. Pre-existing operator config files
+    /// must keep working unchanged.
+    #[test]
+    fn config_file_without_zwift_section_uses_defaults() {
+        let toml = "schema_version = 1\n";
+        let parsed: ConfigFile = toml::from_str(toml).expect("toml parse");
+        assert_eq!(parsed.zwift, ZwiftConfig::default());
+    }
+
+    /// §F.3.2 — With no file overrides and no env overrides,
+    /// `ResolvedConfig::resolve` populates `zwift_endpoints` with
+    /// production hosts.
+    #[test]
+    fn default_zwift_endpoints_when_no_overrides() {
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), None).unwrap();
+        assert_eq!(r.zwift_endpoints.auth_base, "https://secure.zwift.com");
+        assert_eq!(r.zwift_endpoints.api_base, "https://us-or-rly101.zwift.com");
+    }
+
+    /// §F.3.2 — A `[zwift]` section in the file flows through
+    /// `resolve` to `zwift_endpoints` when no env override is
+    /// present.
+    #[test]
+    fn zwift_endpoints_from_file_when_no_env_override() {
+        let mut file = ConfigFile::default();
+        file.zwift.auth_base = "https://staging.zwift.example".into();
+        file.zwift.api_base  = "https://api.staging.zwift.example".into();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap();
+        assert_eq!(r.zwift_endpoints.auth_base, "https://staging.zwift.example");
+        assert_eq!(r.zwift_endpoints.api_base,  "https://api.staging.zwift.example");
+    }
+
+    /// §F.3.2 — `RANCHERO_ZWIFT_AUTH_BASE` overrides the file
+    /// value at resolve time. Mirrors the precedence pattern
+    /// already used for `RANCHERO_SERVER_PORT`,
+    /// `RANCHERO_LOG_FILE`, and similar.
+    #[test]
+    fn env_overrides_file_for_zwift_auth_base() {
+        let mut file = ConfigFile::default();
+        file.zwift.auth_base = "https://staging.zwift.example".into();
+        let env = MapEnv(HashMap::from([
+            ("RANCHERO_ZWIFT_AUTH_BASE", "http://127.0.0.1:1"),
+        ]));
+        let r = ResolvedConfig::resolve(&empty_cli(), &env, Some(file)).unwrap();
+        assert_eq!(r.zwift_endpoints.auth_base, "http://127.0.0.1:1");
+    }
+
+    /// §F.3.2 — `RANCHERO_ZWIFT_API_BASE` overrides the file
+    /// value at resolve time, independently of the auth-base
+    /// override.
+    #[test]
+    fn env_overrides_file_for_zwift_api_base() {
+        let mut file = ConfigFile::default();
+        file.zwift.api_base = "https://api.staging.zwift.example".into();
+        let env = MapEnv(HashMap::from([
+            ("RANCHERO_ZWIFT_API_BASE", "http://127.0.0.1:1"),
+        ]));
+        let r = ResolvedConfig::resolve(&empty_cli(), &env, Some(file)).unwrap();
+        assert_eq!(r.zwift_endpoints.api_base, "http://127.0.0.1:1");
+    }
+
+    /// §F.3.2 — Both env vars are read independently. The
+    /// auth-base override does not bleed into api_base or vice
+    /// versa.
+    #[test]
+    fn zwift_env_overrides_are_independent() {
+        let env = MapEnv(HashMap::from([
+            ("RANCHERO_ZWIFT_AUTH_BASE", "http://127.0.0.1:1"),
+        ]));
+        let r = ResolvedConfig::resolve(&empty_cli(), &env, None).unwrap();
+        assert_eq!(r.zwift_endpoints.auth_base, "http://127.0.0.1:1");
+        // api_base falls back to the production default because no
+        // env or file override is set.
+        assert_eq!(r.zwift_endpoints.api_base, "https://us-or-rly101.zwift.com");
+    }
 }

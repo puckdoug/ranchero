@@ -42,8 +42,20 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use ranchero::config::{EditingMode, LogLevel, RedactedString, ResolvedConfig};
+use ranchero::config::{
+    EditingMode, LogLevel, RedactedString, ResolvedConfig, ZwiftEndpoints,
+};
 use ranchero::daemon::relay::RelayRuntime;
+
+/// Unroutable address used by every library and subprocess test
+/// in this file as the Zwift HTTPS endpoint. Connecting to port 1
+/// on the loopback interface is refused immediately by the
+/// kernel, so any auth attempt fails fast without leaving the
+/// local machine. Tests that expect the override to take effect
+/// also assert a tight timing budget so a regression that drops
+/// the override is observable rather than silently hitting
+/// production Zwift. See STEP-12.5 §F.
+const UNROUTABLE_ZWIFT_BASE: &str = "http://127.0.0.1:1";
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -77,6 +89,13 @@ fn lib_config(
         pidfile,
         config_path: None,
         editing_mode: EditingMode::Default,
+        // Pin every library test to an unroutable address so a
+        // regression in `RelayRuntime::start` cannot silently
+        // contact production Zwift. See STEP-12.5 §F.
+        zwift_endpoints: ZwiftEndpoints {
+            auth_base: UNROUTABLE_ZWIFT_BASE.to_string(),
+            api_base:  UNROUTABLE_ZWIFT_BASE.to_string(),
+        },
     }
 }
 
@@ -143,6 +162,16 @@ impl DaemonHarness {
         cmd.output().expect("spawn ranchero")
     }
 
+    /// Pin both Zwift HTTPS endpoints on the spawned child to an
+    /// unroutable address. Each subprocess test inherits its own
+    /// environment from this method, so no global process-state
+    /// mutation is required and concurrent test execution is
+    /// safe. See STEP-12.5 §F.3.5.
+    fn pin_unroutable_zwift_endpoints(cmd: &mut Command) {
+        cmd.env("RANCHERO_ZWIFT_AUTH_BASE", UNROUTABLE_ZWIFT_BASE);
+        cmd.env("RANCHERO_ZWIFT_API_BASE", UNROUTABLE_ZWIFT_BASE);
+    }
+
     /// Spawn `ranchero start` in the foreground with bogus credentials
     /// supplied via CLI, optional `--capture <path>`, and `--debug`
     /// so logs flow to stderr at INFO+.
@@ -156,6 +185,7 @@ impl DaemonHarness {
             cmd.arg("--capture").arg(&self.capture_path);
         }
         cmd.arg("start");
+        Self::pin_unroutable_zwift_endpoints(&mut cmd);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -176,6 +206,7 @@ impl DaemonHarness {
             cmd.arg("--capture").arg(&self.capture_path);
         }
         cmd.arg("start");
+        Self::pin_unroutable_zwift_endpoints(&mut cmd);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd.output().expect("spawn ranchero start (bg)")
     }
@@ -359,6 +390,76 @@ async fn relay_runtime_start_with_capture_path_creates_capture_file() {
         bytes.starts_with(zwift_relay::capture::MAGIC),
         "capture file is missing the `RNCWCAP` magic; got first bytes: {:?}",
         &bytes[..bytes.len().min(8)],
+    );
+}
+
+/// §F.3.3 — `RelayRuntime::start` must build its `zwift_api::Config`
+/// from `cfg.zwift_endpoints`, not from `Config::default()`. The
+/// discriminator is timing: a connection to `127.0.0.1:1` is
+/// refused by the kernel in well under 200 ms, whereas a call
+/// against the production Zwift host takes multiple seconds (DNS
+/// resolution + TLS handshake + HTTP response). A short budget
+/// here proves the override took effect; a regression that drops
+/// the override would either time out (production network slow)
+/// or, worse, succeed in contacting Zwift, which is exactly what
+/// §F is preventing.
+///
+/// This test depends on §F.3.1 / §F.3.2 / §F.3.3 being
+/// implemented; until then it fails to compile because
+/// `ZwiftEndpoints` and `ResolvedConfig.zwift_endpoints` do not
+/// exist.
+#[tokio::test]
+async fn relay_runtime_start_uses_zwift_endpoints_from_resolved_config() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg = lib_config(
+        "noone@example.invalid",
+        "not-a-real-password",
+        dir.path().join("ranchero.log"),
+        dir.path().join("ranchero.pid"),
+    );
+    // Confirm the helper actually pinned the override; a future
+    // edit to `lib_config` that drops it would otherwise let this
+    // test reach Zwift.
+    assert_eq!(
+        cfg.zwift_endpoints.auth_base, UNROUTABLE_ZWIFT_BASE,
+        "lib_config must pin auth_base to the unroutable address",
+    );
+    assert_eq!(
+        cfg.zwift_endpoints.api_base, UNROUTABLE_ZWIFT_BASE,
+        "lib_config must pin api_base to the unroutable address",
+    );
+
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        RelayRuntime::start(&cfg, None),
+    )
+    .await;
+    let elapsed = started.elapsed();
+
+    match result {
+        Ok(Ok(_runtime)) => panic!(
+            "RelayRuntime::start unexpectedly succeeded against \
+             {UNROUTABLE_ZWIFT_BASE}; either port 1 is bound on \
+             this host or the override was dropped and the call \
+             reached real Zwift. STEP-12.5 §F.3.3."
+        ),
+        Ok(Err(_)) => {
+            // Expected: connection refused at the auth-login step.
+        }
+        Err(_) => panic!(
+            "RelayRuntime::start did not return within 2 s. The \
+             `cfg.zwift_endpoints` override is not consulted by \
+             the production `start`, or `Config::default()` is \
+             still being used. STEP-12.5 §F.3.3. Elapsed: {elapsed:?}"
+        ),
+    }
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "elapsed = {elapsed:?}; expected sub-second connection-refused \
+         against {UNROUTABLE_ZWIFT_BASE}. The slow path suggests the \
+         override was not honoured.",
     );
 }
 
