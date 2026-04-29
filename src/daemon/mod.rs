@@ -14,6 +14,7 @@ pub mod pidfile;
 pub mod probe;
 pub mod relay;
 pub mod runtime;
+pub mod validate;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -39,6 +40,8 @@ pub enum DaemonError {
     NotRunning,
     /// Backgrounding requested on a platform that does not support it yet.
     BackgroundUnsupported,
+    /// One or more pre-start validation checks failed.
+    StartupValidation(validate::StartupValidationErrors),
 }
 
 impl std::fmt::Display for DaemonError {
@@ -52,6 +55,7 @@ impl std::fmt::Display for DaemonError {
             DaemonError::BackgroundUnsupported =>
                 write!(f, "backgrounding is not supported on this platform; \
                        pass --foreground"),
+            DaemonError::StartupValidation(errs) => errs.fmt(f),
         }
     }
 }

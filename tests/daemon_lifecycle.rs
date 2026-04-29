@@ -82,6 +82,64 @@ impl DaemonHarness {
         DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, child: None }
     }
 
+    /// Harness where the pidfile lives inside a subdirectory that does not exist.
+    /// The log file directory exists. Relay is disabled so the only failure is
+    /// the missing pidfile directory.
+    fn new_missing_pidfile_dir() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("ranchero.toml");
+        let state = dir.path().join("s");
+        std::fs::create_dir_all(&state).unwrap();
+        // The pidfile subdirectory is deliberately not created.
+        let pidfile_path = state.join("absent").join("ranchero.pid");
+        let socket_path = state.join("ranchero.sock");
+        let logfile_path = state.join("ranchero.log");
+
+        let toml = format!(
+            "schema_version = 1\n\
+             [daemon]\n\
+             pidfile = \"{}\"\n\
+             [logging]\n\
+             file = \"{}\"\n\
+             [relay]\n\
+             enabled = false\n",
+            pidfile_path.display(),
+            logfile_path.display(),
+        );
+        std::fs::write(&config_path, toml).unwrap();
+
+        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, child: None }
+    }
+
+    /// Harness where the log file lives inside a subdirectory that does not exist.
+    /// The pidfile directory exists. Relay is disabled so the only failure is
+    /// the missing log directory.
+    fn new_missing_log_dir() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config_path = dir.path().join("ranchero.toml");
+        let state = dir.path().join("s");
+        std::fs::create_dir_all(&state).unwrap();
+        let pidfile_path = state.join("ranchero.pid");
+        let socket_path = state.join("ranchero.sock");
+        // The log file subdirectory is deliberately not created.
+        let logfile_path = state.join("absent").join("ranchero.log");
+
+        let toml = format!(
+            "schema_version = 1\n\
+             [daemon]\n\
+             pidfile = \"{}\"\n\
+             [logging]\n\
+             file = \"{}\"\n\
+             [relay]\n\
+             enabled = false\n",
+            pidfile_path.display(),
+            logfile_path.display(),
+        );
+        std::fs::write(&config_path, toml).unwrap();
+
+        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, child: None }
+    }
+
     fn config_args(&self) -> Vec<String> {
         vec!["--config".into(), self.config_path.to_string_lossy().into_owned()]
     }
@@ -367,5 +425,123 @@ fn start_removes_socket_when_relay_start_fails() {
     assert!(
         !h.socket_path.exists(),
         "control socket should be removed after failed relay.start"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Step 12.8 — startup validation runs before the process forks
+// ---------------------------------------------------------------------------
+
+const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Sub-1: missing email is reported on stderr and the process exits non-zero
+/// without attempting any network I/O.
+#[test]
+fn start_exits_nonzero_and_prints_error_when_email_missing() {
+    let mut h = DaemonHarness::new_failing_relay();
+    h.spawn_foreground(false);
+    let status = h
+        .wait_for_child_exit(VALIDATION_TIMEOUT)
+        .expect("process should exit within 2 s for a validation failure; it hung instead");
+    assert!(!status.success(), "expected non-zero exit when email is missing, got: {status:?}");
+
+    let child = h.child.take().unwrap();
+    let out = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        stderr.contains("missing main account email"),
+        "expected 'missing main account email' in stderr, got: {stderr}"
+    );
+}
+
+/// Sub-2: missing password is reported on stderr and the process exits non-zero.
+#[test]
+fn start_exits_nonzero_and_prints_error_when_password_missing() {
+    let mut h = DaemonHarness::new_failing_relay();
+    // Provide the email via CLI flag; password is still absent.
+    let mut cmd = std::process::Command::new(binary_path());
+    cmd.args(h.config_args())
+        .args(["--mainuser", "user@example.com", "--foreground", "start"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = cmd.spawn().expect("spawn ranchero");
+    h.child = Some(child);
+
+    let status = h
+        .wait_for_child_exit(VALIDATION_TIMEOUT)
+        .expect("process should exit within 2 s for a validation failure; it hung instead");
+    assert!(!status.success(), "expected non-zero exit when password is missing, got: {status:?}");
+
+    let child = h.child.take().unwrap();
+    let out = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        stderr.contains("missing main account password"),
+        "expected 'missing main account password' in stderr, got: {stderr}"
+    );
+}
+
+/// Sub-3: no pidfile is written when validation fails.
+#[test]
+fn start_does_not_write_pidfile_when_validation_fails() {
+    let mut h = DaemonHarness::new_failing_relay();
+    h.spawn_foreground(false);
+    h.wait_for_child_exit(VALIDATION_TIMEOUT)
+        .expect("process should exit within 2 s for a validation failure; it hung instead");
+    assert!(!h.pidfile_path.exists(), "pidfile must not be written when validation fails");
+}
+
+/// Sub-4: no control socket is created when validation fails.
+#[test]
+fn start_does_not_write_socket_when_validation_fails() {
+    let mut h = DaemonHarness::new_failing_relay();
+    h.spawn_foreground(false);
+    h.wait_for_child_exit(VALIDATION_TIMEOUT)
+        .expect("process should exit within 2 s for a validation failure; it hung instead");
+    assert!(!h.socket_path.exists(), "control socket must not be created when validation fails");
+}
+
+/// Sub-5: missing pidfile directory is reported and the process exits non-zero.
+#[test]
+fn start_exits_nonzero_when_pidfile_directory_missing() {
+    let mut h = DaemonHarness::new_missing_pidfile_dir();
+    h.spawn_foreground(false);
+    let status = h
+        .wait_for_child_exit(VALIDATION_TIMEOUT)
+        .expect("process should exit within 2 s when pidfile dir is missing; it hung instead");
+    assert!(
+        !status.success(),
+        "expected non-zero exit when pidfile directory is missing, got: {status:?}"
+    );
+
+    let child = h.child.take().unwrap();
+    let out = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        stderr.contains("pidfile") && stderr.contains("not writable"),
+        "expected 'pidfile' and 'not writable' in stderr, got: {stderr}"
+    );
+}
+
+/// Sub-6: missing log directory is reported and the process exits non-zero.
+#[test]
+fn start_exits_nonzero_when_log_directory_missing() {
+    let mut h = DaemonHarness::new_missing_log_dir();
+    h.spawn_foreground(false);
+    let status = h
+        .wait_for_child_exit(VALIDATION_TIMEOUT)
+        .expect("process should exit within 2 s when log dir is missing; it hung instead");
+    assert!(
+        !status.success(),
+        "expected non-zero exit when log directory is missing, got: {status:?}"
+    );
+
+    let child = h.child.take().unwrap();
+    let out = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        stderr.contains("log file") && stderr.contains("not writable"),
+        "expected 'log file' and 'not writable' in stderr, got: {stderr}"
     );
 }
