@@ -32,6 +32,8 @@ pub struct ConfigFile {
     pub daemon: DaemonConfig,
     #[serde(default)]
     pub tui: TuiConfig,
+    #[serde(default)]
+    pub zwift: ZwiftConfig,
 }
 
 fn default_schema_version() -> u32 { CURRENT_SCHEMA_VERSION }
@@ -45,6 +47,34 @@ impl Default for ConfigFile {
             logging: LoggingConfig::default(),
             daemon: DaemonConfig::default(),
             tui: TuiConfig::default(),
+            zwift: ZwiftConfig::default(),
+        }
+    }
+}
+
+/// HTTPS endpoint configuration for the Zwift auth and game-API
+/// hosts. Defaults match the production Zwift environment; an
+/// operator may override either one to point at staging, a
+/// self-hosted relay, or a local mock server. See
+/// `docs/plans/STEP-12.5-still-not-doing-the-job-as-specified.md`
+/// §F for the rationale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ZwiftConfig {
+    pub auth_base: String,
+    pub api_base: String,
+}
+
+impl Default for ZwiftConfig {
+    fn default() -> Self {
+        // The string values here mirror the `zwift_api::DEFAULT_AUTH_HOST`
+        // and `DEFAULT_API_HOST` constants. Mirroring rather than
+        // referencing keeps the config layer free of a `zwift-api`
+        // dependency; a future change to either side must be a
+        // deliberate, operator-visible decision.
+        Self {
+            auth_base: "https://secure.zwift.com".to_string(),
+            api_base:  "https://us-or-rly101.zwift.com".to_string(),
         }
     }
 }
@@ -294,6 +324,19 @@ pub struct ResolvedConfig {
     pub pidfile: PathBuf,
     pub config_path: Option<PathBuf>,
     pub editing_mode: EditingMode,
+    pub zwift_endpoints: ZwiftEndpoints,
+}
+
+/// Resolved Zwift HTTPS endpoint configuration. Built by
+/// [`ResolvedConfig::resolve`] with the standard CLI → env → file
+/// precedence. `RelayRuntime::start` reads these fields when
+/// constructing the production [`zwift_api::Config`]. See
+/// `docs/plans/STEP-12.5-still-not-doing-the-job-as-specified.md`
+/// §F.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZwiftEndpoints {
+    pub auth_base: String,
+    pub api_base: String,
 }
 
 impl ResolvedConfig {
@@ -342,6 +385,13 @@ impl ResolvedConfig {
             &env.get("RANCHERO_PIDFILE").unwrap_or_else(|| file.daemon.pidfile.clone())
         );
 
+        let zwift_endpoints = ZwiftEndpoints {
+            auth_base: env.get("RANCHERO_ZWIFT_AUTH_BASE")
+                .unwrap_or_else(|| file.zwift.auth_base.clone()),
+            api_base: env.get("RANCHERO_ZWIFT_API_BASE")
+                .unwrap_or_else(|| file.zwift.api_base.clone()),
+        };
+
         // Editing mode: config file > ~/.editrc > default
         let editing_mode = match file.tui.editing_mode {
             EditingModeConfig::Vi    => EditingMode::Vi,
@@ -371,6 +421,7 @@ impl ResolvedConfig {
             pidfile,
             config_path: cli.config.clone(),
             editing_mode,
+            zwift_endpoints,
         })
     }
 }

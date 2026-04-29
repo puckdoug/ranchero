@@ -506,13 +506,29 @@ impl RelayRuntime {
     /// and delegates to [`Self::start_with_deps`]. The auth handle is
     /// shared between the auth-login and session-login DI types via
     /// `Arc` so that the bearer token deposited by the OAuth login
-    /// is visible to the relay-session login. Tests use
-    /// `start_with_deps` directly with stub DI types.
+    /// is visible to the relay-session login.
+    ///
+    /// The HTTPS endpoints (`auth_base`, `api_base`) are read from
+    /// `cfg.zwift_endpoints` rather than `zwift_api::Config::default()`,
+    /// so an operator (or a test) can redirect the daemon to a
+    /// staging environment, a self-hosted relay, or a localhost
+    /// mock by setting the `[zwift]` section in the config file or
+    /// the `RANCHERO_ZWIFT_AUTH_BASE` / `RANCHERO_ZWIFT_API_BASE`
+    /// environment variables. See
+    /// `docs/plans/STEP-12.5-still-not-doing-the-job-as-specified.md`
+    /// §F. Tests that want to substitute the entire DI chain use
+    /// `start_with_deps` directly with stub types.
     pub async fn start(
         cfg: &ResolvedConfig,
         capture_path: Option<PathBuf>,
     ) -> Result<Self, RelayRuntimeError> {
-        let auth = Arc::new(zwift_api::ZwiftAuth::new(zwift_api::Config::default()));
+        let auth_config = zwift_api::Config {
+            auth_base:  cfg.zwift_endpoints.auth_base.clone(),
+            api_base:   cfg.zwift_endpoints.api_base.clone(),
+            source:     zwift_api::DEFAULT_SOURCE.to_string(),
+            user_agent: zwift_api::DEFAULT_USER_AGENT.to_string(),
+        };
+        let auth = Arc::new(zwift_api::ZwiftAuth::new(auth_config));
         let session_config = zwift_relay::RelaySessionConfig::default();
         Self::start_with_deps(
             cfg,
@@ -1106,7 +1122,9 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use std::time::Instant;
 
-    use crate::config::{EditingMode, LogLevel, ResolvedConfig, RedactedString};
+    use crate::config::{
+        EditingMode, LogLevel, RedactedString, ResolvedConfig, ZwiftEndpoints,
+    };
 
     fn make_config(email: Option<&str>, password: Option<&str>) -> ResolvedConfig {
         ResolvedConfig {
@@ -1122,6 +1140,13 @@ mod tests {
             pidfile: PathBuf::from("/tmp/ranchero-test.pid"),
             config_path: None,
             editing_mode: EditingMode::Default,
+            // Unit tests use `start_with_deps` with stubs that never
+            // reach the network; the endpoint values are unused but
+            // pinned to an unroutable address as a defence in depth.
+            zwift_endpoints: ZwiftEndpoints {
+                auth_base: "http://127.0.0.1:1".into(),
+                api_base:  "http://127.0.0.1:1".into(),
+            },
         }
     }
 

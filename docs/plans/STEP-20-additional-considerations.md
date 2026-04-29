@@ -101,6 +101,71 @@ beyond the `ChannelType` constant in a way that would have been
 caught by a shared helper, or (b) a third channel type is
 implemented. Until then, the duplication is the lower-cost choice.
 
+### 20.3 — HTTP-client and policy-string injection beyond URL override (from STEP-12.5 §F)
+
+**Where it came from.** STEP-12.5 §F.3 closed the testability gap
+on `RelayRuntime::start` by adding URL-only injection for the
+Zwift auth and game-API endpoints: a `[zwift]` section in the
+config file, `RANCHERO_ZWIFT_AUTH_BASE` and
+`RANCHERO_ZWIFT_API_BASE` environment variables, and a
+`zwift_endpoints` field on `ResolvedConfig`. Two larger
+redesigns were considered alongside that work and deliberately
+excluded from §F so they could be evaluated on their own merits
+rather than introduced as a side effect of the testability fix.
+STEP-12.5 §F.5 records the exclusion; this parking-lot entry is
+the place to revisit it.
+
+**Current resolution.** Both items are deferred. Neither is
+required for the operator-facing capability or the test
+infrastructure produced by §F.
+
+1. **Injecting a higher-level HTTP-client trait into
+   `ZwiftAuth`.** `zwift_api::ZwiftAuth` constructs a
+   `reqwest::Client` internally.
+   `ZwiftAuth::with_client(http, config)` already exists so
+   callers can share a `reqwest::Client` for connection pooling
+   across multiple instances (for example, the main and monitor
+   accounts in a future multi-account configuration). A
+   trait-based HTTP client would let tests substitute an
+   in-memory transport and bypass `reqwest` and wiremock
+   entirely, but URL-only injection — already exercised by
+   every test in `crates/zwift-api/tests/auth.rs` and
+   `crates/zwift-relay/tests/session.rs` — is sufficient to
+   keep ranchero's tests away from production Zwift endpoints
+   and matches the pattern the rest of the workspace uses.
+2. **Surfacing `source` and `user_agent` to operator
+   configuration.** These two `zwift_api::Config` fields
+   default to `"Game Client"` and `"CNL/4.2.0"`. They are
+   policy values that mimic Zwift's own client and have no
+   operator-relevant effect on testability or
+   staging-environment redirection. §F.3 leaves them at the
+   library defaults rather than expanding the schema for
+   fields no current deployment needs.
+
+**Why this might come back.**
+
+- A future spec or behaviour change requires Zwift identifying
+  the client differently — for example, a self-hosted relay
+  that refuses connections without a custom user agent, or a
+  per-deployment differentiation scheme. At that point
+  `source` and `user_agent` need an operator-facing knob and
+  the schema work in §F.3.1 / §F.3.2 is the natural place to
+  add them.
+- Test infrastructure outgrows wiremock. Examples that would
+  push toward a trait-based HTTP client: asserting request
+  headers in a way wiremock does not support, injecting
+  HTTP-level latency to exercise retry and backoff paths, or
+  exercising connection-pool behaviour without real sockets.
+- A consumer of `zwift-api` outside of ranchero needs to mock
+  HTTP at a level wiremock cannot reach.
+
+**Decision rule.** Revisit when (a) operator configuration of
+`source` or `user_agent` is required by a real deployment
+scenario, or (b) test infrastructure needs to substitute the
+HTTP client itself, not just its target URL. Until then, the
+URL-only injection plus `ZwiftAuth::with_client` is the
+lower-cost choice.
+
 ---
 
 ## How to use this file

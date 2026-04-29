@@ -257,6 +257,13 @@ pub struct Model {
     undo_stack: Vec<UndoEntry>,
     /// Text snapshots taken at construction time; used to revert on Esc.
     initial_texts: HashMap<FieldId, String>,
+    /// Zwift HTTPS endpoint configuration loaded from the config file.
+    /// The TUI does not expose these fields for editing yet; the
+    /// passthrough preserves any operator overrides across the
+    /// `from_config` → `to_config_file` round trip so TUI-driven
+    /// edits do not silently overwrite an operator's `[zwift]`
+    /// section.
+    zwift: crate::config::ZwiftConfig,
 }
 
 #[derive(Clone, Debug)]
@@ -318,6 +325,7 @@ impl Model {
             .map(|f| (f, fields.text(f)))
             .collect();
         let editor_handler = make_editor_handler(editing_mode);
+        let zwift = cfg.zwift.clone();
         let mut m = Self {
             current_screen: Screen::Accounts,
             focus: FieldId::MainEmail,
@@ -332,6 +340,7 @@ impl Model {
             paste_buffer: String::new(),
             undo_stack: Vec::new(),
             initial_texts,
+            zwift,
         };
         m.validate();
         m
@@ -1143,6 +1152,7 @@ impl Model {
                 pidfile: self.fields.text(FieldId::PidFile),
             },
             tui: TuiConfig { editing_mode: editing_mode_cfg },
+            zwift: self.zwift.clone(),
         }
     }
 }

@@ -12,7 +12,9 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use ranchero::config::{EditingMode, LogLevel, RedactedString, ResolvedConfig};
+use ranchero::config::{
+    EditingMode, LogLevel, RedactedString, ResolvedConfig, ZwiftEndpoints,
+};
 use ranchero::daemon::relay::{
     AuthLogin, RelayRuntime, SessionLogin, TcpTransportFactory,
 };
@@ -31,6 +33,13 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
         pidfile: PathBuf::from("/tmp/ranchero-it.pid"),
         config_path: None,
         editing_mode: EditingMode::Default,
+        // These tests use `start_with_deps` with stubs that never
+        // reach the network; the endpoint values are unused but
+        // pinned to an unroutable address as a defence in depth.
+        zwift_endpoints: ZwiftEndpoints {
+            auth_base: "http://127.0.0.1:1".into(),
+            api_base:  "http://127.0.0.1:1".into(),
+        },
     }
 }
 
