@@ -501,31 +501,27 @@ impl RelayRuntime {
     /// Build the runtime. Returns once the TCP channel has emitted
     /// its first `Established` event, or once login fails.
     ///
-    /// This is the production entry point. It validates credentials
-    /// up front and would, in a fully-wired build, construct the
-    /// default dependency-injection types and call `start_with_deps`.
-    /// The default-DI wiring is left for the live-validation phase
-    /// of sub-step 12.1; until then, the public `start` simply
-    /// performs credential validation and panics on the network
-    /// path. Tests use `start_with_deps` directly.
+    /// This is the production entry point. It constructs the default
+    /// dependency-injection types from `zwift_api` and `zwift_relay`
+    /// and delegates to [`Self::start_with_deps`]. The auth handle is
+    /// shared between the auth-login and session-login DI types via
+    /// `Arc` so that the bearer token deposited by the OAuth login
+    /// is visible to the relay-session login. Tests use
+    /// `start_with_deps` directly with stub DI types.
     pub async fn start(
         cfg: &ResolvedConfig,
         capture_path: Option<PathBuf>,
     ) -> Result<Self, RelayRuntimeError> {
-        let _email = cfg
-            .main_email
-            .as_deref()
-            .ok_or(RelayRuntimeError::MissingEmail)?;
-        let _password = cfg
-            .main_password
-            .as_ref()
-            .ok_or(RelayRuntimeError::MissingPassword)?;
-
-        let _ = capture_path;
-        unimplemented!(
-            "STEP-12.1: default-DI wiring is the responsibility of \
-             the live-validation phase; tests use `start_with_deps`",
+        let auth = Arc::new(zwift_api::ZwiftAuth::new(zwift_api::Config::default()));
+        let session_config = zwift_relay::RelaySessionConfig::default();
+        Self::start_with_deps(
+            cfg,
+            capture_path,
+            DefaultAuthLogin::new(auth.clone()),
+            DefaultSessionLogin::new(auth, session_config),
+            DefaultTcpTransportFactory,
         )
+        .await
     }
 
     /// The dependency-injected entry point used by tests. Performs
@@ -591,15 +587,34 @@ impl RelayRuntime {
                 }
                 None => None,
             };
-        Self::start_inner(
+        // If `start_inner` returns an error after the capture writer
+        // was opened, flush and close it before propagating the
+        // error so the file is left in a readable state and a
+        // matching `relay.capture.closed` record is emitted.
+        match Self::start_inner(
             cfg,
-            capture_writer,
+            capture_writer.clone(),
             auth,
             session_factory,
             tcp_factory,
             game_events_tx,
         )
         .await
+        {
+            Ok(this) => Ok(this),
+            Err(e) => {
+                if let Some(writer) = capture_writer {
+                    let dropped_count = writer.dropped_count();
+                    let _ = writer.flush_and_close().await;
+                    tracing::info!(
+                        target: "ranchero::relay",
+                        dropped_count,
+                        "relay.capture.closed",
+                    );
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Variant for tests that want to pre-open the capture writer
@@ -903,6 +918,77 @@ impl RelayRuntime {
                 format!("orchestrator task panicked: {join_err}"),
             ))),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Default dependency-injection implementations for the production
+// daemon. These delegate to the real network types in `zwift_api`
+// and `zwift_relay`. Tests use stub implementations of the same
+// traits in `tests/relay_runtime.rs`.
+// ---------------------------------------------------------------------------
+
+/// Production [`AuthLogin`] that delegates to
+/// [`zwift_api::ZwiftAuth`].
+pub struct DefaultAuthLogin {
+    auth: Arc<zwift_api::ZwiftAuth>,
+}
+
+impl DefaultAuthLogin {
+    pub fn new(auth: Arc<zwift_api::ZwiftAuth>) -> Self {
+        Self { auth }
+    }
+}
+
+impl AuthLogin for DefaultAuthLogin {
+    async fn login(&self, email: &str, password: &str) -> Result<(), zwift_api::Error> {
+        self.auth.login(email, password).await
+    }
+}
+
+/// Production [`SessionLogin`] that delegates to
+/// [`zwift_relay::login`]. The shared [`Arc<zwift_api::ZwiftAuth>`]
+/// is the same handle the auth-login DI type wrote its bearer
+/// token into, so the relay-session login can present that token.
+pub struct DefaultSessionLogin {
+    auth: Arc<zwift_api::ZwiftAuth>,
+    config: zwift_relay::RelaySessionConfig,
+}
+
+impl DefaultSessionLogin {
+    pub fn new(
+        auth: Arc<zwift_api::ZwiftAuth>,
+        config: zwift_relay::RelaySessionConfig,
+    ) -> Self {
+        Self { auth, config }
+    }
+}
+
+impl SessionLogin for DefaultSessionLogin {
+    async fn login(
+        &self,
+    ) -> Result<zwift_relay::RelaySession, zwift_relay::SessionError> {
+        zwift_relay::login(&self.auth, &self.config).await
+    }
+}
+
+/// Production [`TcpTransportFactory`] that delegates to
+/// [`zwift_relay::TokioTcpTransport::connect`] with a 10 s connect
+/// timeout.
+pub struct DefaultTcpTransportFactory;
+
+impl TcpTransportFactory for DefaultTcpTransportFactory {
+    type Transport = zwift_relay::TokioTcpTransport;
+
+    async fn connect(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> std::io::Result<Self::Transport> {
+        zwift_relay::TokioTcpTransport::connect(
+            addr,
+            std::time::Duration::from_secs(10),
+        )
+        .await
     }
 }
 

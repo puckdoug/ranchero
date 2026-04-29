@@ -31,6 +31,7 @@ pub fn start(
     cfg: &ResolvedConfig,
     foreground: bool,
     log_opts: LogOpts,
+    capture_path: Option<std::path::PathBuf>,
 ) -> Result<ExitCode, DaemonError> {
     let paths = DaemonPaths::from_config(cfg);
     preflight(&paths, &OsProcessProbe)?;
@@ -63,7 +64,7 @@ pub fn start(
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let result = rt.block_on(run_daemon(paths.clone()));
+    let result = rt.block_on(run_daemon(paths.clone(), cfg.clone(), capture_path));
 
     tracing::info!("ranchero stopped");
 
@@ -212,7 +213,11 @@ fn io_err(e: nix::errno::Errno) -> DaemonError {
 // ---------------------------------------------------------------------------
 
 #[cfg(unix)]
-async fn run_daemon(paths: DaemonPaths) -> io::Result<()> {
+async fn run_daemon(
+    paths: DaemonPaths,
+    cfg: ResolvedConfig,
+    capture_path: Option<std::path::PathBuf>,
+) -> io::Result<()> {
     use tokio::net::UnixListener;
     use tokio::signal::unix::{SignalKind, signal};
     use tokio::sync::mpsc;
@@ -226,6 +231,26 @@ async fn run_daemon(paths: DaemonPaths) -> io::Result<()> {
 
     let mut sigterm = signal(SignalKind::terminate())?;
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
+    // Construct the relay orchestrator. The auth and session-login
+    // steps run synchronously here; the recv loop is spawned on
+    // success and held across the UDS control loop. On error we
+    // log the failure and continue running the UDS loop in
+    // degraded mode so `ranchero stop` still terminates the
+    // process cleanly. This matches the structure described in
+    // `docs/plans/STEP-12.5-still-not-doing-the-job-as-specified.md`
+    // §D.
+    let runtime = match super::relay::RelayRuntime::start(&cfg, capture_path).await {
+        Ok(r) => Some(r),
+        Err(e) => {
+            tracing::error!(
+                target: "ranchero::relay",
+                error = %e,
+                "relay.start.failed",
+            );
+            None
+        }
+    };
 
     loop {
         tokio::select! {
@@ -244,11 +269,26 @@ async fn run_daemon(paths: DaemonPaths) -> io::Result<()> {
         }
     }
 
+    if let Some(runtime) = runtime {
+        runtime.shutdown();
+        if let Err(e) = runtime.join().await {
+            tracing::warn!(
+                target: "ranchero::relay",
+                error = %e,
+                "relay.join.error",
+            );
+        }
+    }
+
     Ok(())
 }
 
 #[cfg(not(unix))]
-async fn run_daemon(_paths: DaemonPaths) -> io::Result<()> {
+async fn run_daemon(
+    _paths: DaemonPaths,
+    _cfg: ResolvedConfig,
+    _capture_path: Option<std::path::PathBuf>,
+) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "daemon runtime not supported on this platform",

@@ -87,8 +87,9 @@ pub fn start(
     cfg: &ResolvedConfig,
     foreground: bool,
     log_opts: LogOpts,
+    capture_path: Option<PathBuf>,
 ) -> Result<ExitCode, DaemonError> {
-    runtime::start(cfg, foreground, log_opts)
+    runtime::start(cfg, foreground, log_opts, capture_path)
 }
 
 /// `ranchero stop` entry point.

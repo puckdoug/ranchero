@@ -201,7 +201,12 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                         verbose: cli.global.verbose,
                         debug: cli.global.debug,
                     };
-                    Ok(daemon::start(&resolved, cli.global.foreground, log_opts)?)
+                    Ok(daemon::start(
+                        &resolved,
+                        cli.global.foreground,
+                        log_opts,
+                        cli.global.capture.clone(),
+                    )?)
                 }
                 Command::Stop => Ok(daemon::stop(&resolved)?),
                 Command::Status => Ok(daemon::status(&resolved)?),
