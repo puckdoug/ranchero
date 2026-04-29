@@ -51,7 +51,9 @@ impl LogHarness {
              [daemon]\n\
              pidfile = \"{}\"\n\
              [logging]\n\
-             file = \"{}\"\n",
+             file = \"{}\"\n\
+             [relay]\n\
+             enabled = false\n",
             pidfile_path.display(),
             logfile_path.display(),
         );

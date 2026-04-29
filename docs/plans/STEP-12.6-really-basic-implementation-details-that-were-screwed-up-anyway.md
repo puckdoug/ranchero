@@ -1,35 +1,36 @@
 # Step 12.6 — Really basic implementation details that were screwed up anyway
 
-**Status:** review (2026-04-29).
+**Status:** in progress (2026-04-29). Defect 1 complete.
 
 ## Summary of findings
 
 Operator-path defects (block `start --capture` → `stop` →
 `replay` from delivering a populated capture file):
 
-- **Defect 1** — `run_daemon` swallows `RelayRuntime::start`
+- [x] **Defect 1** — `run_daemon` swallows `RelayRuntime::start`
   errors and runs the UDS loop in degraded mode instead of
   exiting non-zero. (`src/daemon/runtime.rs:243-258`)
-- **Defect 2** — `ResolvedConfig::resolve` never consults the
+  **Complete 2026-04-29.**
+- [ ] **Defect 2** — `ResolvedConfig::resolve` never consults the
   OS keychain for passwords; only the `--mainpassword` /
   `--monitorpassword` CLI flags are read.
   (`src/config/mod.rs:370-378`)
-- **Defect 3** — The TCP hello `ClientToServer` is never sent;
+- [ ] **Defect 3** — The TCP hello `ClientToServer` is never sent;
   the Zwift server has no basis to scope inbound traffic to
   the connection. (`src/daemon/relay.rs:716-756`)
-- **Defect 4** — No UDP transport or `UdpChannel` is ever
+- [ ] **Defect 4** — No UDP transport or `UdpChannel` is ever
   constructed in production; the live telemetry stream
   (spec §4.6, §4.10) does not run.
   (`src/daemon/relay.rs:664-812`)
-- **Defect 5** — The 1 Hz `HeartbeatScheduler` is never spawned
+- [ ] **Defect 5** — The 1 Hz `HeartbeatScheduler` is never spawned
   in production; without it the server-side liveness model
   expires the connection. (`src/daemon/relay.rs:165-239`,
   no production instantiation)
-- **Defect 6** — `TcpChannel<T>` is moved into the recv-loop
+- [ ] **Defect 6** — `TcpChannel<T>` is moved into the recv-loop
   spawn, leaving no handle through which any later step
   could send a hello or heartbeat.
   (`src/daemon/relay.rs:792-802`)
-- **Defect 7** — `RelaySessionSupervisor` is never started;
+- [ ] **Defect 7** — `RelaySessionSupervisor` is never started;
   only the single-shot `zwift_relay::login` runs, so the
   session is never refreshed and silently expires.
   (`src/daemon/relay.rs:983-988`)
@@ -37,15 +38,15 @@ Operator-path defects (block `start --capture` → `stop` →
 Configuration / diagnostic defects (do not block the workflow
 but produce silently wrong or misleading behaviour):
 
-- **Defect 8** — `ResolvedConfig.log_level` is read from TOML
+- [ ] **Defect 8** — `ResolvedConfig.log_level` is read from TOML
   and silently ignored by `daemon::start` /
   `logging::install`. (`src/config/mod.rs:419`,
   `src/daemon/runtime.rs:52`)
-- **Defect 9** — `print_auth_check` reports
+- [ ] **Defect 9** — `print_auth_check` reports
   `Config::default()` URLs instead of `cfg.zwift_endpoints`,
   contradicting what `start` will actually use after
   STEP-12.5 §F. (`src/cli.rs:333, 340-343, 409, 414`)
-- **Defect 10** — `src/tui/keyring.rs` is a four-line
+- [ ] **Defect 10** — `src/tui/keyring.rs` is a four-line
   re-export shim, in violation of the no-shim rule.
   (`src/tui/keyring.rs`, consumers at
   `src/tui/driver.rs:12`, `tests/tui.rs:5`)
@@ -54,19 +55,19 @@ Observations (operator-visible configuration with no current
 consumer; reasonably deferred to later STEPs but worth flagging
 in the parent plan or TUI help text):
 
-- **Observation 1** — Monitor-account credential is stored,
+- [ ] **Observation 1** — Monitor-account credential is stored,
   surfaced in `auth-check`, and ignored by the orchestrator.
   (`src/daemon/relay.rs:678-685`)
-- **Observation 2** — `server_bind` / `server_port` /
+- [ ] **Observation 2** — `server_bind` / `server_port` /
   `server_https` are loaded with full schema and env
   overrides; no consumer exists outside test fixtures.
   (`src/config/mod.rs:319-321`)
 
 Minor cosmetic findings:
 
-- **Minor 1** — `start_inner` numbered comments skip step 5
+- [ ] **Minor 1** — `start_inner` numbered comments skip step 5
   (1, 2, 3, 4, 6, 7, 8). (`src/daemon/relay.rs:677-756`)
-- **Minor 2** — `tcp_config.athlete_id` and `conn_id` are
+- [ ] **Minor 2** — `tcp_config.athlete_id` and `conn_id` are
   hardcoded to 0; placeholders that work only because nothing
   is sent today. (`src/daemon/relay.rs:717-722`)
 
@@ -1021,7 +1022,7 @@ at the end.
 
 ---
 
-### Defect 1 — tests and implementation
+### Defect 1 — tests and implementation ✓ Complete 2026-04-29
 
 #### Red-state tests
 
@@ -1112,6 +1113,33 @@ All three subprocess tests exit within 5 seconds with
 non-zero status. The pidfile and socket paths are absent
 after exit. The `relay.start.failed` error record is
 present in the process's log output.
+
+#### Implementation notes (actual outcome, 2026-04-29)
+
+The three tests were implemented as planned, with one name
+deviation: the plan combined pidfile and socket removal into
+a single test; the implementation splits them:
+`start_exits_nonzero_when_relay_start_fails`,
+`start_removes_pidfile_when_relay_start_fails`, and
+`start_removes_socket_when_relay_start_fails`.
+
+The implementation steps in the plan were followed exactly,
+with one addition not foreseen in the plan: fixing the error
+propagation caused all subprocess tests that relied on the
+old degraded-mode behaviour (daemon staying alive with no
+credentials) to fail. The fix was to add a `[relay]`
+section to `src/config/mod.rs` with an `enabled` field
+(default `true`). Test harnesses that test daemon lifecycle
+independently of relay (`DaemonHarness::new()` in
+`tests/daemon_lifecycle.rs` and `tests/logging.rs`) now set
+`[relay]\nenabled = false` in their generated configs. Tests
+in `tests/full_scope.rs` that exercised the capture lifecycle
+assuming a long-lived degraded-mode daemon were rewritten to
+observe the capture-open and capture-closed log events that
+occur before the daemon exits after relay failure; they no
+longer require a `stop` command.
+
+All 0 failures across the full test suite after the fix.
 
 ---
 
@@ -2034,18 +2062,18 @@ produce a server-side rejection.
 Apply fixes in this sequence to minimise compilation
 failures between steps:
 
-| Step | Finding | Rationale |
-|---|---|---|
-| 1 | Defect 10 | Trivial shim removal; no runtime-behaviour impact |
-| 2 | Defect 9 | One-line URL fix; no interaction with other defects |
-| 3 | Defect 8 | Extends `filter_directive` and `install` signatures before other callers are modified |
-| 4 | Defect 2 | Threads the keyring through `resolve`; modifies all `resolve` call sites |
-| 5 | Defect 1 | Propagates error instead of swallowing; requires Defect 2 so the credential path reaches the network |
-| 6 | Defect 7 | Session supervisor wiring; independent of the TCP/UDP connectivity changes |
-| 7 | Defect 6 | Wraps the TCP channel in `Arc`; structural prerequisite for Defect 3 |
-| 8 | Defect 3 | TCP hello send; requires Defect 6 |
-| 9 | Defect 4 | UDP channel construction; requires Defect 3 |
-| 10 | Defect 5 | Heartbeat spawn; requires Defect 4 |
-| 11 | Minor 1 | Renumber step comments; apply during Defect 3 edit |
-| 12 | Minor 2 | Fill `athlete_id` / `conn_id`; defer until Defect 3 is applied |
-| 13 | Obs. 1, 2 | Documentation only; no ordering constraint |
+| Step | Finding | Rationale | Status |
+|---|---|---|---|
+| 1 | Defect 10 | Trivial shim removal; no runtime-behaviour impact | — |
+| 2 | Defect 9 | One-line URL fix; no interaction with other defects | — |
+| 3 | Defect 8 | Extends `filter_directive` and `install` signatures before other callers are modified | — |
+| 4 | Defect 2 | Threads the keyring through `resolve`; modifies all `resolve` call sites | — |
+| 5 | Defect 1 | Propagates error instead of swallowing. Applied before Defect 2 in practice; required adding `relay.enabled` config flag to fix test regressions. | **Done 2026-04-29** |
+| 6 | Defect 7 | Session supervisor wiring; independent of the TCP/UDP connectivity changes | — |
+| 7 | Defect 6 | Wraps the TCP channel in `Arc`; structural prerequisite for Defect 3 | — |
+| 8 | Defect 3 | TCP hello send; requires Defect 6 | — |
+| 9 | Defect 4 | UDP channel construction; requires Defect 3 | — |
+| 10 | Defect 5 | Heartbeat spawn; requires Defect 4 | — |
+| 11 | Minor 1 | Renumber step comments; apply during Defect 3 edit | — |
+| 12 | Minor 2 | Fill `athlete_id` / `conn_id`; defer until Defect 3 is applied | — |
+| 13 | Obs. 1, 2 | Documentation only; no ordering constraint | — |

@@ -232,24 +232,21 @@ async fn run_daemon(
     let mut sigterm = signal(SignalKind::terminate())?;
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
-    // Construct the relay orchestrator. The auth and session-login
-    // steps run synchronously here; the recv loop is spawned on
-    // success and held across the UDS control loop. On error we
-    // log the failure and continue running the UDS loop in
-    // degraded mode so `ranchero stop` still terminates the
-    // process cleanly. This matches the structure described in
-    // `docs/plans/STEP-12.5-still-not-doing-the-job-as-specified.md`
-    // §D.
-    let runtime = match super::relay::RelayRuntime::start(&cfg, capture_path).await {
-        Ok(r) => Some(r),
-        Err(e) => {
-            tracing::error!(
-                target: "ranchero::relay",
-                error = %e,
-                "relay.start.failed",
-            );
-            None
-        }
+    let runtime: Option<super::relay::RelayRuntime> = if cfg.relay_enabled {
+        Some(
+            super::relay::RelayRuntime::start(&cfg, capture_path)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!(
+                        target: "ranchero::relay",
+                        error = %e,
+                        "relay.start.failed",
+                    );
+                })
+                .map_err(io::Error::other)?,
+        )
+    } else {
+        None
     };
 
     loop {

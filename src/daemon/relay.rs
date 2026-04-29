@@ -1147,6 +1147,7 @@ mod tests {
                 auth_base: "http://127.0.0.1:1".into(),
                 api_base:  "http://127.0.0.1:1".into(),
             },
+            relay_enabled: true,
         }
     }
 

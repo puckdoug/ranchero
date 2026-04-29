@@ -41,7 +41,9 @@ impl DaemonHarness {
         let toml = format!(
             "schema_version = 1\n\
              [daemon]\n\
-             pidfile = \"{}\"\n",
+             pidfile = \"{}\"\n\
+             [relay]\n\
+             enabled = false\n",
             pidfile_path.display()
         );
         std::fs::write(&config_path, toml).unwrap();

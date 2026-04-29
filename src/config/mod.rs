@@ -34,6 +34,8 @@ pub struct ConfigFile {
     pub tui: TuiConfig,
     #[serde(default)]
     pub zwift: ZwiftConfig,
+    #[serde(default)]
+    pub relay: RelayConfig,
 }
 
 fn default_schema_version() -> u32 { CURRENT_SCHEMA_VERSION }
@@ -48,6 +50,7 @@ impl Default for ConfigFile {
             daemon: DaemonConfig::default(),
             tui: TuiConfig::default(),
             zwift: ZwiftConfig::default(),
+            relay: RelayConfig::default(),
         }
     }
 }
@@ -63,6 +66,16 @@ impl Default for ConfigFile {
 pub struct ZwiftConfig {
     pub auth_base: String,
     pub api_base: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RelayConfig {
+    pub enabled: bool,
+}
+
+impl Default for RelayConfig {
+    fn default() -> Self { Self { enabled: true } }
 }
 
 impl Default for ZwiftConfig {
@@ -325,6 +338,7 @@ pub struct ResolvedConfig {
     pub config_path: Option<PathBuf>,
     pub editing_mode: EditingMode,
     pub zwift_endpoints: ZwiftEndpoints,
+    pub relay_enabled: bool,
 }
 
 /// Resolved Zwift HTTPS endpoint configuration. Built by
@@ -422,6 +436,7 @@ impl ResolvedConfig {
             config_path: cli.config.clone(),
             editing_mode,
             zwift_endpoints,
+            relay_enabled: file.relay.enabled,
         })
     }
 }
