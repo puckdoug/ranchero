@@ -44,10 +44,61 @@ fn probe_writable(dir: &Path) -> Result<(), String> {
 }
 
 pub fn validate_startup(
-    _cfg: &ResolvedConfig,
-    _capture_path: Option<&Path>,
+    cfg: &ResolvedConfig,
+    capture_path: Option<&Path>,
 ) -> Result<(), StartupValidationErrors> {
-    Ok(())
+    let mut errors = Vec::new();
+
+    // S-1: Relay credential presence
+    if cfg.relay_enabled {
+        if cfg.main_email.is_none() {
+            errors.push(StartupValidationError::MissingEmail);
+        }
+        if cfg.main_password.is_none() {
+            errors.push(StartupValidationError::MissingPassword);
+        }
+    }
+
+    // S-2: Pidfile directory writability
+    if let Some(parent) = cfg.pidfile.parent() {
+        if let Err(reason) = probe_writable(parent) {
+            errors.push(StartupValidationError::DirectoryNotWritable {
+                label: "pidfile",
+                path: parent.to_path_buf(),
+                reason,
+            });
+        }
+    }
+
+    // S-3: Log file directory writability
+    if let Some(parent) = cfg.log_file.parent() {
+        if let Err(reason) = probe_writable(parent) {
+            errors.push(StartupValidationError::DirectoryNotWritable {
+                label: "log file",
+                path: parent.to_path_buf(),
+                reason,
+            });
+        }
+    }
+
+    // S-4: Capture path directory writability
+    if let Some(capture) = capture_path {
+        if let Some(parent) = capture.parent() {
+            if let Err(reason) = probe_writable(parent) {
+                errors.push(StartupValidationError::DirectoryNotWritable {
+                    label: "capture file",
+                    path: parent.to_path_buf(),
+                    reason,
+                });
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(StartupValidationErrors(errors))
+    }
 }
 
 #[cfg(test)]

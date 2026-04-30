@@ -35,6 +35,8 @@ pub fn start(
 ) -> Result<ExitCode, DaemonError> {
     let paths = DaemonPaths::from_config(cfg);
     preflight(&paths, &OsProcessProbe)?;
+    super::validate::validate_startup(cfg, capture_path.as_deref())
+        .map_err(DaemonError::StartupValidation)?;
 
     if !foreground {
         #[cfg(unix)]
