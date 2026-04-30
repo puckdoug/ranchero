@@ -194,7 +194,8 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Command::Start | Command::Stop | Command::Status => {
             let file = config::load(cli.global.config.as_deref())?;
-            let resolved = ResolvedConfig::resolve(&cli.global, &OsEnv, Some(file))?;
+            let keyring = OsKeyringStore::with_service_name(&file.keyring.service);
+            let resolved = ResolvedConfig::resolve(&cli.global, &OsEnv, &keyring, Some(file))?;
             match cli.command {
                 Command::Start => {
                     let log_opts = crate::logging::LogOpts {
@@ -220,8 +221,8 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         Command::AuthCheck => {
             let file = config::load(cli.global.config.as_deref())?;
-            let resolved = ResolvedConfig::resolve(&cli.global, &OsEnv, Some(file))?;
-            let keyring = OsKeyringStore::new();
+            let keyring = OsKeyringStore::with_service_name(&file.keyring.service);
+            let resolved = ResolvedConfig::resolve(&cli.global, &OsEnv, &keyring, Some(file))?;
             print_auth_check(&resolved, &keyring);
             Ok(ExitCode::SUCCESS)
         }

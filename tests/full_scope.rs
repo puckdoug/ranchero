@@ -56,6 +56,12 @@ use ranchero::daemon::relay::RelayRuntime;
 /// the override is observable rather than silently hitting
 /// production Zwift. See STEP-12.5 §F.
 const UNROUTABLE_ZWIFT_BASE: &str = "http://127.0.0.1:1";
+/// Keychain service name written into every test config TOML so the
+/// spawned `ranchero` process resolves the OS-keychain entry under a
+/// scope that has no entries (and `OsKeyringStore` further mangles the
+/// account names with a `TEST_` prefix when the service is not the
+/// production constant). See `daemon_lifecycle.rs::TEST_KEYRING_SERVICE`.
+const TEST_KEYRING_SERVICE: &str = "ranchero-test-isolated";
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -132,7 +138,9 @@ impl DaemonHarness {
              level = \"info\"\n\
              file = \"{}\"\n\
              [daemon]\n\
-             pidfile = \"{}\"\n",
+             pidfile = \"{}\"\n\
+             [keyring]\n\
+             service = \"{TEST_KEYRING_SERVICE}\"\n",
             log_file.display(),
             pidfile.display(),
         );

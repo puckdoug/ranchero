@@ -13,6 +13,14 @@ const READY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const RELAY_FAIL_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Keychain service name written into every test config TOML so the
+/// spawned `ranchero` process resolves the OS-keychain entry under a
+/// scope that has no entries (and `OsKeyringStore` further mangles the
+/// account names with a `TEST_` prefix when the service is not the
+/// production constant). Without this, `ResolvedConfig::resolve` would
+/// query the operator's real ranchero credential.
+const TEST_KEYRING_SERVICE: &str = "ranchero-test-isolated";
+
 fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_ranchero")
 }
@@ -43,7 +51,9 @@ impl DaemonHarness {
              [daemon]\n\
              pidfile = \"{}\"\n\
              [relay]\n\
-             enabled = false\n",
+             enabled = false\n\
+             [keyring]\n\
+             service = \"{TEST_KEYRING_SERVICE}\"\n",
             pidfile_path.display()
         );
         std::fs::write(&config_path, toml).unwrap();
@@ -74,7 +84,9 @@ impl DaemonHarness {
              [daemon]\n\
              pidfile = \"{}\"\n\
              [zwift]\n\
-             auth_base = \"http://127.0.0.1:1\"\n",
+             auth_base = \"http://127.0.0.1:1\"\n\
+             [keyring]\n\
+             service = \"{TEST_KEYRING_SERVICE}\"\n",
             pidfile_path.display()
         );
         std::fs::write(&config_path, toml).unwrap();
@@ -102,7 +114,9 @@ impl DaemonHarness {
              [logging]\n\
              file = \"{}\"\n\
              [relay]\n\
-             enabled = false\n",
+             enabled = false\n\
+             [keyring]\n\
+             service = \"{TEST_KEYRING_SERVICE}\"\n",
             pidfile_path.display(),
             logfile_path.display(),
         );
@@ -131,7 +145,9 @@ impl DaemonHarness {
              [logging]\n\
              file = \"{}\"\n\
              [relay]\n\
-             enabled = false\n",
+             enabled = false\n\
+             [keyring]\n\
+             service = \"{TEST_KEYRING_SERVICE}\"\n",
             pidfile_path.display(),
             logfile_path.display(),
         );

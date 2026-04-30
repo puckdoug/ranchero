@@ -301,7 +301,31 @@ fn dispatch_start_passes_capture_path_to_daemon() {
     // requires an injection point so that the daemon's received
     // path is observable; until that lands, this test fails
     // because dispatch still returns the Fix-D guard error.
-    let cli = parse(&["ranchero", "--capture", "/tmp/x.cap", "start"]);
+    //
+    // The test runs `dispatch()` in-process. Because `dispatch()`
+    // constructs an `OsKeyringStore` from the config file's
+    // `[keyring].service` field and consults it during
+    // `ResolvedConfig::resolve`, the test must point that field at
+    // a non-production service so the macOS Keychain is not
+    // queried for the operator's real Zwift credentials.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("ranchero.toml");
+    std::fs::write(
+        &config_path,
+        "schema_version = 1\n\
+         [keyring]\n\
+         service = \"ranchero-test-cli-args\"\n",
+    )
+    .unwrap();
+
+    let cli = parse(&[
+        "ranchero",
+        "--config",
+        config_path.to_str().unwrap(),
+        "--capture",
+        "/tmp/x.cap",
+        "start",
+    ]);
     let result = ranchero::cli::dispatch(cli);
     let saw_fix_d_guard = matches!(
         &result,

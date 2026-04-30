@@ -1154,6 +1154,7 @@ impl Model {
             tui: TuiConfig { editing_mode: editing_mode_cfg },
             zwift: self.zwift.clone(),
             relay: crate::config::RelayConfig::default(),
+            keyring: crate::config::KeyringConfig::default(),
         }
     }
 }

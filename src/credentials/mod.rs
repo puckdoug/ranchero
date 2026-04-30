@@ -119,8 +119,11 @@ pub struct OsKeyringStore {
 }
 
 impl OsKeyringStore {
-    /// Production constructor — uses [`SERVICE_NAME`]. All non-test code
-    /// paths must use this.
+    /// Production constructor — uses [`SERVICE_NAME`]. Callers that
+    /// need an alternate service (operator-driven via the
+    /// `[keyring]` config section, or test/dev scoping) construct
+    /// the store with [`OsKeyringStore::with_service_name`] from the
+    /// resolved config value rather than going through this default.
     pub fn new() -> Self {
         Self { service: SERVICE_NAME.to_string() }
     }
@@ -133,8 +136,20 @@ impl OsKeyringStore {
     }
 
     fn entry_for(&self, role: &str) -> Result<keyring::Entry, KeyringError> {
-        let account = account_name(role)?;
-        keyring::Entry::new(&self.service, account)
+        let base = account_name(role)?;
+        // Defence in depth: when the service is anything other than
+        // production [`SERVICE_NAME`], the OsKeyringStore is being driven
+        // from a test or alternate-deployment context. Prefix the account
+        // name with `TEST_` so a configuration mishap that left the
+        // service pointing at production cannot fetch the operator's
+        // real Zwift credential. The TEST_ marker is also human-visible
+        // in any keychain inspector.
+        let account: String = if self.service == SERVICE_NAME {
+            base.to_string()
+        } else {
+            format!("TEST_{base}")
+        };
+        keyring::Entry::new(&self.service, &account)
             .map_err(|e| KeyringError::Backend(e.to_string()))
     }
 }

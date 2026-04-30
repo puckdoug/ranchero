@@ -1,6 +1,6 @@
 # Step 12.6 — Really basic implementation details that were screwed up anyway
 
-**Status:** in progress (2026-04-29). Defect 1 complete.
+**Status:** in progress (2026-04-30). Defects 1 and 2 complete.
 
 ## Summary of findings
 
@@ -11,10 +11,11 @@ Operator-path defects (block `start --capture` → `stop` →
   errors and runs the UDS loop in degraded mode instead of
   exiting non-zero. (`src/daemon/runtime.rs:243-258`)
   **Complete 2026-04-29.**
-- [ ] **Defect 2** — `ResolvedConfig::resolve` never consults the
+- [x] **Defect 2** — `ResolvedConfig::resolve` never consults the
   OS keychain for passwords; only the `--mainpassword` /
   `--monitorpassword` CLI flags are read.
   (`src/config/mod.rs:370-378`)
+  **Complete 2026-04-30.**
 - [ ] **Defect 3** — The TCP hello `ClientToServer` is never sent;
   the Zwift server has no basis to scope inbound traffic to
   the connection. (`src/daemon/relay.rs:716-756`)
@@ -1143,7 +1144,7 @@ All 0 failures across the full test suite after the fix.
 
 ---
 
-### Defect 2 — tests and implementation
+### Defect 2 — tests and implementation ✓ Complete 2026-04-30
 
 #### Red-state tests
 
@@ -1268,6 +1269,77 @@ tests compile and pass after the call-site update. After
 Defect 1 is also applied, the subprocess test for
 Defect 1 progresses past the credential check and fails
 at the network layer instead of the keychain layer.
+
+#### Implementation notes (2026-04-30)
+
+The remediation deviated from the plan above in two
+ways, both prompted by you during review:
+
+1. **Test placement.** The four red-state tests live in
+   their own integration target,
+   `tests/config_keyring.rs`, rather than inline in
+   `src/config/mod.rs::tests`. This isolates the
+   compile-fail red state to a single test target so
+   the rest of the workspace continues to build during
+   the red-state phase. The plan flagged either
+   placement as acceptable; the integration target was
+   chosen for that reason.
+
+2. **OS-keychain scoping is a config field, not an
+   environment variable.** The first remediation
+   attempt made `OsKeyringStore::new()` honour a
+   `RANCHERO_KEYRING_SERVICE` env var so test
+   subprocesses could redirect lookups away from
+   production. You rejected that design — keychain
+   isolation belongs in the config layer alongside
+   `pidfile`, `log_file`, and `relay.enabled`, not in
+   an out-of-band env var. The committed design adds:
+
+   - A new `[keyring]` section to `ConfigFile` with a
+     single `service: String` field (default
+     `crate::credentials::SERVICE_NAME`, i.e.
+     `"ranchero"`).
+   - `dispatch()` reads `file.keyring.service` and
+     constructs `OsKeyringStore::with_service_name(...)`
+     instead of `OsKeyringStore::new()`. Production
+     behaviour is unchanged because the default is the
+     production constant.
+   - Defence in depth in `OsKeyringStore::entry_for`:
+     when the service is anything other than the
+     production `SERVICE_NAME`, the account name is
+     prefixed with `TEST_` (so `zwift-login` becomes
+     `TEST_zwift-login`). A configuration mishap that
+     leaves the service pointing at production cannot
+     fetch the operator's real Zwift credential without
+     also reverting this account-name mangling — both
+     would have to fail simultaneously.
+
+   Each subprocess test harness (in
+   `tests/daemon_lifecycle.rs`,
+   `tests/full_scope.rs`, `tests/logging.rs`) writes
+   `[keyring] service = "ranchero-test-isolated"` into
+   its TOML config. The in-process dispatch test in
+   `tests/cli_args.rs::dispatch_start_passes_capture_path_to_daemon`
+   now creates its own temp config with
+   `service = "ranchero-test-cli-args"` and passes
+   `--config <path>` rather than relying on process
+   env-var state (which is unsafe to mutate from
+   parallel test threads in any case).
+
+   Step 6 of the plan ("test call sites pass
+   `&InMemoryKeyringStore::default()` as the third
+   argument") was applied to `src/config/mod.rs`'s
+   inline `tests` module via an `empty_keyring()`
+   helper. The other `ResolvedConfig { ... }` literals
+   in the workspace were already updated for the
+   `relay_enabled` field added under Defect 1.
+
+Five existing test targets continued to pass throughout
+the green state (lib, credentials, config, follow, tui,
+relay_runtime) and three subprocess targets passed after
+the new harness updates (daemon_lifecycle: 17/17,
+logging: 6/6, full_scope: 10/10). No keychain prompt
+was triggered by any test target.
 
 ---
 
@@ -2067,7 +2139,7 @@ failures between steps:
 | 1 | Defect 10 | Trivial shim removal; no runtime-behaviour impact | — |
 | 2 | Defect 9 | One-line URL fix; no interaction with other defects | — |
 | 3 | Defect 8 | Extends `filter_directive` and `install` signatures before other callers are modified | — |
-| 4 | Defect 2 | Threads the keyring through `resolve`; modifies all `resolve` call sites | — |
+| 4 | Defect 2 | Threads the keyring through `resolve`; modifies all `resolve` call sites. Applied after Defect 1; added `[keyring] service` config field and `TEST_`-prefixed account scoping in `OsKeyringStore` rather than the env-var design originally drafted. | **Done 2026-04-30** |
 | 5 | Defect 1 | Propagates error instead of swallowing. Applied before Defect 2 in practice; required adding `relay.enabled` config flag to fix test regressions. | **Done 2026-04-29** |
 | 6 | Defect 7 | Session supervisor wiring; independent of the TCP/UDP connectivity changes | — |
 | 7 | Defect 6 | Wraps the TCP channel in `Arc`; structural prerequisite for Defect 3 | — |

@@ -21,6 +21,8 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
+/// See `daemon_lifecycle.rs::TEST_KEYRING_SERVICE` for rationale.
+const TEST_KEYRING_SERVICE: &str = "ranchero-test-isolated";
 
 fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_ranchero")
@@ -53,7 +55,9 @@ impl LogHarness {
              [logging]\n\
              file = \"{}\"\n\
              [relay]\n\
-             enabled = false\n",
+             enabled = false\n\
+             [keyring]\n\
+             service = \"{TEST_KEYRING_SERVICE}\"\n",
             pidfile_path.display(),
             logfile_path.display(),
         );

@@ -36,6 +36,8 @@ pub struct ConfigFile {
     pub zwift: ZwiftConfig,
     #[serde(default)]
     pub relay: RelayConfig,
+    #[serde(default)]
+    pub keyring: KeyringConfig,
 }
 
 fn default_schema_version() -> u32 { CURRENT_SCHEMA_VERSION }
@@ -51,6 +53,7 @@ impl Default for ConfigFile {
             tui: TuiConfig::default(),
             zwift: ZwiftConfig::default(),
             relay: RelayConfig::default(),
+            keyring: KeyringConfig::default(),
         }
     }
 }
@@ -76,6 +79,25 @@ pub struct RelayConfig {
 
 impl Default for RelayConfig {
     fn default() -> Self { Self { enabled: true } }
+}
+
+/// Operator-tunable identifier for the OS keychain "service" under
+/// which ranchero stores the main and monitor account credentials.
+/// Production is [`crate::credentials::SERVICE_NAME`] (`"ranchero"`).
+/// Tests and alternate deployments override this to scope keychain
+/// lookups away from the operator's real entries; see also the
+/// `TEST_`-prefixed account mangling in
+/// [`crate::credentials::OsKeyringStore`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeyringConfig {
+    pub service: String,
+}
+
+impl Default for KeyringConfig {
+    fn default() -> Self {
+        Self { service: crate::credentials::SERVICE_NAME.to_string() }
+    }
 }
 
 impl Default for ZwiftConfig {
@@ -205,6 +227,7 @@ pub enum ConfigError {
     InvalidPort(u32),
     InvalidBind(String),
     MissingFile(PathBuf),
+    KeyringError(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -219,6 +242,7 @@ impl std::fmt::Display for ConfigError {
             ConfigError::InvalidBind(b) => write!(f, "invalid bind address: {b}"),
             ConfigError::MissingFile(p) =>
                 write!(f, "config file not found: {}", p.display()),
+            ConfigError::KeyringError(m) => write!(f, "keyring error: {m}"),
         }
     }
 }
@@ -357,6 +381,7 @@ impl ResolvedConfig {
     pub fn resolve(
         cli: &GlobalOpts,
         env: &dyn Env,
+        keyring: &dyn crate::credentials::KeyringStore,
         file: Option<ConfigFile>,
     ) -> Result<Self, ConfigError> {
         let file = file.unwrap_or_default();
@@ -381,15 +406,27 @@ impl ResolvedConfig {
             .or_else(|| env.get("RANCHERO_MAIN_USER"))
             .or(file.accounts.main.email.clone());
 
-        let main_password = cli.mainpassword.clone()
-            .map(RedactedString::new);
+        let main_password = match cli.mainpassword.clone() {
+            Some(p) => Some(RedactedString::new(p)),
+            None => match keyring.get("main") {
+                Ok(Some(entry)) => Some(RedactedString::new(entry.password)),
+                Ok(None) => None,
+                Err(e) => return Err(ConfigError::KeyringError(e.to_string())),
+            },
+        };
 
         let monitor_email = cli.monitoruser.clone()
             .or_else(|| env.get("RANCHERO_MONITOR_USER"))
             .or(file.accounts.monitor.email.clone());
 
-        let monitor_password = cli.monitorpassword.clone()
-            .map(RedactedString::new);
+        let monitor_password = match cli.monitorpassword.clone() {
+            Some(p) => Some(RedactedString::new(p)),
+            None => match keyring.get("monitor") {
+                Ok(Some(entry)) => Some(RedactedString::new(entry.password)),
+                Ok(None) => None,
+                Err(e) => return Err(ConfigError::KeyringError(e.to_string())),
+            },
+        };
 
         let log_file = resolve_tilde(
             &env.get("RANCHERO_LOG_FILE").unwrap_or_else(|| file.logging.file.clone())
@@ -449,6 +486,7 @@ impl ResolvedConfig {
 mod tests {
     use super::*;
     use crate::cli::GlobalOpts;
+    use crate::credentials::InMemoryKeyringStore;
     use std::collections::HashMap;
 
     struct MapEnv(HashMap<&'static str, &'static str>);
@@ -459,10 +497,11 @@ mod tests {
     }
     fn empty_env() -> MapEnv { MapEnv(HashMap::new()) }
     fn empty_cli() -> GlobalOpts { GlobalOpts::default() }
+    fn empty_keyring() -> InMemoryKeyringStore { InMemoryKeyringStore::default() }
 
     #[test]
     fn default_config_when_no_file_and_no_overrides() {
-        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), None).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), None).unwrap();
         assert_eq!(r.server_port, 1080);
         assert_eq!(r.server_bind, "127.0.0.1");
         assert!(!r.server_https);
@@ -475,7 +514,7 @@ mod tests {
     fn config_file_overrides_defaults() {
         let mut file = ConfigFile::default();
         file.server.port = 9999;
-        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), Some(file)).unwrap();
         assert_eq!(r.server_port, 9999);
     }
 
@@ -484,7 +523,7 @@ mod tests {
         let mut file = ConfigFile::default();
         file.server.port = 9999;
         let env = MapEnv(HashMap::from([("RANCHERO_SERVER_PORT", "1234")]));
-        let r = ResolvedConfig::resolve(&empty_cli(), &env, Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &env, &empty_keyring(), Some(file)).unwrap();
         assert_eq!(r.server_port, 1234);
     }
 
@@ -494,7 +533,7 @@ mod tests {
         file.accounts.main.email = Some("file@example.com".to_string());
         let mut cli = empty_cli();
         cli.mainuser = Some("cli@example.com".to_string());
-        let r = ResolvedConfig::resolve(&cli, &empty_env(), Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&cli, &empty_env(), &empty_keyring(), Some(file)).unwrap();
         assert_eq!(r.main_email.as_deref(), Some("cli@example.com"));
     }
 
@@ -502,7 +541,7 @@ mod tests {
     fn cli_mainpassword_handled_via_redacted_string() {
         let mut cli = empty_cli();
         cli.mainpassword = Some("s3cret".to_string());
-        let r = ResolvedConfig::resolve(&cli, &empty_env(), None).unwrap();
+        let r = ResolvedConfig::resolve(&cli, &empty_env(), &empty_keyring(), None).unwrap();
         let pw = r.main_password.unwrap();
         assert_eq!(format!("{pw}"), "[redacted]");
         assert_eq!(format!("{pw:?}"), "[redacted]");
@@ -515,7 +554,7 @@ mod tests {
         let mut file = ConfigFile::default();
         file.logging.file = "~/logs/ranchero.log".to_string();
         file.daemon.pidfile = "~/run/ranchero.pid".to_string();
-        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), Some(file)).unwrap();
         assert!(r.log_file.starts_with(&home),
             "log_file {:?} should start with home {home}", r.log_file);
         assert!(r.pidfile.starts_with(&home),
@@ -526,7 +565,7 @@ mod tests {
     fn port_zero_rejected_at_resolve() {
         let mut file = ConfigFile::default();
         file.server.port = 0;
-        let err = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap_err();
+        let err = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), Some(file)).unwrap_err();
         assert!(matches!(err, ConfigError::InvalidPort(0)));
     }
 
@@ -534,7 +573,7 @@ mod tests {
     fn bind_must_not_be_empty() {
         let mut file = ConfigFile::default();
         file.server.bind = String::new();
-        let err = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap_err();
+        let err = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), Some(file)).unwrap_err();
         assert!(matches!(err, ConfigError::InvalidBind(_)));
     }
 
@@ -543,7 +582,7 @@ mod tests {
         // Without a HOME-based ~/.editrc, mode should be Default.
         // We use the normal resolve path; in CI there may or may not be a
         // ~/.editrc, so we test the file-level override instead (no editrc).
-        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), None).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), None).unwrap();
         // Default is the zero value; we simply confirm it is not Vi or Emacs
         // when no config or editrc is present (the test env may have one, so
         // only assert if no actual ~/.editrc sets a mode — skip in that case).
@@ -557,7 +596,7 @@ mod tests {
         // Even if ~/.editrc says emacs, the config file wins.
         // We cannot inject a fake HOME here so we just verify the config
         // file value reaches the resolved struct.
-        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), Some(file)).unwrap();
         assert_eq!(r.editing_mode, EditingMode::Vi);
     }
 
@@ -565,7 +604,7 @@ mod tests {
     fn config_file_emacs_overrides_editrc() {
         let mut file = ConfigFile::default();
         file.tui.editing_mode = EditingModeConfig::Emacs;
-        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), Some(file)).unwrap();
         assert_eq!(r.editing_mode, EditingMode::Emacs);
     }
 
@@ -625,7 +664,7 @@ mod tests {
     /// production hosts.
     #[test]
     fn default_zwift_endpoints_when_no_overrides() {
-        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), None).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), None).unwrap();
         assert_eq!(r.zwift_endpoints.auth_base, "https://secure.zwift.com");
         assert_eq!(r.zwift_endpoints.api_base, "https://us-or-rly101.zwift.com");
     }
@@ -638,7 +677,7 @@ mod tests {
         let mut file = ConfigFile::default();
         file.zwift.auth_base = "https://staging.zwift.example".into();
         file.zwift.api_base  = "https://api.staging.zwift.example".into();
-        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), Some(file)).unwrap();
         assert_eq!(r.zwift_endpoints.auth_base, "https://staging.zwift.example");
         assert_eq!(r.zwift_endpoints.api_base,  "https://api.staging.zwift.example");
     }
@@ -654,7 +693,7 @@ mod tests {
         let env = MapEnv(HashMap::from([
             ("RANCHERO_ZWIFT_AUTH_BASE", "http://127.0.0.1:1"),
         ]));
-        let r = ResolvedConfig::resolve(&empty_cli(), &env, Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &env, &empty_keyring(), Some(file)).unwrap();
         assert_eq!(r.zwift_endpoints.auth_base, "http://127.0.0.1:1");
     }
 
@@ -668,7 +707,7 @@ mod tests {
         let env = MapEnv(HashMap::from([
             ("RANCHERO_ZWIFT_API_BASE", "http://127.0.0.1:1"),
         ]));
-        let r = ResolvedConfig::resolve(&empty_cli(), &env, Some(file)).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &env, &empty_keyring(), Some(file)).unwrap();
         assert_eq!(r.zwift_endpoints.api_base, "http://127.0.0.1:1");
     }
 
@@ -680,7 +719,7 @@ mod tests {
         let env = MapEnv(HashMap::from([
             ("RANCHERO_ZWIFT_AUTH_BASE", "http://127.0.0.1:1"),
         ]));
-        let r = ResolvedConfig::resolve(&empty_cli(), &env, None).unwrap();
+        let r = ResolvedConfig::resolve(&empty_cli(), &env, &empty_keyring(), None).unwrap();
         assert_eq!(r.zwift_endpoints.auth_base, "http://127.0.0.1:1");
         // api_base falls back to the production default because no
         // env or file override is set.
