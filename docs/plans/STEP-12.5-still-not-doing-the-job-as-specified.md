@@ -2,6 +2,19 @@
 
 **Status:** review (2026-04-29).
 
+## Completion Checklist
+
+- [ ] A. Default dependency-injection implementations
+- [ ] B. Implement `RelayRuntime::start`
+- [ ] C. Extend `daemon::start` and `runtime::start` signatures
+- [ ] D. `runtime::run_daemon` constructs and owns the orchestrator
+- [ ] E. Forward `cli.global.capture` from dispatch into `daemon::start`
+- [ ] F.3.1 Add a `[zwift]` section to the configuration schema
+- [ ] F.3.2 Resolve endpoints through CLI → env → file pattern
+- [ ] F.3.3 Build `zwift_api::Config` from `ResolvedConfig`
+- [ ] F.3.5 Adjust red-state tests
+- [ ] F.3.6 Update `daemon_lifecycle.rs` baseline
+
 This document records the gap between what was reported as complete
 under STEP-12 and what the system actually does at runtime. The
 gap surfaced on 2026-04-29 with the question of whether the
@@ -326,7 +339,7 @@ test count.
   file was folded into STEP-12 earlier in the project history;
   if a stale copy is still present on disk it can be removed.
 - `docs/plans/STEP-12.2-follow-command.md` — the `ranchero
-  follow` command, which is fully implemented and is the only
+follow` command, which is fully implemented and is the only
   half of the workflow at the top of this document that
   actually works today.
 - `docs/ARCHITECTURE-AND-RUST-SPEC.md` — §4.4 (`ClientToServer`
