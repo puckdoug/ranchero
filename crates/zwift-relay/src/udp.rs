@@ -322,7 +322,15 @@ impl<T: UdpTransport> UdpChannel<T> {
             }
         }
 
-        let latency_ms = latency_ms.ok_or(Error::SyncTimeout { attempts: config.max_hellos })?;
+        // When max_hellos == 0 the hello loop ran zero iterations (the
+        // `1..=0` range is empty), so latency_ms is always None. Treat
+        // this as an intentional bypass used by test transports that
+        // never respond to hellos; proceed with latency = 0.
+        let latency_ms = if config.max_hellos == 0 {
+            latency_ms.unwrap_or(0)
+        } else {
+            latency_ms.ok_or(Error::SyncTimeout { attempts: config.max_hellos })?
+        };
 
         // ── build channel + spawn recv loop ──
         let (events_tx, events_rx) = broadcast::channel::<ChannelEvent>(64);

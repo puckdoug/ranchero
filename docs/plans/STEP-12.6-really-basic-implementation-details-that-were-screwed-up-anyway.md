@@ -1,6 +1,6 @@
 # Step 12.6 — Really basic implementation details that were screwed up anyway
 
-**Status:** in progress (2026-05-01). Defects 1 and 2 complete. Defects 3–7 red-state tests complete.
+**Status:** in progress (2026-05-01). Defects 1, 2, 3, 4, 5, 6, 7 complete.
 
 ## Summary of findings
 
@@ -16,37 +16,30 @@ Operator-path defects (block `start --capture` → `stop` →
   `--monitorpassword` CLI flags are read.
   (`src/config/mod.rs:370-378`)
   **Complete 2026-04-30.**
-- [ ] **Defect 3** — The TCP hello `ClientToServer` is never sent;
+- [x] **Defect 3** — The TCP hello `ClientToServer` is never sent;
   the Zwift server has no basis to scope inbound traffic to
   the connection. (`src/daemon/relay.rs:716-756`)
-  *Red-state test: `relay_runtime_sends_tcp_hello_after_established`
-  (tests/relay_runtime.rs). 2026-05-01.*
-- [ ] **Defect 4** — No UDP transport or `UdpChannel` is ever
+  **Complete 2026-05-01.**
+- [x] **Defect 4** — No UDP transport or `UdpChannel` is ever
   constructed in production; the live telemetry stream
   (spec §4.6, §4.10) does not run.
   (`src/daemon/relay.rs:664-812`)
-  *Red-state tests: `relay_runtime_connects_udp_transport_after_tcp_hello`,
-  `relay_runtime_logs_udp_established_at_info`
-  (tests/relay_runtime.rs). 2026-05-01.*
-- [ ] **Defect 5** — The 1 Hz `HeartbeatScheduler` is never spawned
+  **Complete 2026-05-01.**
+- [x] **Defect 5** — The 1 Hz `HeartbeatScheduler` is never spawned
   in production; without it the server-side liveness model
   expires the connection. (`src/daemon/relay.rs:165-239`,
   no production instantiation)
-  *Red-state test: `relay_runtime_sends_udp_heartbeat_at_one_hz_after_udp_established`
-  (tests/relay_runtime.rs). 2026-05-01.*
-- [ ] **Defect 6** — `TcpChannel<T>` is moved into the recv-loop
+  **Complete 2026-05-01.**
+- [x] **Defect 6** — `TcpChannel<T>` is moved into the recv-loop
   spawn, leaving no handle through which any later step
   could send a hello or heartbeat.
   (`src/daemon/relay.rs:792-802`)
-  *Red-state test: `relay_runtime_exposes_outbound_tcp_send_path_after_start`
-  (tests/relay_runtime.rs). 2026-05-01.*
-- [ ] **Defect 7** — `RelaySessionSupervisor` is never started;
+  **Complete 2026-05-01.**
+- [x] **Defect 7** — `RelaySessionSupervisor` is never started;
   only the single-shot `zwift_relay::login` runs, so the
   session is never refreshed and silently expires.
   (`src/daemon/relay.rs:983-988`)
-  *Red-state tests: `relay_runtime_logs_session_logged_in_at_info`,
-  `relay_runtime_logs_session_refreshed_at_info`
-  (tests/relay_runtime.rs). 2026-05-01.*
+  **Complete 2026-05-01.**
 
 Configuration / diagnostic defects (do not block the workflow
 but produce silently wrong or misleading behaviour):
@@ -2153,11 +2146,11 @@ failures between steps:
 | 3 | Defect 8 | Extends `filter_directive` and `install` signatures before other callers are modified | — |
 | 4 | Defect 2 | Threads the keyring through `resolve`; modifies all `resolve` call sites. Applied after Defect 1; added `[keyring] service` config field and `TEST_`-prefixed account scoping in `OsKeyringStore` rather than the env-var design originally drafted. | **Done 2026-04-30** |
 | 5 | Defect 1 | Propagates error instead of swallowing. Applied before Defect 2 in practice; required adding `relay.enabled` config flag to fix test regressions. | **Done 2026-04-29** |
-| 6 | Defect 7 | Session supervisor wiring; independent of the TCP/UDP connectivity changes | — |
-| 7 | Defect 6 | Wraps the TCP channel in `Arc`; structural prerequisite for Defect 3 | — |
-| 8 | Defect 3 | TCP hello send; requires Defect 6 | — |
-| 9 | Defect 4 | UDP channel construction; requires Defect 3 | — |
-| 10 | Defect 5 | Heartbeat spawn; requires Defect 4 | — |
+| 6 | Defect 7 | Session supervisor wiring; independent of the TCP/UDP connectivity changes | **Done 2026-05-01** |
+| 7 | Defect 6 | Wraps the TCP channel in `Arc`; structural prerequisite for Defect 3 | **Done 2026-05-01** |
+| 8 | Defect 3 | TCP hello send; requires Defect 6 | **Done 2026-05-01** |
+| 9 | Defect 4 | UDP channel construction; requires Defect 3 | **Done 2026-05-01** |
+| 10 | Defect 5 | Heartbeat spawn; requires Defect 4 | **Done 2026-05-01** |
 | 11 | Minor 1 | Renumber step comments; apply during Defect 3 edit | — |
 | 12 | Minor 2 | Fill `athlete_id` / `conn_id`; defer until Defect 3 is applied | — |
 | 13 | Obs. 1, 2 | Documentation only; no ordering constraint | — |

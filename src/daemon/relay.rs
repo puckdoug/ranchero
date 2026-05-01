@@ -48,6 +48,12 @@ pub enum RelayRuntimeError {
     #[error("TCP connect: {0}")]
     TcpConnect(std::io::Error),
 
+    #[error("UDP connect: {0}")]
+    UdpConnect(std::io::Error),
+
+    #[error("UDP channel: {0}")]
+    UdpChannel(zwift_relay::UdpError),
+
     #[error("TCP channel did not emit Established within {0:?}")]
     EstablishedTimeout(std::time::Duration),
 }
@@ -110,6 +116,64 @@ pub trait UdpTransportFactory: Send + Sync + 'static {
         &self,
         addr: std::net::SocketAddr,
     ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send;
+
+    /// Returns the `UdpChannelConfig` to use when establishing the
+    /// channel. The default matches the production constants. Test
+    /// factories override this to set `max_hellos: 0` so the SNTP
+    /// hello loop is bypassed when the transport never responds.
+    fn channel_config(&self) -> zwift_relay::UdpChannelConfig {
+        zwift_relay::UdpChannelConfig::default()
+    }
+}
+
+/// Object-safe wrapper for `TcpChannel::send_packet`. Lets
+/// `RelayRuntime` hold a type-erased `Arc<dyn TcpSend>` so the channel
+/// can be shared between `recv_loop` and `send_tcp` without making
+/// `RelayRuntime` generic.
+trait TcpSend: Send + Sync + 'static {
+    fn send_packet<'a>(
+        &'a self,
+        payload: zwift_proto::ClientToServer,
+        hello: bool,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), RelayRuntimeError>> + Send + 'a>,
+    >;
+}
+
+impl<T: zwift_relay::TcpTransport> TcpSend for zwift_relay::TcpChannel<T> {
+    fn send_packet<'a>(
+        &'a self,
+        payload: zwift_proto::ClientToServer,
+        hello: bool,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), RelayRuntimeError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            zwift_relay::TcpChannel::send_packet(self, payload, hello)
+                .await
+                .map_err(RelayRuntimeError::TcpChannel)
+        })
+    }
+}
+
+/// `HeartbeatSink` implementation backed by a `UdpChannel`. Extracts
+/// the `PlayerState` from the scheduler-built `ClientToServer` and
+/// forwards it to `UdpChannel::send_player_state`, which re-wraps it
+/// with the channel's own seqno and IV state.
+struct UdpHeartbeatSink<T: zwift_relay::UdpTransport>(Arc<zwift_relay::UdpChannel<T>>);
+
+impl<T: zwift_relay::UdpTransport> HeartbeatSink for UdpHeartbeatSink<T> {
+    fn send(
+        &self,
+        payload: zwift_proto::ClientToServer,
+    ) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
+        let ch = Arc::clone(&self.0);
+        async move {
+            ch.send_player_state(payload.state)
+                .await
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        }
+    }
 }
 
 /// Read-only view over a supervisor-managed relay session. The
@@ -191,6 +255,16 @@ pub struct RelayRuntime {
     /// task and exposed to tests via the injection methods below.
     #[allow(dead_code)]
     inner: Arc<RuntimeInner>,
+    /// Type-erased handle to the live TCP channel. `None` when the
+    /// runtime was started via the older `start_with_deps` path that
+    /// does not yet use `SessionSupervisorFactory`.
+    tcp_sender: Option<Arc<dyn TcpSend>>,
+    /// Abort handle for the UDP heartbeat task spawned by
+    /// `start_all_inner`. `None` on the older start paths.
+    heartbeat_abort: Option<tokio::task::AbortHandle>,
+    /// Abort handle for the session-event subscriber task spawned by
+    /// `start_all_inner`. `None` on the older start paths.
+    supervisor_event_abort: Option<tokio::task::AbortHandle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -788,7 +862,6 @@ impl RelayRuntime {
         auth: A,
         sf: SF,
         tcp_factory: F,
-        #[allow(unused_variables)]
         udp_factory: U,
         game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
     ) -> Result<Self, RelayRuntimeError>
@@ -814,10 +887,10 @@ impl RelayRuntime {
             .map_err(RelayRuntimeError::Auth)?;
         tracing::info!(target: "ranchero::relay", email, "relay.login.ok");
 
-        // 3. Session supervisor start. In the red state we obtain the
-        //    initial session from the handle but do NOT subscribe to
-        //    the supervisor's event broadcast (Defect 7).
+        // 3. Session supervisor start. Subscribe to events before the
+        //    session is fetched so no events are missed.
         let handle = sf.start().await?;
+        let supervisor_events = handle.subscribe_events();
         let session = handle.current().await;
 
         // 4. Reject empty TCP-server pool before any further I/O.
@@ -860,7 +933,7 @@ impl RelayRuntime {
             capture: capture_writer.clone(),
         };
         let (channel, mut events_rx) =
-            zwift_relay::TcpChannel::establish(transport, &session, tcp_config)
+            zwift_relay::TcpChannel::establish(transport, &session, tcp_config.clone())
                 .await
                 .map_err(RelayRuntimeError::TcpChannel)?;
 
@@ -885,11 +958,122 @@ impl RelayRuntime {
             }
         }
 
-        // Defect 3 (red state): the TCP hello packet is not sent here yet.
-        // Defect 4 (red state): udp_factory.connect() is not called here yet.
+        // 7. Arc-wrap the channel so `send_tcp` and `recv_loop` share
+        //    ownership. (Defect 6)
+        let channel = Arc::new(channel);
+        let tcp_sender: Arc<dyn TcpSend> = Arc::clone(&channel) as Arc<dyn TcpSend>;
 
-        // 7. Set up the event broadcast and spawn the recv-loop.
-        let (events_tx, recv_rx) = tokio::sync::broadcast::channel::<zwift_relay::TcpChannelEvent>(64);
+        // 8. Send the TCP hello packet. (Defect 3)
+        tcp_sender
+            .send_packet(
+                zwift_proto::ClientToServer {
+                    server_realm: 1,
+                    player_id: 0,
+                    world_time: Some(0),
+                    seqno: Some(1),
+                    state: zwift_proto::PlayerState::default(),
+                    ..Default::default()
+                },
+                true,
+            )
+            .await?;
+
+        // 9. Connect and establish the UDP channel. (Defect 4)
+        let udp_server = &session.tcp_servers[0];
+        let udp_addr_str =
+            format!("{}:{}", udp_server.ip, zwift_relay::UDP_PORT_SECURE);
+        let udp_addr: std::net::SocketAddr = udp_addr_str
+            .parse()
+            .map_err(|_| RelayRuntimeError::BadTcpAddress(udp_addr_str))?;
+        let udp_transport = udp_factory
+            .connect(udp_addr)
+            .await
+            .map_err(RelayRuntimeError::UdpConnect)?;
+        let udp_config = zwift_relay::UdpChannelConfig {
+            athlete_id: 0,
+            conn_id: tcp_config.conn_id,
+            ..udp_factory.channel_config()
+        };
+        let world_timer = zwift_relay::WorldTimer::new();
+        let (udp_channel, _udp_events_from_channel) =
+            zwift_relay::UdpChannel::establish(udp_transport, &session, world_timer, udp_config)
+                .await
+                .map_err(RelayRuntimeError::UdpChannel)?;
+
+        // Log UDP established synchronously so the record is always
+        // present regardless of when shutdown races the event forwarder.
+        let udp_latency_ms = udp_channel.latency_ms().unwrap_or(0);
+        tracing::info!(
+            target: "ranchero::relay",
+            latency_ms = udp_latency_ms,
+            "relay.udp.established",
+        );
+        let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::UdpEstablished));
+
+        // 10. Spawn the 1 Hz heartbeat scheduler. (Defect 5)
+        let udp_channel = Arc::new(udp_channel);
+        let heartbeat_abort = {
+            let udp_for_heartbeat = Arc::clone(&udp_channel);
+            let heartbeat_world_timer = zwift_relay::WorldTimer::new();
+            let handle = tokio::spawn(async move {
+                let sink = UdpHeartbeatSink(udp_for_heartbeat);
+                let scheduler =
+                    HeartbeatScheduler::new(sink, heartbeat_world_timer, 0i64);
+                scheduler.run().await;
+            });
+            let abort = handle.abort_handle();
+            drop(handle);
+            abort
+        };
+        tracing::info!(target: "ranchero::relay", "relay.heartbeat.started");
+
+        // 11. Subscribe to session-supervisor events. (Defect 7)
+        let supervisor_event_abort = {
+            let mut rx = supervisor_events;
+            let handle = tokio::spawn(async move {
+                loop {
+                    match rx.recv().await {
+                        Ok(zwift_relay::SessionEvent::LoggedIn(_)) => {
+                            tracing::info!(
+                                target: "ranchero::relay",
+                                "relay.session.logged_in",
+                            );
+                        }
+                        Ok(zwift_relay::SessionEvent::Refreshed { relay_id, .. }) => {
+                            tracing::info!(
+                                target: "ranchero::relay",
+                                relay_id,
+                                "relay.session.refreshed",
+                            );
+                        }
+                        Ok(zwift_relay::SessionEvent::RefreshFailed(error)) => {
+                            tracing::warn!(
+                                target: "ranchero::relay",
+                                %error,
+                                "relay.session.refresh_failed",
+                            );
+                        }
+                        Ok(zwift_relay::SessionEvent::LoginFailed { attempt, error }) => {
+                            tracing::warn!(
+                                target: "ranchero::relay",
+                                attempt,
+                                %error,
+                                "relay.session.login_failed",
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+            let abort = handle.abort_handle();
+            drop(handle);
+            abort
+        };
+
+        // 12. Set up the event broadcast and spawn the recv-loop.
+        let (events_tx, recv_rx) =
+            tokio::sync::broadcast::channel::<zwift_relay::TcpChannelEvent>(64);
         let forwarder_tx = events_tx.clone();
         tokio::spawn(async move {
             let mut rx = events_rx;
@@ -931,6 +1115,9 @@ impl RelayRuntime {
             game_events_tx,
             udp_events_tx,
             inner,
+            tcp_sender: Some(tcp_sender),
+            heartbeat_abort: Some(heartbeat_abort),
+            supervisor_event_abort: Some(supervisor_event_abort),
         })
     }
 
@@ -1059,6 +1246,7 @@ impl RelayRuntime {
             current_udp_server: std::sync::Mutex::new(None),
         });
 
+        let channel = Arc::new(channel);
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
         let recv_game_events = game_events_tx.clone();
@@ -1081,6 +1269,9 @@ impl RelayRuntime {
             game_events_tx,
             udp_events_tx,
             inner,
+            tcp_sender: None,
+            heartbeat_abort: None,
+            supervisor_event_abort: None,
         })
     }
 
@@ -1193,19 +1384,18 @@ impl RelayRuntime {
     }
 
     /// Send a `ClientToServer` packet over the live TCP channel.
-    ///
-    /// Defect 6 (red state): this method is declared so that integration
-    /// tests can call it and assert that bytes reach the underlying
-    /// transport. The implementation is a no-op stub that always returns
-    /// `Ok(())`; it will be wired to `Arc<TcpChannel<T>>` once the
-    /// `Arc`-wrapping step from Defect 6 lands.
-    #[allow(unused_variables)]
+    /// Returns `Ok(())` silently when no channel is wired (older
+    /// `start_with_deps` path).
     pub async fn send_tcp(
         &self,
         payload: zwift_proto::ClientToServer,
         hello: bool,
     ) -> Result<(), RelayRuntimeError> {
-        Ok(())
+        if let Some(sender) = &self.tcp_sender {
+            sender.send_packet(payload, hello).await
+        } else {
+            Ok(())
+        }
     }
 
     /// Request a graceful shutdown. Idempotent. The signal is
@@ -1213,6 +1403,12 @@ impl RelayRuntime {
     /// observe the signal at its next `notified().await` point.
     pub fn shutdown(&self) {
         self.shutdown.notify_one();
+        if let Some(h) = &self.heartbeat_abort {
+            h.abort();
+        }
+        if let Some(h) = &self.supervisor_event_abort {
+            h.abort();
+        }
     }
 
     /// Await orchestrator completion.
@@ -1381,7 +1577,7 @@ impl UdpTransportFactory for DefaultUdpTransportFactory {
 }
 
 async fn recv_loop<T>(
-    channel: zwift_relay::TcpChannel<T>,
+    channel: Arc<zwift_relay::TcpChannel<T>>,
     mut events_rx: tokio::sync::broadcast::Receiver<zwift_relay::TcpChannelEvent>,
     mut udp_events_rx: tokio::sync::broadcast::Receiver<zwift_relay::ChannelEvent>,
     shutdown: Arc<Notify>,

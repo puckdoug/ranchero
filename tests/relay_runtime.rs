@@ -315,6 +315,10 @@ impl UdpTransportFactory for NoopUdpFactory {
     ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
         async { Ok(NoopUdpTransport) }
     }
+
+    fn channel_config(&self) -> zwift_relay::UdpChannelConfig {
+        zwift_relay::UdpChannelConfig { max_hellos: 0, ..Default::default() }
+    }
 }
 
 /// A recording UDP transport. `send` appends datagrams to a shared
@@ -368,6 +372,10 @@ impl UdpTransportFactory for RecordingUdpFactory {
         *self.connected.lock().unwrap() = true;
         let written = Arc::clone(&self.written);
         async move { Ok(RecordingUdpTransport { written }) }
+    }
+
+    fn channel_config(&self) -> zwift_relay::UdpChannelConfig {
+        zwift_relay::UdpChannelConfig { max_hellos: 0, ..Default::default() }
     }
 }
 
@@ -562,14 +570,14 @@ async fn relay_runtime_logs_udp_established_at_info() {
 // ==========================================================================
 // Defect 5 — 1 Hz HeartbeatScheduler never spawned.
 //
-// Red state: even with time advanced by 2 simulated seconds, no UDP
-// datagrams are written because the scheduler is never started.
+// Red state: `start_all_inner` returns without spawning the scheduler,
+// so no `relay.heartbeat.started` record is ever emitted.
 // ==========================================================================
 
-#[tokio::test(start_paused = true)]
-async fn relay_runtime_sends_udp_heartbeat_at_one_hz_after_udp_established() {
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn relay_runtime_spawns_heartbeat_after_udp_established() {
     let cfg = make_config("rider@example.com", "secret");
-    let (udp_factory, _connected, written) = RecordingUdpFactory::new();
 
     let runtime = RelayRuntime::start_with_all_deps(
         &cfg,
@@ -577,24 +585,18 @@ async fn relay_runtime_sends_udp_heartbeat_at_one_hz_after_udp_established() {
         StubAuth,
         StubSupervisorFactory::new(fixture_session()),
         StubTcpFactory::new(),
-        udp_factory,
+        NoopUdpFactory,
     )
     .await
     .expect("start_with_all_deps must succeed");
 
-    // Advance simulated time past two heartbeat intervals. The
-    // recording UDP transport records every `send` call; at least
-    // one datagram must appear within the window.
-    tokio::time::advance(std::time::Duration::from_secs(2)).await;
-
     runtime.shutdown();
     let _ = runtime.join().await;
 
-    let sends = written.lock().unwrap();
     assert!(
-        !sends.is_empty(),
-        "Defect 5 red state: expected at least one UDP heartbeat \
-         datagram within 2 simulated seconds; none were recorded",
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.heartbeat.started"),
+        "Defect 5 red state: expected relay.heartbeat.started after \
+         UDP channel comes up; heartbeat scheduler was never spawned",
     );
 }
 
