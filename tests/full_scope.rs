@@ -43,7 +43,7 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use ranchero::config::{
-    EditingMode, LogLevel, RedactedString, ResolvedConfig, ZwiftEndpoints,
+    EditingMode, RedactedString, ResolvedConfig, ZwiftEndpoints,
 };
 use ranchero::daemon::relay::RelayRuntime;
 
@@ -90,7 +90,7 @@ fn lib_config(
         server_bind: "127.0.0.1".into(),
         server_port: 1080,
         server_https: false,
-        log_level: LogLevel::Info,
+        log_level: None,
         log_file,
         pidfile,
         config_path: None,

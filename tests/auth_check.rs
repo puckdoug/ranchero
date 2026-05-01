@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use ranchero::cli::print_auth_check_to;
-use ranchero::config::{EditingMode, LogLevel, RedactedString, ResolvedConfig, ZwiftEndpoints};
+use ranchero::config::{EditingMode, RedactedString, ResolvedConfig, ZwiftEndpoints};
 use ranchero::credentials::InMemoryKeyringStore;
 
 fn make_config() -> ResolvedConfig {
@@ -20,7 +20,7 @@ fn make_config() -> ResolvedConfig {
         server_bind: "127.0.0.1".into(),
         server_port: 1080,
         server_https: false,
-        log_level: LogLevel::Info,
+        log_level: None,
         log_file: PathBuf::from("/tmp/ranchero-auth-check.log"),
         pidfile: PathBuf::from("/tmp/ranchero-auth-check.pid"),
         config_path: None,

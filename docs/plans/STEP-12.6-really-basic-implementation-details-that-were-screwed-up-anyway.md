@@ -1,6 +1,6 @@
 # Step 12.6 — Really basic implementation details that were screwed up anyway
 
-**Status:** in progress (2026-05-01). Defects 1, 2, 3, 4, 5, 6, 7 complete.
+**Status:** complete (2026-05-01). Defects 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 complete.
 
 ## Summary of findings
 
@@ -44,18 +44,21 @@ Operator-path defects (block `start --capture` → `stop` →
 Configuration / diagnostic defects (do not block the workflow
 but produce silently wrong or misleading behaviour):
 
-- [ ] **Defect 8** — `ResolvedConfig.log_level` is read from TOML
+- [x] **Defect 8** — `ResolvedConfig.log_level` is read from TOML
   and silently ignored by `daemon::start` /
   `logging::install`. (`src/config/mod.rs:419`,
   `src/daemon/runtime.rs:52`)
-- [ ] **Defect 9** — `print_auth_check` reports
+  **Complete 2026-05-01.**
+- [x] **Defect 9** — `print_auth_check` reports
   `Config::default()` URLs instead of `cfg.zwift_endpoints`,
   contradicting what `start` will actually use after
   STEP-12.5 §F. (`src/cli.rs:333, 340-343, 409, 414`)
-- [ ] **Defect 10** — `src/tui/keyring.rs` is a four-line
+  **Complete 2026-05-01.**
+- [x] **Defect 10** — `src/tui/keyring.rs` is a four-line
   re-export shim, in violation of the no-shim rule.
   (`src/tui/keyring.rs`, consumers at
   `src/tui/driver.rs:12`, `tests/tui.rs:5`)
+  **Complete 2026-05-01.**
 
 Observations (operator-visible configuration with no current
 consumer; reasonably deferred to later STEPs but worth flagging
@@ -2141,9 +2144,9 @@ failures between steps:
 
 | Step | Finding | Rationale | Status |
 |---|---|---|---|
-| 1 | Defect 10 | Trivial shim removal; no runtime-behaviour impact | — |
-| 2 | Defect 9 | One-line URL fix; no interaction with other defects | — |
-| 3 | Defect 8 | Extends `filter_directive` and `install` signatures before other callers are modified | — |
+| 1 | Defect 10 | Trivial shim removal; no runtime-behaviour impact | **Done 2026-05-01** |
+| 2 | Defect 9 | One-line URL fix; no interaction with other defects | **Done 2026-05-01** |
+| 3 | Defect 8 | Extends `filter_directive` and `install` signatures before other callers are modified | **Done 2026-05-01** |
 | 4 | Defect 2 | Threads the keyring through `resolve`; modifies all `resolve` call sites. Applied after Defect 1; added `[keyring] service` config field and `TEST_`-prefixed account scoping in `OsKeyringStore` rather than the env-var design originally drafted. | **Done 2026-04-30** |
 | 5 | Defect 1 | Propagates error instead of swallowing. Applied before Defect 2 in practice; required adding `relay.enabled` config flag to fix test regressions. | **Done 2026-04-29** |
 | 6 | Defect 7 | Session supervisor wiring; independent of the TCP/UDP connectivity changes | **Done 2026-05-01** |

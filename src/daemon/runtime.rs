@@ -51,7 +51,7 @@ pub fn start(
 
     // Install the tracing subscriber *after* any fork: the non-blocking
     // appender's worker thread does not survive across `fork(2)`.
-    let _log_guard = logging::install(log_opts, foreground, &cfg.log_file)?;
+    let _log_guard = logging::install(log_opts, foreground, &cfg.log_file, cfg.log_level.clone())?;
 
     let pid = std::process::id();
     let pidfile = Pidfile::new(paths.pidfile.clone());

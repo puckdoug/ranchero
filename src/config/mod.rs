@@ -164,14 +164,14 @@ impl Default for ServerConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LoggingConfig {
-    pub level: LogLevel,
+    pub level: Option<LogLevel>,
     pub file: String,
 }
 
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
-            level: LogLevel::Info,
+            level: None,
             file: "~/.local/state/ranchero/ranchero.log".to_string(),
         }
     }
@@ -356,7 +356,7 @@ pub struct ResolvedConfig {
     pub server_bind: String,
     pub server_port: u16,
     pub server_https: bool,
-    pub log_level: LogLevel,
+    pub log_level: Option<LogLevel>,
     pub log_file: PathBuf,
     pub pidfile: PathBuf,
     pub config_path: Option<PathBuf>,
@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(r.server_port, 1080);
         assert_eq!(r.server_bind, "127.0.0.1");
         assert!(!r.server_https);
-        assert_eq!(r.log_level, LogLevel::Info);
+        assert!(r.log_level.is_none());
         assert!(r.main_email.is_none());
         assert!(r.monitor_email.is_none());
     }

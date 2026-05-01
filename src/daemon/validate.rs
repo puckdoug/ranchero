@@ -104,7 +104,7 @@ pub fn validate_startup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EditingMode, LogLevel, RedactedString, ZwiftEndpoints};
+    use crate::config::{EditingMode, RedactedString, ZwiftEndpoints};
 
     fn make_config(
         relay_enabled: bool,
@@ -121,7 +121,7 @@ mod tests {
             server_bind: "127.0.0.1".to_string(),
             server_port: 1080,
             server_https: false,
-            log_level: LogLevel::Info,
+            log_level: None,
             log_file,
             pidfile,
             config_path: None,

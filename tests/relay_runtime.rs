@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use ranchero::config::{
-    EditingMode, LogLevel, RedactedString, ResolvedConfig, ZwiftEndpoints,
+    EditingMode, RedactedString, ResolvedConfig, ZwiftEndpoints,
 };
 use ranchero::daemon::relay::{
     AuthLogin, RelayRuntime, SessionLogin, SessionSupervisorFactory, SessionSupervisorHandle,
@@ -29,7 +29,7 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
         server_bind: "127.0.0.1".into(),
         server_port: 1080,
         server_https: false,
-        log_level: LogLevel::Info,
+        log_level: None,
         log_file: PathBuf::from("/tmp/ranchero-it.log"),
         pidfile: PathBuf::from("/tmp/ranchero-it.pid"),
         config_path: None,

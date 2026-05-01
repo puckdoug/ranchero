@@ -325,24 +325,30 @@ fn print_follow(
 /// `start` to confirm credentials and endpoint config look healthy
 /// without burning Keycloak login attempts (Zwift will lock the account
 /// after a few bad-password tries).
-fn print_auth_check(
+pub fn print_auth_check_to<W: std::io::Write>(
+    out: &mut W,
     resolved: &crate::config::ResolvedConfig,
     keyring: &dyn crate::credentials::KeyringStore,
-) {
+) -> std::io::Result<()> {
     use zwift_api::{CLIENT_ID, Config, TOKEN_PATH, ZwiftAuth};
 
-    let cfg = Config::default();
+    let cfg = Config {
+        auth_base:  resolved.zwift_endpoints.auth_base.clone(),
+        api_base:   resolved.zwift_endpoints.api_base.clone(),
+        source:     zwift_api::DEFAULT_SOURCE.to_string(),
+        user_agent: zwift_api::DEFAULT_USER_AGENT.to_string(),
+    };
     // Construct ZwiftAuth purely to prove the wiring compiles and runs;
     // we never call .login() so no socket is opened.
     let _auth = ZwiftAuth::new(cfg.clone());
 
-    println!("ranchero auth-check (no network calls)");
-    println!();
-    println!("Endpoints (from zwift_api::Config::default()):");
-    println!("  auth_base:  {}", cfg.auth_base);
-    println!("  api_base:   {}", cfg.api_base);
-    println!("  token path: {TOKEN_PATH}");
-    println!();
+    writeln!(out, "ranchero auth-check (no network calls)")?;
+    writeln!(out)?;
+    writeln!(out, "Endpoints (from config):")?;
+    writeln!(out, "  auth_base:  {}", cfg.auth_base)?;
+    writeln!(out, "  api_base:   {}", cfg.api_base)?;
+    writeln!(out, "  token path: {TOKEN_PATH}")?;
+    writeln!(out)?;
 
     let roles: [(&str, Option<&str>, Option<&str>); 2] = [
         (
@@ -358,13 +364,13 @@ fn print_auth_check(
     ];
 
     for (role, email, cli_password) in roles {
-        println!("Account: {role}");
+        writeln!(out, "Account: {role}")?;
         match email {
-            Some(e) => println!("  email:           {e}"),
+            Some(e) => writeln!(out, "  email:           {e}")?,
             None => {
-                println!("  email:           <not configured>");
-                println!("  (skip — no email; configure via `ranchero configure` or --{role}user)");
-                println!();
+                writeln!(out, "  email:           <not configured>")?;
+                writeln!(out, "  (skip — no email; configure via `ranchero configure` or --{role}user)")?;
+                writeln!(out)?;
                 continue;
             }
         }
@@ -375,8 +381,8 @@ fn print_auth_check(
                 Ok(Some(entry)) => (Some(entry.password), "OS keyring"),
                 Ok(None) => (None, "missing"),
                 Err(e) => {
-                    println!("  password source: keyring error: {e}");
-                    println!();
+                    writeln!(out, "  password source: keyring error: {e}")?;
+                    writeln!(out)?;
                     continue;
                 }
             },
@@ -384,13 +390,13 @@ fn print_auth_check(
 
         match &password {
             Some(p) => {
-                println!("  password source: {source}");
-                println!("  password length: {} chars (value redacted)", p.chars().count());
+                writeln!(out, "  password source: {source}")?;
+                writeln!(out, "  password length: {} chars (value redacted)", p.chars().count())?;
             }
             None => {
-                println!("  password source: {source}");
-                println!("  (skip — no password; store one via `ranchero configure`)");
-                println!();
+                writeln!(out, "  password source: {source}")?;
+                writeln!(out, "  (skip — no password; store one via `ranchero configure`)")?;
+                writeln!(out)?;
                 continue;
             }
         }
@@ -406,21 +412,30 @@ fn print_auth_check(
         ])
         .expect("urlencode auth-check form");
 
-        println!("  Login request:");
-        println!("    POST {}{TOKEN_PATH}", cfg.auth_base);
-        println!("    Content-Type: application/x-www-form-urlencoded");
-        println!("    Body: {body}");
-        println!();
-        println!("  Example authed call:");
-        println!("    GET {}/api/profiles/me", cfg.api_base);
-        println!("    Authorization: Bearer <access_token from login response>");
-        println!("    Source: {}", cfg.source);
-        println!("    User-Agent: {}", cfg.user_agent);
-        println!();
+        writeln!(out, "  Login request:")?;
+        writeln!(out, "    POST {}{TOKEN_PATH}", cfg.auth_base)?;
+        writeln!(out, "    Content-Type: application/x-www-form-urlencoded")?;
+        writeln!(out, "    Body: {body}")?;
+        writeln!(out)?;
+        writeln!(out, "  Example authed call:")?;
+        writeln!(out, "    GET {}/api/profiles/me", cfg.api_base)?;
+        writeln!(out, "    Authorization: Bearer <access_token from login response>")?;
+        writeln!(out, "    Source: {}", cfg.source)?;
+        writeln!(out, "    User-Agent: {}", cfg.user_agent)?;
+        writeln!(out)?;
     }
 
-    println!("OK — credentials and endpoint config look reachable.");
-    println!("(Run `cargo test -p zwift-api` to exercise the actual HTTP flow against a mock server.)");
+    writeln!(out, "OK — credentials and endpoint config look reachable.")?;
+    writeln!(out, "(Run `cargo test -p zwift-api` to exercise the actual HTTP flow against a mock server.)")?;
+    Ok(())
+}
+
+fn print_auth_check(
+    resolved: &crate::config::ResolvedConfig,
+    keyring: &dyn crate::credentials::KeyringStore,
+) {
+    print_auth_check_to(&mut std::io::stdout(), resolved, keyring)
+        .expect("stdout write failed");
 }
 
 /// Iterate a wire-capture file (STEP 11.5). Default mode prints a

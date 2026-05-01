@@ -156,7 +156,7 @@ impl Fields {
             server_bind:      make_editor(&cfg.server.bind),
             server_port:      make_editor(&cfg.server.port.to_string()),
             server_https:     cfg.server.https,
-            log_level:        make_editor(&cfg.logging.level.to_string()),
+            log_level:        make_editor(&cfg.logging.level.as_ref().map(|l| l.to_string()).unwrap_or_default()),
             log_file:         make_editor(&cfg.logging.file),
             pid_file:         make_editor(&cfg.daemon.pidfile),
         }
@@ -1120,11 +1120,12 @@ impl Model {
         let port = self.fields.text(FieldId::ServerPort).parse::<u32>().unwrap_or(1080);
         let log_level_str = self.fields.text(FieldId::LogLevel);
         let log_level = match log_level_str.as_str() {
-            "trace" => LogLevel::Trace,
-            "debug" => LogLevel::Debug,
-            "warn"  => LogLevel::Warn,
-            "error" => LogLevel::Error,
-            _       => LogLevel::Info,
+            "trace" => Some(LogLevel::Trace),
+            "debug" => Some(LogLevel::Debug),
+            "info"  => Some(LogLevel::Info),
+            "warn"  => Some(LogLevel::Warn),
+            "error" => Some(LogLevel::Error),
+            _       => None,
         };
         let editing_mode_cfg = match self.editing_mode {
             crate::config::EditingMode::Vi      => EditingModeConfig::Vi,

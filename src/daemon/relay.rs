@@ -1691,7 +1691,7 @@ mod tests {
     use std::time::Instant;
 
     use crate::config::{
-        EditingMode, LogLevel, RedactedString, ResolvedConfig, ZwiftEndpoints,
+        EditingMode, RedactedString, ResolvedConfig, ZwiftEndpoints,
     };
 
     fn make_config(email: Option<&str>, password: Option<&str>) -> ResolvedConfig {
@@ -1703,7 +1703,7 @@ mod tests {
             server_bind: "127.0.0.1".into(),
             server_port: 1080,
             server_https: false,
-            log_level: LogLevel::Info,
+            log_level: None,
             log_file: PathBuf::from("/tmp/ranchero-test.log"),
             pidfile: PathBuf::from("/tmp/ranchero-test.pid"),
             config_path: None,
