@@ -22,10 +22,10 @@ use ranchero::daemon::relay::{
 
 fn make_config(email: &str, password: &str) -> ResolvedConfig {
     ResolvedConfig {
-        main_email: Some(email.to_string()),
-        main_password: Some(RedactedString::new(password.to_string())),
-        monitor_email: None,
-        monitor_password: None,
+        main_email: None,
+        main_password: None,
+        monitor_email: Some(email.to_string()),
+        monitor_password: Some(RedactedString::new(password.to_string())),
         server_bind: "127.0.0.1".into(),
         server_port: 1080,
         server_https: false,
@@ -766,7 +766,11 @@ async fn relay_runtime_start_fails_when_monitor_credentials_absent() {
     // Main credentials are set; monitor credentials are absent.
     // After the fix, the runtime must reject this configuration rather than
     // proceeding with the main account.
-    let cfg = make_config("main@example.com", "main-pass");
+    let mut cfg = make_config("main@example.com", "main-pass");
+    cfg.monitor_email    = None;
+    cfg.monitor_password = None;
+    cfg.main_email       = Some("main@example.com".to_string());
+    cfg.main_password    = Some(RedactedString::new("main-pass".to_string()));
 
     let result = RelayRuntime::start_with_all_deps(
         &cfg,

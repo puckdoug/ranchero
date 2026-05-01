@@ -8,85 +8,85 @@ Operator-path defects (block `start --capture` → `stop` →
 `replay` from delivering a populated capture file):
 
 - [x] **Defect 1** — `run_daemon` swallows `RelayRuntime::start`
-  errors and runs the UDS loop in degraded mode instead of
-  exiting non-zero. (`src/daemon/runtime.rs:243-258`)
-  **Complete 2026-04-29.**
+      errors and runs the UDS loop in degraded mode instead of
+      exiting non-zero. (`src/daemon/runtime.rs:243-258`)
+      **Complete 2026-04-29.**
 - [x] **Defect 2** — `ResolvedConfig::resolve` never consults the
-  OS keychain for passwords; only the `--mainpassword` /
-  `--monitorpassword` CLI flags are read.
-  (`src/config/mod.rs:370-378`)
-  **Complete 2026-04-30.**
+      OS keychain for passwords; only the `--mainpassword` /
+      `--monitorpassword` CLI flags are read.
+      (`src/config/mod.rs:370-378`)
+      **Complete 2026-04-30.**
 - [x] **Defect 3** — The TCP hello `ClientToServer` is never sent;
-  the Zwift server has no basis to scope inbound traffic to
-  the connection. (`src/daemon/relay.rs:716-756`)
-  **Complete 2026-05-01.**
+      the Zwift server has no basis to scope inbound traffic to
+      the connection. (`src/daemon/relay.rs:716-756`)
+      **Complete 2026-05-01.**
 - [x] **Defect 4** — No UDP transport or `UdpChannel` is ever
-  constructed in production; the live telemetry stream
-  (spec §4.6, §4.10) does not run.
-  (`src/daemon/relay.rs:664-812`)
-  **Complete 2026-05-01.**
+      constructed in production; the live telemetry stream
+      (spec §4.6, §4.10) does not run.
+      (`src/daemon/relay.rs:664-812`)
+      **Complete 2026-05-01.**
 - [x] **Defect 5** — The 1 Hz `HeartbeatScheduler` is never spawned
-  in production; without it the server-side liveness model
-  expires the connection. (`src/daemon/relay.rs:165-239`,
-  no production instantiation)
-  **Complete 2026-05-01.**
+      in production; without it the server-side liveness model
+      expires the connection. (`src/daemon/relay.rs:165-239`,
+      no production instantiation)
+      **Complete 2026-05-01.**
 - [x] **Defect 6** — `TcpChannel<T>` is moved into the recv-loop
-  spawn, leaving no handle through which any later step
-  could send a hello or heartbeat.
-  (`src/daemon/relay.rs:792-802`)
-  **Complete 2026-05-01.**
+      spawn, leaving no handle through which any later step
+      could send a hello or heartbeat.
+      (`src/daemon/relay.rs:792-802`)
+      **Complete 2026-05-01.**
 - [x] **Defect 7** — `RelaySessionSupervisor` is never started;
-  only the single-shot `zwift_relay::login` runs, so the
-  session is never refreshed and silently expires.
-  (`src/daemon/relay.rs:983-988`)
-  **Complete 2026-05-01.**
+      only the single-shot `zwift_relay::login` runs, so the
+      session is never refreshed and silently expires.
+      (`src/daemon/relay.rs:983-988`)
+      **Complete 2026-05-01.**
 
 Configuration / diagnostic defects (do not block the workflow
 but produce silently wrong or misleading behaviour):
 
 - [x] **Defect 8** — `ResolvedConfig.log_level` is read from TOML
-  and silently ignored by `daemon::start` /
-  `logging::install`. (`src/config/mod.rs:419`,
-  `src/daemon/runtime.rs:52`)
-  **Complete 2026-05-01.**
+      and silently ignored by `daemon::start` /
+      `logging::install`. (`src/config/mod.rs:419`,
+      `src/daemon/runtime.rs:52`)
+      **Complete 2026-05-01.**
 - [x] **Defect 9** — `print_auth_check` reports
-  `Config::default()` URLs instead of `cfg.zwift_endpoints`,
-  contradicting what `start` will actually use after
-  STEP-12.5 §F. (`src/cli.rs:333, 340-343, 409, 414`)
-  **Complete 2026-05-01.**
+      `Config::default()` URLs instead of `cfg.zwift_endpoints`,
+      contradicting what `start` will actually use after
+      STEP-12.5 §F. (`src/cli.rs:333, 340-343, 409, 414`)
+      **Complete 2026-05-01.**
 - [x] **Defect 10** — `src/tui/keyring.rs` is a four-line
-  re-export shim, in violation of the no-shim rule.
-  (`src/tui/keyring.rs`, consumers at
-  `src/tui/driver.rs:12`, `tests/tui.rs:5`)
-  **Complete 2026-05-01.**
-- [ ] **Defect 11** — The relay authenticates as the main account
-  instead of the monitor account. The reference implementation
-  uses the monitor account to establish the TCP session
-  (specifically to avoid impersonating the rider's own game
-  session), and uses the main account's athlete ID only as the
-  subject being watched. The current code passes `main_email` /
-  `main_password` to the auth and session login steps
-  (`src/daemon/relay.rs:875–882`, `1138–1145`); `monitor_email`
-  / `monitor_password` are loaded and discarded.
-- [ ] **Defect 12** — `athlete_id` is hardcoded to 0 in
-  `TcpChannelConfig`, `UdpChannelConfig`, and
-  `HeartbeatScheduler` (`src/daemon/relay.rs:930, 993, 1021`).
-  The correct value is the monitor account's athlete ID,
-  obtained from the profile response after monitor-account
-  login. Resolved as part of Defect 11.
-- [ ] **Defect 13** — `conn_id` is hardcoded to 0 in
-  `TcpChannelConfig` and `UdpChannelConfig`
-  (`src/daemon/relay.rs:931, 994`). The correct value is a
-  per-channel incrementing counter (modulo 0xffff), matching
-  the reference's `getConnInc()` logic. The counter is used
-  directly in the AES-GCM encryption IV; hardcoding it causes
-  IV reuse on reconnection.
+      re-export shim, in violation of the no-shim rule.
+      (`src/tui/keyring.rs`, consumers at
+      `src/tui/driver.rs:12`, `tests/tui.rs:5`)
+      **Complete 2026-05-01.**
+- [x] **Defect 11** — The relay authenticates as the main account
+      instead of the monitor account. The reference implementation
+      uses the monitor account to establish the TCP session
+      (specifically to avoid impersonating the rider's own game
+      session), and uses the main account's athlete ID only as the
+      subject being watched. The current code passes `main_email` /
+      `main_password` to the auth and session login steps
+      (`src/daemon/relay.rs:875–882`, `1138–1145`); `monitor_email`
+      / `monitor_password` are loaded and discarded.
+- [x] **Defect 12** — `athlete_id` is hardcoded to 0 in
+      `TcpChannelConfig`, `UdpChannelConfig`, and
+      `HeartbeatScheduler` (`src/daemon/relay.rs:930, 993, 1021`).
+      The correct value is the monitor account's athlete ID,
+      obtained from the profile response after monitor-account
+      login. Resolved as part of Defect 11.
+- [x] **Defect 13** — `conn_id` is hardcoded to 0 in
+      `TcpChannelConfig` and `UdpChannelConfig`
+      (`src/daemon/relay.rs:931, 994`). The correct value is a
+      per-channel incrementing counter (modulo 0xffff), matching
+      the reference's `getConnInc()` logic. The counter is used
+      directly in the AES-GCM encryption IV; hardcoding it causes
+      IV reuse on reconnection.
 
 Minor cosmetic findings:
 
 - [x] **Minor 1** — `start_inner` numbered comments skipped
-  step 5 (1, 2, 3, 4, 6, 7, 8).
-  **Complete 2026-05-01.**
+      step 5 (1, 2, 3, 4, 6, 7, 8).
+      **Complete 2026-05-01.**
 
 Defects 1 and 2 are detailed below under `Defects`. Defects 3
 through 13 and the minor findings are detailed in
@@ -216,13 +216,13 @@ or `Err(_)`. The process exits with a non-zero status on
 in this function).
 
 The `relay.start.failed` log record stays — the operator's log
-file is the canonical place that records *why* the start
+file is the canonical place that records _why_ the start
 failed. The change is that the process also exits.
 
 The orchestrator's resilience strategy for transient network
 errors (auto-retry with backoff, suspended state with periodic
 re-attempt, and so on) is a separate question for a later step.
-The current behaviour for *any* `RelayRuntime::start` error is
+The current behaviour for _any_ `RelayRuntime::start` error is
 abort. A retry policy can refine that later without changing
 this contract.
 
@@ -351,7 +351,7 @@ flag, valid TOML config):
 
 2. The existing acceptance criteria in STEP-12.5 §5 continue to
    hold once these defects are fixed. The `ranchero start
-   --capture <file> ; sleep 10 ; ranchero follow <file>`
+--capture <file> ; sleep 10 ; ranchero follow <file>`
    workflow used for live verification continues to behave as
    verified on 2026-04-29.
 
@@ -522,12 +522,12 @@ The four sub-step labels in the parent plan
 (`docs/plans/done/STEP-12-game-monitor.md` lines 49-55) describe
 what was expected:
 
-| Sub-step | Was supposed to deliver |
-|---|---|
-| 12.1 | TCP-only foundation, including the initial `ClientToServer` hello. |
-| 12.3 | UDP channel + 1 Hz heartbeat. |
-| 12.4 | `udpConfigVOD` parsing + `findBestUDPServer`, with per-course UDP reselection. |
-| 12.5 | Idle suspension FSM + watched-athlete switching + `GameEvent` enum. |
+| Sub-step | Was supposed to deliver                                                        |
+| -------- | ------------------------------------------------------------------------------ |
+| 12.1     | TCP-only foundation, including the initial `ClientToServer` hello.             |
+| 12.3     | UDP channel + 1 Hz heartbeat.                                                  |
+| 12.4     | `udpConfigVOD` parsing + `findBestUDPServer`, with per-course UDP reselection. |
+| 12.5     | Idle suspension FSM + watched-athlete switching + `GameEvent` enum.            |
 
 Of those four sub-steps, only the `GameEvent` enum from 12.5 and
 the in-tree pure-function ports of `findBestUDPServer` /
@@ -605,7 +605,7 @@ across `src/` for `UdpChannel`, `TokioUdpTransport`, or
 instantiates any UDP type.
 
 The orchestrator does pre-allocate a UDP event broadcast
-channel (`udp_events_tx` /  `udp_events_rx`,
+channel (`udp_events_tx` / `udp_events_rx`,
 `src/daemon/relay.rs:778-779`) and the recv-loop subscribes to
 it, but the only producer in the codebase is the test-only
 `inject_udp_event` method
@@ -1118,7 +1118,7 @@ file). All three tests are subprocess tests using the
 2. Change the type of `runtime` in the remainder of
    `run_daemon` from `Option<RelayRuntime>` to
    `RelayRuntime`. Replace the `if let Some(runtime) =
-   runtime {` block at line 272 with direct usage:
+runtime {` block at line 272 with direct usage:
 
    ```rust
    runtime.shutdown();
@@ -1330,7 +1330,6 @@ ways, both prompted by you during review:
    isolation belongs in the config layer alongside
    `pidfile`, `log_file`, and `relay.enabled`, not in
    an out-of-band env var. The committed design adds:
-
    - A new `[keyring]` section to `ConfigFile` with a
      single `service: String` field (default
      `crate::credentials::SERVICE_NAME`, i.e.
@@ -1753,7 +1752,7 @@ impl zwift_relay::TcpTransport for RecordingTcpTransport {
    ```
 
 5. Verify that `TcpChannel<T>` is `Sync` when `T:
-   Sync`. If `T` is currently only bounded by `Send`,
+Sync`. If `T` is currently only bounded by `Send`,
    add `+ Sync` to the relevant bounds in
    `crates/zwift-relay/src/tcp.rs` so `Arc<TcpChannel<T>>`
    can be held across async boundaries.
@@ -1781,6 +1780,7 @@ Defect 6. After `start_with_deps` returns, shut down
 the runtime and inspect the recorded writes.
 
 Assert:
+
 - `written` is non-empty (at least one `write_all`
   call was made before shutdown).
 - The first recorded bytes decode as a
@@ -2289,19 +2289,19 @@ watched_athlete_id = 123456   # Zwift athlete ID of the rider to monitor
 Apply fixes in this sequence to minimise compilation
 failures between steps:
 
-| Step | Finding | Rationale | Status |
-|---|---|---|---|
-| 1 | Defect 10 | Trivial shim removal; no runtime-behaviour impact | **Done 2026-05-01** |
-| 2 | Defect 9 | One-line URL fix; no interaction with other defects | **Done 2026-05-01** |
-| 3 | Defect 8 | Extends `filter_directive` and `install` signatures before other callers are modified | **Done 2026-05-01** |
-| 4 | Defect 2 | Threads the keyring through `resolve`; modifies all `resolve` call sites. Applied after Defect 1; added `[keyring] service` config field and `TEST_`-prefixed account scoping in `OsKeyringStore` rather than the env-var design originally drafted. | **Done 2026-04-30** |
-| 5 | Defect 1 | Propagates error instead of swallowing. Applied before Defect 2 in practice; required adding `relay.enabled` config flag to fix test regressions. | **Done 2026-04-29** |
-| 6 | Defect 7 | Session supervisor wiring; independent of the TCP/UDP connectivity changes | **Done 2026-05-01** |
-| 7 | Defect 6 | Wraps the TCP channel in `Arc`; structural prerequisite for Defect 3 | **Done 2026-05-01** |
-| 8 | Defect 3 | TCP hello send; requires Defect 6 | **Done 2026-05-01** |
-| 9 | Defect 4 | UDP channel construction; requires Defect 3 | **Done 2026-05-01** |
-| 10 | Defect 5 | Heartbeat spawn; requires Defect 4 | **Done 2026-05-01** |
-| 11 | Defect 11 | Swap main→monitor credentials in relay; add `watched_athlete_id` config field to eliminate main-account login | — |
-| 12 | Defect 12 | Thread monitor profile ID into `TcpChannelConfig`, `UdpChannelConfig`, `HeartbeatScheduler`; resolved as part of Defect 11 | — |
-| 13 | Defect 13 | Per-channel `conn_id` counter; independent of Defect 11 | — |
-| 14 | Minor 1 | Renumber `start_inner` step comments | **Done 2026-05-01** |
+| Step | Finding   | Rationale                                                                                                                                                                                                                                            | Status              |
+| ---- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 1    | Defect 10 | Trivial shim removal; no runtime-behaviour impact                                                                                                                                                                                                    | **Done 2026-05-01** |
+| 2    | Defect 9  | One-line URL fix; no interaction with other defects                                                                                                                                                                                                  | **Done 2026-05-01** |
+| 3    | Defect 8  | Extends `filter_directive` and `install` signatures before other callers are modified                                                                                                                                                                | **Done 2026-05-01** |
+| 4    | Defect 2  | Threads the keyring through `resolve`; modifies all `resolve` call sites. Applied after Defect 1; added `[keyring] service` config field and `TEST_`-prefixed account scoping in `OsKeyringStore` rather than the env-var design originally drafted. | **Done 2026-04-30** |
+| 5    | Defect 1  | Propagates error instead of swallowing. Applied before Defect 2 in practice; required adding `relay.enabled` config flag to fix test regressions.                                                                                                    | **Done 2026-04-29** |
+| 6    | Defect 7  | Session supervisor wiring; independent of the TCP/UDP connectivity changes                                                                                                                                                                           | **Done 2026-05-01** |
+| 7    | Defect 6  | Wraps the TCP channel in `Arc`; structural prerequisite for Defect 3                                                                                                                                                                                 | **Done 2026-05-01** |
+| 8    | Defect 3  | TCP hello send; requires Defect 6                                                                                                                                                                                                                    | **Done 2026-05-01** |
+| 9    | Defect 4  | UDP channel construction; requires Defect 3                                                                                                                                                                                                          | **Done 2026-05-01** |
+| 10   | Defect 5  | Heartbeat spawn; requires Defect 4                                                                                                                                                                                                                   | **Done 2026-05-01** |
+| 11   | Defect 11 | Swap main→monitor credentials in relay; add `watched_athlete_id` config field to eliminate main-account login                                                                                                                                        | —                   |
+| 12   | Defect 12 | Thread monitor profile ID into `TcpChannelConfig`, `UdpChannelConfig`, `HeartbeatScheduler`; resolved as part of Defect 11                                                                                                                           | —                   |
+| 13   | Defect 13 | Per-channel `conn_id` counter; independent of Defect 11                                                                                                                                                                                              | —                   |
+| 14   | Minor 1   | Renumber `start_inner` step comments                                                                                                                                                                                                                 | **Done 2026-05-01** |

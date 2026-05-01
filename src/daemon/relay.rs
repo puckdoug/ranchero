@@ -12,6 +12,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use thiserror::Error;
 use tokio::sync::Notify;
@@ -19,12 +20,21 @@ use tokio::task::JoinHandle;
 
 use crate::config::ResolvedConfig;
 
+static CONN_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Returns the next connection ID for a new channel, wrapping at 0xffff.
+/// Used in the AES-GCM IV construction inside `zwift_relay`; each channel
+/// must receive a unique value to prevent IV reuse on reconnection.
+pub fn next_conn_id() -> u16 {
+    (CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed) % 0xffff) as u16
+}
+
 #[derive(Error, Debug)]
 pub enum RelayRuntimeError {
-    #[error("missing main account email; configure via `ranchero configure`")]
+    #[error("missing monitor account email; configure via `ranchero configure`")]
     MissingEmail,
 
-    #[error("missing main account password; store one via `ranchero configure`")]
+    #[error("missing monitor account password; store one via `ranchero configure`")]
     MissingPassword,
 
     #[error("auth: {0}")]
@@ -883,11 +893,11 @@ impl RelayRuntime {
     {
         // 1. Credential validation.
         let email = cfg
-            .main_email
+            .monitor_email
             .as_deref()
             .ok_or(RelayRuntimeError::MissingEmail)?;
         let password = cfg
-            .main_password
+            .monitor_password
             .as_ref()
             .ok_or(RelayRuntimeError::MissingPassword)?;
 
@@ -895,7 +905,8 @@ impl RelayRuntime {
         auth.login(email, password.expose())
             .await
             .map_err(RelayRuntimeError::Auth)?;
-        tracing::info!(target: "ranchero::relay", email, "relay.login.ok");
+        let athlete_id = auth.athlete_id().await.map_err(RelayRuntimeError::Auth)?;
+        tracing::info!(target: "ranchero::relay", email, athlete_id, "relay.login.ok");
 
         // 3. Session supervisor start. Subscribe to events before the
         //    session is fetched so no events are missed.
@@ -937,8 +948,8 @@ impl RelayRuntime {
 
         // 6. Establish the TCP channel and wait for Established.
         let tcp_config = zwift_relay::TcpChannelConfig {
-            athlete_id: 0,
-            conn_id: 0,
+            athlete_id,
+            conn_id: next_conn_id(),
             watchdog_timeout: zwift_relay::CHANNEL_TIMEOUT,
             capture: capture_writer.clone(),
         };
@@ -978,7 +989,7 @@ impl RelayRuntime {
             .send_packet(
                 zwift_proto::ClientToServer {
                     server_realm: 1,
-                    player_id: 0,
+                    player_id: athlete_id,
                     world_time: Some(0),
                     seqno: Some(1),
                     state: zwift_proto::PlayerState::default(),
@@ -1000,8 +1011,8 @@ impl RelayRuntime {
             .await
             .map_err(RelayRuntimeError::UdpConnect)?;
         let udp_config = zwift_relay::UdpChannelConfig {
-            athlete_id: 0,
-            conn_id: tcp_config.conn_id,
+            athlete_id,
+            conn_id: next_conn_id(),
             ..udp_factory.channel_config()
         };
         let world_timer = zwift_relay::WorldTimer::new();
@@ -1028,7 +1039,7 @@ impl RelayRuntime {
             let handle = tokio::spawn(async move {
                 let sink = UdpHeartbeatSink(udp_for_heartbeat);
                 let scheduler =
-                    HeartbeatScheduler::new(sink, heartbeat_world_timer, 0i64);
+                    HeartbeatScheduler::new(sink, heartbeat_world_timer, athlete_id);
                 scheduler.run().await;
             });
             let abort = handle.abort_handle();
@@ -1146,11 +1157,11 @@ impl RelayRuntime {
     {
         // 1. Credential validation.
         let email = cfg
-            .main_email
+            .monitor_email
             .as_deref()
             .ok_or(RelayRuntimeError::MissingEmail)?;
         let password = cfg
-            .main_password
+            .monitor_password
             .as_ref()
             .ok_or(RelayRuntimeError::MissingPassword)?;
 
@@ -1158,7 +1169,8 @@ impl RelayRuntime {
         auth.login(email, password.expose())
             .await
             .map_err(RelayRuntimeError::Auth)?;
-        tracing::info!(target: "ranchero::relay", email, "relay.login.ok");
+        let athlete_id = auth.athlete_id().await.map_err(RelayRuntimeError::Auth)?;
+        tracing::info!(target: "ranchero::relay", email, athlete_id, "relay.login.ok");
 
         // 3. Relay-session login.
         let session = session_factory
@@ -1185,8 +1197,8 @@ impl RelayRuntime {
 
         // 6. Establish the TCP channel and wait for Established.
         let tcp_config = zwift_relay::TcpChannelConfig {
-            athlete_id: 0,
-            conn_id: 0,
+            athlete_id,
+            conn_id: next_conn_id(),
             watchdog_timeout: zwift_relay::CHANNEL_TIMEOUT,
             capture: capture_writer.clone(),
         };
@@ -1706,10 +1718,10 @@ mod tests {
 
     fn make_config(email: Option<&str>, password: Option<&str>) -> ResolvedConfig {
         ResolvedConfig {
-            main_email:    email.map(str::to_string),
-            main_password: password.map(|p| RedactedString::new(p.to_string())),
-            monitor_email: None,
-            monitor_password: None,
+            main_email:    None,
+            main_password: None,
+            monitor_email:    email.map(str::to_string),
+            monitor_password: password.map(|p| RedactedString::new(p.to_string())),
             server_bind: "127.0.0.1".into(),
             server_port: 1080,
             server_https: false,

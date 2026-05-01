@@ -49,12 +49,12 @@ pub fn validate_startup(
 ) -> Result<(), StartupValidationErrors> {
     let mut errors = Vec::new();
 
-    // S-1: Relay credential presence
+    // S-1: Relay credential presence (monitor account required)
     if cfg.relay_enabled {
-        if cfg.main_email.is_none() {
+        if cfg.monitor_email.is_none() {
             errors.push(StartupValidationError::MissingEmail);
         }
-        if cfg.main_password.is_none() {
+        if cfg.monitor_password.is_none() {
             errors.push(StartupValidationError::MissingPassword);
         }
     }
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn validate_relay_enabled_no_email_returns_missing_email() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, None, Some("secret"), None, None, pidfile, log_file);
+        let cfg = make_config(true, None, None, None, Some("secret"), pidfile, log_file);
         let err = validate_startup(&cfg, None).expect_err("should fail with missing email");
         assert!(has_missing_email(&err), "expected MissingEmail in errors");
         assert!(!has_missing_password(&err), "expected no MissingPassword, password is set");
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn validate_relay_enabled_no_password_returns_missing_password() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, Some("user@example.com"), None, None, None, pidfile, log_file);
+        let cfg = make_config(true, None, None, Some("monitor@example.com"), None, pidfile, log_file);
         let err = validate_startup(&cfg, None).expect_err("should fail with missing password");
         assert!(has_missing_password(&err), "expected MissingPassword in errors");
         assert!(!has_missing_email(&err), "expected no MissingEmail, email is set");
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn validate_relay_enabled_both_present_is_ok() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, Some("user@example.com"), Some("secret"), None, None, pidfile, log_file);
+        let cfg = make_config(true, None, None, Some("monitor@example.com"), Some("secret"), pidfile, log_file);
         assert!(validate_startup(&cfg, None).is_ok(), "both credentials present should be ok");
     }
 

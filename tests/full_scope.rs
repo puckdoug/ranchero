@@ -83,10 +83,10 @@ fn lib_config(
     pidfile: PathBuf,
 ) -> ResolvedConfig {
     ResolvedConfig {
-        main_email: Some(email.to_string()),
-        main_password: Some(RedactedString::new(password.to_string())),
-        monitor_email: None,
-        monitor_password: None,
+        main_email: None,
+        main_password: None,
+        monitor_email: Some(email.to_string()),
+        monitor_password: Some(RedactedString::new(password.to_string())),
         server_bind: "127.0.0.1".into(),
         server_port: 1080,
         server_https: false,
@@ -188,8 +188,8 @@ impl DaemonHarness {
         let mut cmd = Command::new(binary_path());
         cmd.args(self.config_args());
         cmd.arg("--debug");
-        cmd.arg("--mainuser").arg("noone@example.invalid");
-        cmd.arg("--mainpassword").arg("not-a-real-password");
+        cmd.arg("--monitoruser").arg("noone@example.invalid");
+        cmd.arg("--monitorpassword").arg("not-a-real-password");
         if with_capture {
             cmd.arg("--capture").arg(&self.capture_path);
         }
@@ -209,8 +209,8 @@ impl DaemonHarness {
     fn spawn_background_start(&self, with_capture: bool) -> Output {
         let mut cmd = Command::new(binary_path());
         cmd.args(self.config_args());
-        cmd.arg("--mainuser").arg("noone@example.invalid");
-        cmd.arg("--mainpassword").arg("not-a-real-password");
+        cmd.arg("--monitoruser").arg("noone@example.invalid");
+        cmd.arg("--monitorpassword").arg("not-a-real-password");
         if with_capture {
             cmd.arg("--capture").arg(&self.capture_path);
         }
