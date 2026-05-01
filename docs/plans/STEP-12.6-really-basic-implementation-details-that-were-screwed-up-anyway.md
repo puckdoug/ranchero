@@ -2096,7 +2096,38 @@ in the log at each refresh cycle.
 
 ---
 
-### Defect 11 — implementation plan
+### Defect 11 — tests and implementation plan
+
+#### Red-state tests (complete 2026-05-01)
+
+Three runtime-failure tests in `tests/relay_runtime.rs`:
+
+- `relay_runtime_authenticates_as_monitor_account` —
+  `RecordingAuth` captures the email passed to `login`;
+  asserts it equals `cfg.monitor_email`. Currently fails
+  because `main_email` is used.
+
+- `relay_runtime_start_fails_when_monitor_credentials_absent`
+  — both `monitor_email` and `monitor_password` absent;
+  asserts the runtime returns `Err`. Currently fails
+  because the runtime falls back to `main_email`.
+
+Three runtime-failure tests in `src/daemon/validate.rs`
+inline tests (S-1f, S-1g, S-1h):
+
+- `validate_relay_enabled_no_monitor_email_returns_error`
+  (S-1f) — monitor email absent, main present; asserts
+  `MissingEmail`. Currently fails (main email is set so
+  no error is returned).
+
+- `validate_relay_enabled_no_monitor_password_returns_error`
+  (S-1g) — similar for password.
+
+- `validate_relay_enabled_monitor_credentials_sufficient_without_main`
+  (S-1h) — monitor present, main absent; asserts `Ok`.
+  Currently fails (main email absent triggers `MissingEmail`).
+
+#### Implementation steps
 
 1. Confirm against the sauce4zwift reference whether the
    main account password is required beyond resolving the
@@ -2154,6 +2185,16 @@ the profile ID is available from the login response and
 must be threaded through to `TcpChannelConfig`,
 `UdpChannelConfig`, and `HeartbeatScheduler::new`.
 
+#### Red-state test (complete 2026-05-01)
+
+`relay_runtime_logs_monitor_athlete_id_after_login` in
+`tests/relay_runtime.rs`. `KnownIdAuth { id: 99_999 }`
+overrides the new `AuthLogin::athlete_id()` default method
+(added to `src/daemon/relay.rs`) to return 99_999.
+Asserts the value appears in the tracing log. Currently
+fails because `start_all_inner` never calls `athlete_id()`
+and the value 99_999 is never logged.
+
 ---
 
 ### Defect 13 — `conn_id` hardcoded to 0
@@ -2186,6 +2227,18 @@ IV to be reused under the same key, which breaks AES-GCM.
    the counter on the first connection; a reconnection
    test covering the increment behaviour is desirable
    but may be deferred.
+
+#### Red-state tests (complete 2026-05-01)
+
+`tests/relay_conn_id.rs` (new file). Fails to compile
+because `ranchero::daemon::relay::next_conn_id` does not
+exist yet.
+
+- `conn_id_counter_increments_on_successive_calls` —
+  calls `next_conn_id()` twice and asserts the values
+  differ.
+- `conn_id_fits_within_u16` — asserts the returned value
+  does not exceed 0xffff.
 
 ---
 

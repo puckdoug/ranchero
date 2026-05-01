@@ -110,14 +110,16 @@ mod tests {
         relay_enabled: bool,
         main_email: Option<&str>,
         main_password: Option<&str>,
+        monitor_email: Option<&str>,
+        monitor_password: Option<&str>,
         pidfile: PathBuf,
         log_file: PathBuf,
     ) -> ResolvedConfig {
         ResolvedConfig {
             main_email: main_email.map(str::to_owned),
             main_password: main_password.map(RedactedString::new),
-            monitor_email: None,
-            monitor_password: None,
+            monitor_email: monitor_email.map(str::to_owned),
+            monitor_password: monitor_password.map(RedactedString::new),
             server_bind: "127.0.0.1".to_string(),
             server_port: 1080,
             server_https: false,
@@ -159,7 +161,7 @@ mod tests {
     #[test]
     fn validate_relay_enabled_no_email_returns_missing_email() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, None, Some("secret"), pidfile, log_file);
+        let cfg = make_config(true, None, Some("secret"), None, None, pidfile, log_file);
         let err = validate_startup(&cfg, None).expect_err("should fail with missing email");
         assert!(has_missing_email(&err), "expected MissingEmail in errors");
         assert!(!has_missing_password(&err), "expected no MissingPassword, password is set");
@@ -169,7 +171,7 @@ mod tests {
     #[test]
     fn validate_relay_enabled_no_password_returns_missing_password() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, Some("user@example.com"), None, pidfile, log_file);
+        let cfg = make_config(true, Some("user@example.com"), None, None, None, pidfile, log_file);
         let err = validate_startup(&cfg, None).expect_err("should fail with missing password");
         assert!(has_missing_password(&err), "expected MissingPassword in errors");
         assert!(!has_missing_email(&err), "expected no MissingEmail, email is set");
@@ -179,7 +181,7 @@ mod tests {
     #[test]
     fn validate_relay_enabled_both_missing_returns_both_errors() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, None, None, pidfile, log_file);
+        let cfg = make_config(true, None, None, None, None, pidfile, log_file);
         let err = validate_startup(&cfg, None).expect_err("should fail with both missing");
         assert!(has_missing_email(&err), "expected MissingEmail");
         assert!(has_missing_password(&err), "expected MissingPassword");
@@ -192,7 +194,7 @@ mod tests {
     #[test]
     fn validate_relay_disabled_skips_credential_check() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         assert!(validate_startup(&cfg, None).is_ok(), "relay disabled should skip credential check");
     }
 
@@ -200,7 +202,7 @@ mod tests {
     #[test]
     fn validate_relay_enabled_both_present_is_ok() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, Some("user@example.com"), Some("secret"), pidfile, log_file);
+        let cfg = make_config(true, Some("user@example.com"), Some("secret"), None, None, pidfile, log_file);
         assert!(validate_startup(&cfg, None).is_ok(), "both credentials present should be ok");
     }
 
@@ -210,7 +212,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let pidfile = dir.path().join("nonexistent_subdir").join("ranchero.pid");
         let log_file = dir.path().join("ranchero.log");
-        let cfg = make_config(false, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         let err = validate_startup(&cfg, None).expect_err("missing pidfile dir should fail");
         assert!(has_not_writable(&err, "pidfile"), "expected DirectoryNotWritable for pidfile");
     }
@@ -219,7 +221,7 @@ mod tests {
     #[test]
     fn validate_pidfile_dir_writable_is_ok() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         assert!(validate_startup(&cfg, None).is_ok(), "writable pidfile dir should be ok");
     }
 
@@ -229,7 +231,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let pidfile = dir.path().join("ranchero.pid");
         let log_file = dir.path().join("nonexistent_subdir").join("ranchero.log");
-        let cfg = make_config(false, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         let err = validate_startup(&cfg, None).expect_err("missing log dir should fail");
         assert!(has_not_writable(&err, "log file"), "expected DirectoryNotWritable for log file");
     }
@@ -238,7 +240,7 @@ mod tests {
     #[test]
     fn validate_log_dir_writable_is_ok() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         assert!(validate_startup(&cfg, None).is_ok(), "writable log dir should be ok");
     }
 
@@ -246,7 +248,7 @@ mod tests {
     #[test]
     fn validate_capture_dir_missing_returns_error() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         let capture = PathBuf::from("/nonexistent/path/that/cannot/exist/capture.bin");
         let err = validate_startup(&cfg, Some(&capture)).expect_err("missing capture dir should fail");
         assert!(has_not_writable(&err, "capture file"), "expected DirectoryNotWritable for capture file");
@@ -256,7 +258,7 @@ mod tests {
     #[test]
     fn validate_capture_none_skips_check() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         let result = validate_startup(&cfg, None);
         if let Err(ref errs) = result {
             assert!(
@@ -273,7 +275,63 @@ mod tests {
         let pidfile = dir.path().join("ranchero.pid");
         let log_file = dir.path().join("ranchero.log");
         let capture = dir.path().join("capture.bin");
-        let cfg = make_config(false, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         assert!(validate_startup(&cfg, Some(&capture)).is_ok(), "writable capture dir should be ok");
+    }
+
+    // S-1f: Defect 11 — relay enabled, monitor email absent → error even if main email is set.
+    #[test]
+    fn validate_relay_enabled_no_monitor_email_returns_error() {
+        let (_dir, pidfile, log_file) = writable_paths();
+        let cfg = make_config(
+            true,
+            Some("main@example.com"), Some("main-pass"),
+            None, Some("monitor-pass"),
+            pidfile, log_file,
+        );
+        let err = validate_startup(&cfg, None)
+            .expect_err("missing monitor email should fail validation");
+        assert!(
+            has_missing_email(&err),
+            "Defect 11 red state: expected MissingEmail for absent monitor email; \
+             currently only checks the main account email",
+        );
+    }
+
+    // S-1g: Defect 11 — relay enabled, monitor password absent → error even if main password is set.
+    #[test]
+    fn validate_relay_enabled_no_monitor_password_returns_error() {
+        let (_dir, pidfile, log_file) = writable_paths();
+        let cfg = make_config(
+            true,
+            Some("main@example.com"), Some("main-pass"),
+            Some("monitor@example.com"), None,
+            pidfile, log_file,
+        );
+        let err = validate_startup(&cfg, None)
+            .expect_err("missing monitor password should fail validation");
+        assert!(
+            has_missing_password(&err),
+            "Defect 11 red state: expected MissingPassword for absent monitor password; \
+             currently only checks the main account password",
+        );
+    }
+
+    // S-1h: Defect 11 — monitor credentials present, main credentials absent → ok.
+    // The monitor account is the only account required for relay startup.
+    #[test]
+    fn validate_relay_enabled_monitor_credentials_sufficient_without_main() {
+        let (_dir, pidfile, log_file) = writable_paths();
+        let cfg = make_config(
+            true,
+            None, None,
+            Some("monitor@example.com"), Some("monitor-pass"),
+            pidfile, log_file,
+        );
+        assert!(
+            validate_startup(&cfg, None).is_ok(),
+            "Defect 11 red state: monitor credentials alone must be sufficient; \
+             currently fails because the main account credentials are absent",
+        );
     }
 }

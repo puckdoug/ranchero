@@ -49,6 +49,40 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
 
 struct StubAuth;
 
+/// Records the email address passed to `login` for assertion in Defect 11 tests.
+struct RecordingAuth {
+    called_with_email: Arc<StdMutex<Option<String>>>,
+}
+
+impl RecordingAuth {
+    fn new() -> (Self, Arc<StdMutex<Option<String>>>) {
+        let called_with_email = Arc::new(StdMutex::new(None));
+        (Self { called_with_email: Arc::clone(&called_with_email) }, called_with_email)
+    }
+}
+
+impl AuthLogin for RecordingAuth {
+    async fn login(&self, email: &str, _password: &str) -> Result<(), zwift_api::Error> {
+        *self.called_with_email.lock().unwrap() = Some(email.to_string());
+        Ok(())
+    }
+}
+
+/// Returns a fixed athlete ID from `athlete_id()` for Defect 12 tests.
+struct KnownIdAuth {
+    id: i64,
+}
+
+impl AuthLogin for KnownIdAuth {
+    async fn login(&self, _email: &str, _password: &str) -> Result<(), zwift_api::Error> {
+        Ok(())
+    }
+
+    async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
+        Ok(self.id)
+    }
+}
+
 impl AuthLogin for StubAuth {
     async fn login(
         &self,
@@ -679,5 +713,114 @@ async fn relay_runtime_logs_session_refreshed_at_info() {
         "Defect 7 red state: expected a `relay.session.refreshed` record \
          after a Refreshed event; the runtime must subscribe to the \
          supervisor's event broadcast",
+    );
+}
+
+// ==========================================================================
+// Defect 11 — Relay authenticates as the wrong account.
+//
+// Red state: both start_inner sites pass cfg.main_email / cfg.main_password
+// to AuthLogin and SessionLogin. Monitor credentials are resolved and then
+// silently discarded, so every live invocation impersonates the rider's
+// own game session.
+// ==========================================================================
+
+#[tokio::test]
+async fn relay_runtime_authenticates_as_monitor_account() {
+    // Both main and monitor credentials are present. The relay must use the
+    // monitor account for the AuthLogin call, not the main account.
+    let mut cfg = make_config("main@example.com", "main-pass");
+    cfg.monitor_email    = Some("monitor@example.com".to_string());
+    cfg.monitor_password = Some(RedactedString::new("monitor-pass".to_string()));
+
+    let (auth, called_with_email) = RecordingAuth::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        auth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let email = called_with_email
+        .lock()
+        .unwrap()
+        .take()
+        .expect("AuthLogin::login was never called");
+    assert_eq!(
+        email, "monitor@example.com",
+        "Defect 11 red state: relay must authenticate as the monitor account; \
+         was called with {email:?} instead",
+    );
+}
+
+#[tokio::test]
+async fn relay_runtime_start_fails_when_monitor_credentials_absent() {
+    // Main credentials are set; monitor credentials are absent.
+    // After the fix, the runtime must reject this configuration rather than
+    // proceeding with the main account.
+    let cfg = make_config("main@example.com", "main-pass");
+
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "Defect 11 red state: relay must fail to start when monitor credentials \
+         are absent; currently succeeds by falling back to the main account",
+    );
+}
+
+// ==========================================================================
+// Defect 12 — athlete_id hardcoded to 0 in TcpChannelConfig, UdpChannelConfig,
+// and HeartbeatScheduler.
+//
+// Red state: start_all_inner does not call auth.athlete_id(); the monitor
+// account's profile ID is never retrieved and therefore never appears in
+// log records or outbound packets.
+// ==========================================================================
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn relay_runtime_logs_monitor_athlete_id_after_login() {
+    // KnownIdAuth returns 99_999 from athlete_id(). After the fix, the runtime
+    // must call athlete_id(), log the value, and forward it to the channel
+    // configs and heartbeat scheduler.
+    let mut cfg = make_config("main@example.com", "main-pass");
+    cfg.monitor_email    = Some("monitor@example.com".to_string());
+    cfg.monitor_password = Some(RedactedString::new("monitor-pass".to_string()));
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        KnownIdAuth { id: 99_999 },
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "99999"),
+        "Defect 12 red state: relay must retrieve and log the monitor account's \
+         athlete ID after login; athlete_id 99999 was not found in any log record",
     );
 }

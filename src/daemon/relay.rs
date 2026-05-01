@@ -79,6 +79,16 @@ pub trait AuthLogin: Send + Sync + 'static {
         email: &str,
         password: &str,
     ) -> impl std::future::Future<Output = Result<(), zwift_api::Error>> + Send;
+
+    /// Returns the authenticated account's Zwift athlete ID (profile ID).
+    /// Called after a successful `login` to populate the `athlete_id` field
+    /// in outbound `ClientToServer` packets (Defect 12). Defaults to 0 until
+    /// the production implementation reads it from the OAuth profile response.
+    fn athlete_id(
+        &self,
+    ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send {
+        async { Ok(0i64) }
+    }
 }
 
 /// Dependency-injection trait for the relay-session login step.
