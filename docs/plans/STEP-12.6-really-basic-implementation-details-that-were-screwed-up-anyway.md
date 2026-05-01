@@ -1,6 +1,6 @@
 # Step 12.6 — Really basic implementation details that were screwed up anyway
 
-**Status:** complete (2026-05-01). Defects 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 complete.
+**Status:** in progress (2026-05-01). Defects 1–10 complete. Defects 11–13 pending.
 
 ## Summary of findings
 
@@ -59,30 +59,38 @@ but produce silently wrong or misleading behaviour):
   (`src/tui/keyring.rs`, consumers at
   `src/tui/driver.rs:12`, `tests/tui.rs:5`)
   **Complete 2026-05-01.**
-
-Observations (operator-visible configuration with no current
-consumer; reasonably deferred to later STEPs but worth flagging
-in the parent plan or TUI help text):
-
-- [ ] **Observation 1** — Monitor-account credential is stored,
-  surfaced in `auth-check`, and ignored by the orchestrator.
-  (`src/daemon/relay.rs:678-685`)
-- [ ] **Observation 2** — `server_bind` / `server_port` /
-  `server_https` are loaded with full schema and env
-  overrides; no consumer exists outside test fixtures.
-  (`src/config/mod.rs:319-321`)
+- [ ] **Defect 11** — The relay authenticates as the main account
+  instead of the monitor account. The reference implementation
+  uses the monitor account to establish the TCP session
+  (specifically to avoid impersonating the rider's own game
+  session), and uses the main account's athlete ID only as the
+  subject being watched. The current code passes `main_email` /
+  `main_password` to the auth and session login steps
+  (`src/daemon/relay.rs:875–882`, `1138–1145`); `monitor_email`
+  / `monitor_password` are loaded and discarded.
+- [ ] **Defect 12** — `athlete_id` is hardcoded to 0 in
+  `TcpChannelConfig`, `UdpChannelConfig`, and
+  `HeartbeatScheduler` (`src/daemon/relay.rs:930, 993, 1021`).
+  The correct value is the monitor account's athlete ID,
+  obtained from the profile response after monitor-account
+  login. Resolved as part of Defect 11.
+- [ ] **Defect 13** — `conn_id` is hardcoded to 0 in
+  `TcpChannelConfig` and `UdpChannelConfig`
+  (`src/daemon/relay.rs:931, 994`). The correct value is a
+  per-channel incrementing counter (modulo 0xffff), matching
+  the reference's `getConnInc()` logic. The counter is used
+  directly in the AES-GCM encryption IV; hardcoding it causes
+  IV reuse on reconnection.
 
 Minor cosmetic findings:
 
-- [ ] **Minor 1** — `start_inner` numbered comments skip step 5
-  (1, 2, 3, 4, 6, 7, 8). (`src/daemon/relay.rs:677-756`)
-- [ ] **Minor 2** — `tcp_config.athlete_id` and `conn_id` are
-  hardcoded to 0; placeholders that work only because nothing
-  is sent today. (`src/daemon/relay.rs:717-722`)
+- [x] **Minor 1** — `start_inner` numbered comments skipped
+  step 5 (1, 2, 3, 4, 6, 7, 8).
+  **Complete 2026-05-01.**
 
 Defects 1 and 2 are detailed below under `Defects`. Defects 3
-through 10 and the observations / minor findings are detailed
-in `Addendum 2026-04-29 — full operator-path walkthrough`
+through 13 and the minor findings are detailed in
+`Addendum 2026-04-29 — full operator-path walkthrough`
 toward the end of this document.
 
 ## Background
@@ -838,42 +846,62 @@ change the imports at `src/tui/driver.rs:12` and
 and `use ranchero::credentials::{InMemoryKeyringStore,
 KeyringStore};` respectively.
 
-### Observation 1. The monitor account is loaded but never used
+### Defect 11. The relay authenticates as the wrong account
 
-Spec §1 describes the **monitor account** as the credential
-under which the live relay stream is actually received,
-specifically so that ranchero does not impersonate the
-rider's own game session. `ResolvedConfig` carries
-`monitor_email` and `monitor_password`
-(`src/config/mod.rs:317-318`), the configure TUI saves them
-to the keychain under the `monitor` role, and the
-`ranchero auth-check` output reports them. The orchestrator
-ignores them: `RelayRuntime::start_inner` reads only
-`cfg.main_email` and `cfg.main_password`
-(`src/daemon/relay.rs:678-685`).
+**Where it lives.** `src/daemon/relay.rs:875–882` and
+`src/daemon/relay.rs:1138–1145`.
 
-This is consistent with the parent plan's narrowing of
-STEP-12 to a single account for the connectivity proof, and
-the monitor-account integration is reasonably deferred to
-STEP-13 or later. It does mean that the TUI prompt and the
-keychain entry for the monitor account are operator-visible
-configuration that the daemon currently ignores; an operator
-could reasonably expect the monitor credential to be in use.
-Worth a note in the parent plan or in the configure TUI's
-help text.
+**What is wrong.** The reference implementation (sauce4zwift
+`src/zwift.mjs`) uses two distinct accounts with distinct
+roles:
 
-### Observation 2. `server_bind` / `server_port` / `server_https` have no consumer
+- The **monitor account** authenticates the TCP relay
+  session. It calls `/api/users/login` under its own OAuth
+  token, receives the `relaySessionId` and `aesKey`, and
+  holds the persistent TCP connection. The sauce4zwift UI
+  describes it as "a FREE secondary login used ONLY by
+  Sauce." The purpose is to avoid impersonating the rider's
+  own active game session; if the relay connection were made
+  under the main account, Zwift would see two simultaneous
+  sessions for the same account.
 
-`ResolvedConfig` carries `server_bind`, `server_port`, and
-`server_https` (`src/config/mod.rs:319-321`), with full TOML
-schema and `RANCHERO_SERVER_PORT` / `RANCHERO_SERVER_BIND`
-environment overrides
-(`src/config/mod.rs:350-364`). No consumer exists in `src/`
-outside the test fixtures. The HTTP / WebSocket server is
-explicitly STEP-17, so the absence of a consumer today is
-expected. As with the monitor account, it is operator-
-visible configuration with no current effect; worth a brief
-parent-plan note.
+- The **main account** is the rider being watched. Its
+  athlete ID (`selfAthleteId`) is used as the subject of
+  the relay stream — the `ClientToServer` hello and all
+  subsequent protocol messages reference this ID. The main
+  account's athlete ID is obtained by logging in to the main
+  account once to read `profile.id`; whether the main
+  account password is required beyond that single profile
+  lookup is an open question worth confirming against the
+  reference before implementing.
+
+In ranchero today both `start_inner` sites
+(`src/daemon/relay.rs:875–882` and `1138–1145`) extract
+`cfg.main_email` and `cfg.main_password` and pass them to
+the auth and session login steps. The monitor credentials
+(`cfg.monitor_email`, `cfg.monitor_password`) are resolved
+from the keychain, stored in `ResolvedConfig`, surfaced in
+`auth-check`, and then silently discarded. Every live
+invocation impersonates the rider's own game session.
+
+**Required remediation.**
+
+1. Change `start_inner` to require and use
+   `cfg.monitor_email` / `cfg.monitor_password` for the
+   `AuthLogin` and `SessionLogin` calls.
+2. Determine whether `cfg.main_email` / `cfg.main_password`
+   are still needed, or whether the main athlete ID can be
+   resolved from a single unauthenticated or lightly
+   authenticated profile lookup. Update `ResolvedConfig` and
+   `start_inner` accordingly.
+3. Add `RelayRuntimeError::MissingMonitorEmail` and
+   `MissingMonitorPassword` variants (replacing or
+   supplementing the existing `MissingEmail` /
+   `MissingPassword` variants).
+4. Update `validate.rs` pre-start checks to gate on the
+   monitor credentials rather than the main credentials.
+5. Update all test `make_config` fixtures and integration
+   tests to supply monitor credentials.
 
 ### Minor finding 1. `start_inner` step numbering skips 5
 
@@ -2068,72 +2096,138 @@ in the log at each refresh cycle.
 
 ---
 
-### Observation 1 — documentation plan
+### Defect 11 — implementation plan
 
-No code change required.
+1. Confirm against the sauce4zwift reference whether the
+   main account password is required beyond resolving the
+   initial athlete ID. If not, remove `main_password` from
+   the required-credential check in `start_inner` and update
+   `ResolvedConfig` documentation accordingly.
 
-1. `docs/plans/done/STEP-12-game-monitor.md` — add a
-   note under the "in scope" list: the monitor account
-   is stored by the configure TUI and surfaced by
-   `auth-check`, but the orchestrator currently uses
-   only the main account for both authentication and
-   stream reception. The monitor account will be
-   activated in STEP-13.
+2. In `src/daemon/relay.rs`, change both `start_inner`
+   sites (`lines 875–882` and `1138–1145`) to extract
+   `cfg.monitor_email` / `cfg.monitor_password` for the
+   `AuthLogin` / `SessionLogin` calls. Require and
+   propagate `MissingMonitorEmail` / `MissingMonitorPassword`
+   errors.
 
-2. The configure TUI prompt for the monitor account
-   (`src/tui/model.rs` or the prompt text therein) —
-   add a parenthetical: "(for future use — not
-   consumed in the current release)".
+3. Add the new error variants to `RelayRuntimeError`.
 
----
+4. Update `src/daemon/validate.rs` pre-start checks to gate
+   on monitor credentials instead of main credentials.
 
-### Observation 2 — documentation plan
-
-No code change required.
-
-1. `docs/plans/done/STEP-12-game-monitor.md` — add a
-   note that `server_bind`, `server_port`, and
-   `server_https` are schema-resident but have no
-   consumer until STEP-17 introduces the HTTP /
-   WebSocket server.
+5. Update all test `make_config` fixtures (in
+   `src/daemon/relay.rs`, `tests/relay_runtime.rs`,
+   `tests/full_scope.rs`, `tests/auth_check.rs`,
+   `src/daemon/validate.rs`) to supply monitor credentials
+   rather than main credentials.
 
 ---
 
 ### Minor finding 1 — step renumbering plan
 
-No test required.
-
-When the structural changes for Defects 3 through 7
-are applied, renumber the comment markers in
-`start_inner` (`src/daemon/relay.rs:677-756`) from
-`1, 2, 3, 4, 6, 7, 8` to a consecutive sequence
-reflecting the new step order (the previously missing
-step 5 is occupied by the hello-send step added by
-Defect 3). Apply this during the Defect 3 edit so
-the renumbering is a single coherent change.
+**Complete 2026-05-01.** The `start_inner` step comments
+were renumbered from `1, 2, 3, 4, 6, 7, 8` to
+`1, 2, 3, 4, 5, 6, 7`.
 
 ---
 
-### Minor finding 2 — placeholder values plan
+### Defect 12 — `athlete_id` hardcoded to 0
 
-No standalone test required; both values are verified
-indirectly by the hello-packet test for Defect 3.
+**Where it lives.** `src/daemon/relay.rs:930` (TCP config),
+`src/daemon/relay.rs:993` (UDP config),
+`src/daemon/relay.rs:1021` (heartbeat scheduler).
 
-Defer filling in the real values until Defects 3
-through 7 are resolved, at which point the hello
-packet is actually transmitted and a bad value would
-produce a server-side rejection.
+**What is wrong.** Every `ClientToServer` packet sent to
+the Zwift relay — including the TCP hello and all 1 Hz
+heartbeats — contains an `athlete_id` field that
+identifies the connected account. The reference sets
+this to the monitor account's profile ID immediately
+after login (`this.athleteId = this.api.profile.id`).
+Ranchero sends 0, which either fails server-side
+validation or associates the session with a phantom
+account.
 
-1. `conn_id`: introduce a per-runtime atomic counter,
-   incremented each time a new channel is opened.
-   Starting value 1. Wire it into `TcpChannelConfig`
-   when constructing the hello packet.
+**Required remediation.** This is resolved as part of
+Defect 11. When the monitor account login is implemented,
+the profile ID is available from the login response and
+must be threaded through to `TcpChannelConfig`,
+`UdpChannelConfig`, and `HeartbeatScheduler::new`.
 
-2. `athlete_id`: obtain it from the `/api/profiles/me`
-   response during the auth step. Until that call is
-   added, retain 0 but replace the silent zero with an
-   explicit comment:
-   `// placeholder: populate from /api/profiles/me`
+---
+
+### Defect 13 — `conn_id` hardcoded to 0
+
+**Where it lives.** `src/daemon/relay.rs:931`
+(`TcpChannelConfig`) and `src/daemon/relay.rs:994`
+(`UdpChannelConfig`).
+
+**What is wrong.** `conn_id` is used directly in the
+AES-GCM encryption IV construction inside `zwift_relay`.
+The reference implementation assigns it from a
+per-channel static counter that increments modulo 0xffff
+(`getConnInc()`), so each channel instance gets a unique
+value. The initial value for a fresh process is 0, so the
+first connection works correctly. On any reconnection
+within the same process the counter should advance to 1,
+2, and so on; ranchero always passes 0, causing the same
+IV to be reused under the same key, which breaks AES-GCM.
+
+**Required remediation.**
+
+1. Add a process-wide `AtomicU32` counter in
+   `start_all_inner` (or at the `RelayRuntime` struct
+   level). Increment it and take `value % 0xffff` each
+   time a new channel pair is opened.
+2. Pass the resulting value as `conn_id` in both
+   `TcpChannelConfig` and `UdpChannelConfig`.
+3. No new test is strictly required: the existing
+   `start_all_inner` integration tests will exercise
+   the counter on the first connection; a reconnection
+   test covering the increment behaviour is desirable
+   but may be deferred.
+
+---
+
+### `watched_athlete_id` config field proposal
+
+**Motivation.** In the two-account model the relay
+authenticates as the monitor account and watches the
+main account's athlete ID (`selfAthleteId`). That ID is
+currently unset (0) in ranchero; the intended fix is to
+obtain it by logging into the main account once and
+reading its profile. However, an athlete's Zwift ID is
+public information — visible in the Zwift companion app
+and in profile URLs. If the operator supplies it
+directly in `ranchero.toml`, the main account login is
+entirely unnecessary, eliminating `main_email` and
+`main_password` from the required credential set.
+
+**Proposed schema addition.**
+
+```toml
+[zwift]
+watched_athlete_id = 123456   # Zwift athlete ID of the rider to monitor
+```
+
+**Implementation.**
+
+1. Add `watched_athlete_id: Option<u64>` to `ZwiftConfig`
+   in `src/config/mod.rs`. Default `None`.
+2. Add `watched_athlete_id: Option<u64>` to
+   `ResolvedConfig`. Populate directly from
+   `file.zwift.watched_athlete_id` (no env override
+   needed at this stage).
+3. In `start_all_inner`, when `watched_athlete_id` is
+   `Some(id)`, use it to initialise `WatchedAthleteState`
+   and skip any main-account profile lookup. When `None`,
+   fall back to the main-account login path (which is
+   itself deferred until after Defect 11 is resolved).
+4. Update `validate.rs` pre-start checks: if
+   `watched_athlete_id` is `Some`, the main account
+   credentials are not required.
+5. Surface the field in `auth-check` output and in the
+   configure TUI.
 
 ---
 
@@ -2154,6 +2248,7 @@ failures between steps:
 | 8 | Defect 3 | TCP hello send; requires Defect 6 | **Done 2026-05-01** |
 | 9 | Defect 4 | UDP channel construction; requires Defect 3 | **Done 2026-05-01** |
 | 10 | Defect 5 | Heartbeat spawn; requires Defect 4 | **Done 2026-05-01** |
-| 11 | Minor 1 | Renumber step comments; apply during Defect 3 edit | — |
-| 12 | Minor 2 | Fill `athlete_id` / `conn_id`; defer until Defect 3 is applied | — |
-| 13 | Obs. 1, 2 | Documentation only; no ordering constraint | — |
+| 11 | Defect 11 | Swap main→monitor credentials in relay; add `watched_athlete_id` config field to eliminate main-account login | — |
+| 12 | Defect 12 | Thread monitor profile ID into `TcpChannelConfig`, `UdpChannelConfig`, `HeartbeatScheduler`; resolved as part of Defect 11 | — |
+| 13 | Defect 13 | Per-channel `conn_id` counter; independent of Defect 11 | — |
+| 14 | Minor 1 | Renumber `start_inner` step comments | **Done 2026-05-01** |

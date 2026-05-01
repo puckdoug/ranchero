@@ -1161,7 +1161,7 @@ impl RelayRuntime {
             return Err(RelayRuntimeError::NoTcpServers);
         }
 
-        // 6. Pick the first TCP server and connect.
+        // 5. Pick the first TCP server and connect.
         let server = &session.tcp_servers[0];
         let addr_str = format!("{}:{}", server.ip, server.port);
         let addr: std::net::SocketAddr = addr_str
@@ -1173,7 +1173,7 @@ impl RelayRuntime {
             .await
             .map_err(RelayRuntimeError::TcpConnect)?;
 
-        // 7. Establish the TCP channel and wait for Established.
+        // 6. Establish the TCP channel and wait for Established.
         let tcp_config = zwift_relay::TcpChannelConfig {
             athlete_id: 0,
             conn_id: 0,
@@ -1215,7 +1215,7 @@ impl RelayRuntime {
             }
         }
 
-        // 8. Set up the forwarded event broadcast and spawn the
+        // 7. Set up the forwarded event broadcast and spawn the
         //    recv-loop. The forwarder reads from the channel's
         //    broadcast and republishes on our `events_tx` so that
         //    tests can inject synthetic events on the same surface.
