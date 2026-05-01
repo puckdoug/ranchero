@@ -2,7 +2,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 use ranchero::config::{ConfigError, ConfigFile};
 use ranchero::config::store::ConfigStore;
-use ranchero::tui::keyring::{InMemoryKeyringStore, KeyringStore};
+use ranchero::credentials::{InMemoryKeyringStore, KeyringStore};
 use ranchero::tui::model::{Action, Model};
 
 // ---------------------------------------------------------------------------

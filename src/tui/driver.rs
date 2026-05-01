@@ -9,7 +9,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::config::ConfigError;
 use crate::config::store::ConfigStore;
-use crate::tui::keyring::KeyringStore;
+use crate::credentials::KeyringStore;
 use crate::tui::model::{Action, Model};
 use crate::tui::view::render;
 
