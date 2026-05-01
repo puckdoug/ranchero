@@ -69,6 +69,7 @@ impl Default for ConfigFile {
 pub struct ZwiftConfig {
     pub auth_base: String,
     pub api_base: String,
+    pub watched_athlete_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +111,7 @@ impl Default for ZwiftConfig {
         Self {
             auth_base: "https://secure.zwift.com".to_string(),
             api_base:  "https://us-or-rly101.zwift.com".to_string(),
+            watched_athlete_id: None,
         }
     }
 }
@@ -363,6 +365,7 @@ pub struct ResolvedConfig {
     pub editing_mode: EditingMode,
     pub zwift_endpoints: ZwiftEndpoints,
     pub relay_enabled: bool,
+    pub watched_athlete_id: Option<u64>,
 }
 
 /// Resolved Zwift HTTPS endpoint configuration. Built by
@@ -474,6 +477,7 @@ impl ResolvedConfig {
             editing_mode,
             zwift_endpoints,
             relay_enabled: file.relay.enabled,
+            watched_athlete_id: file.zwift.watched_athlete_id,
         })
     }
 }

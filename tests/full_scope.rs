@@ -103,6 +103,7 @@ fn lib_config(
             api_base:  UNROUTABLE_ZWIFT_BASE.to_string(),
         },
         relay_enabled: true,
+        watched_athlete_id: None,
     }
 }
 

@@ -40,6 +40,7 @@ pub enum FieldId {
     MainPassword,
     MonitorEmail,
     MonitorPassword,
+    WatchedAthleteId,
     ServerBind,
     ServerPort,
     ServerHttps,
@@ -54,6 +55,7 @@ impl FieldId {
             Screen::Accounts => &[
                 FieldId::MainEmail, FieldId::MainPassword,
                 FieldId::MonitorEmail, FieldId::MonitorPassword,
+                FieldId::WatchedAthleteId,
             ],
             Screen::Server  => &[FieldId::ServerBind, FieldId::ServerPort, FieldId::ServerHttps],
             Screen::Logging => &[FieldId::LogLevel, FieldId::LogFile],
@@ -67,7 +69,7 @@ impl FieldId {
     }
 
     pub fn is_numeric(self) -> bool {
-        matches!(self, FieldId::ServerPort)
+        matches!(self, FieldId::ServerPort | FieldId::WatchedAthleteId)
     }
 
     pub fn is_boolean(self) -> bool {
@@ -111,16 +113,17 @@ impl ValidationReport {
 }
 
 pub struct Fields {
-    pub main_email:       EditorState,
-    pub main_password:    EditorState,   // rendered as *** in view; never serialized
-    pub monitor_email:    EditorState,
-    pub monitor_password: EditorState,   // rendered as *** in view; never serialized
-    pub server_bind:      EditorState,
-    pub server_port:      EditorState,   // only digits accepted
-    pub server_https:     bool,          // toggled, not text-edited
-    pub log_level:        EditorState,
-    pub log_file:         EditorState,
-    pub pid_file:         EditorState,
+    pub main_email:         EditorState,
+    pub main_password:      EditorState,   // rendered as *** in view; never serialized
+    pub monitor_email:      EditorState,
+    pub monitor_password:   EditorState,   // rendered as *** in view; never serialized
+    pub watched_athlete_id: EditorState,   // only digits accepted; empty means None
+    pub server_bind:        EditorState,
+    pub server_port:        EditorState,   // only digits accepted
+    pub server_https:       bool,          // toggled, not text-edited
+    pub log_level:          EditorState,
+    pub log_file:           EditorState,
+    pub pid_file:           EditorState,
 }
 
 fn make_editor(text: &str) -> EditorState {
@@ -149,32 +152,34 @@ fn editor_text(state: &EditorState) -> String {
 impl Fields {
     pub fn from_config(cfg: &ConfigFile) -> Self {
         Self {
-            main_email:       make_editor(&cfg.accounts.main.email.clone().unwrap_or_default()),
-            main_password:    make_editor(""),
-            monitor_email:    make_editor(&cfg.accounts.monitor.email.clone().unwrap_or_default()),
-            monitor_password: make_editor(""),
-            server_bind:      make_editor(&cfg.server.bind),
-            server_port:      make_editor(&cfg.server.port.to_string()),
-            server_https:     cfg.server.https,
-            log_level:        make_editor(&cfg.logging.level.as_ref().map(|l| l.to_string()).unwrap_or_default()),
-            log_file:         make_editor(&cfg.logging.file),
-            pid_file:         make_editor(&cfg.daemon.pidfile),
+            main_email:         make_editor(&cfg.accounts.main.email.clone().unwrap_or_default()),
+            main_password:      make_editor(""),
+            monitor_email:      make_editor(&cfg.accounts.monitor.email.clone().unwrap_or_default()),
+            monitor_password:   make_editor(""),
+            watched_athlete_id: make_editor(&cfg.zwift.watched_athlete_id.map(|id| id.to_string()).unwrap_or_default()),
+            server_bind:        make_editor(&cfg.server.bind),
+            server_port:        make_editor(&cfg.server.port.to_string()),
+            server_https:       cfg.server.https,
+            log_level:          make_editor(&cfg.logging.level.as_ref().map(|l| l.to_string()).unwrap_or_default()),
+            log_file:           make_editor(&cfg.logging.file),
+            pid_file:           make_editor(&cfg.daemon.pidfile),
         }
     }
 
     /// Return the current text content of a field.
     pub fn text(&self, field: FieldId) -> String {
         match field {
-            FieldId::MainEmail       => editor_text(&self.main_email),
-            FieldId::MainPassword    => editor_text(&self.main_password),
-            FieldId::MonitorEmail    => editor_text(&self.monitor_email),
-            FieldId::MonitorPassword => editor_text(&self.monitor_password),
-            FieldId::ServerBind      => editor_text(&self.server_bind),
-            FieldId::ServerPort      => editor_text(&self.server_port),
-            FieldId::LogLevel        => editor_text(&self.log_level),
-            FieldId::LogFile         => editor_text(&self.log_file),
-            FieldId::PidFile         => editor_text(&self.pid_file),
-            FieldId::ServerHttps     => if self.server_https { "true" } else { "false" }.to_string(),
+            FieldId::MainEmail         => editor_text(&self.main_email),
+            FieldId::MainPassword      => editor_text(&self.main_password),
+            FieldId::MonitorEmail      => editor_text(&self.monitor_email),
+            FieldId::MonitorPassword   => editor_text(&self.monitor_password),
+            FieldId::WatchedAthleteId  => editor_text(&self.watched_athlete_id),
+            FieldId::ServerBind        => editor_text(&self.server_bind),
+            FieldId::ServerPort        => editor_text(&self.server_port),
+            FieldId::LogLevel          => editor_text(&self.log_level),
+            FieldId::LogFile           => editor_text(&self.log_file),
+            FieldId::PidFile           => editor_text(&self.pid_file),
+            FieldId::ServerHttps       => if self.server_https { "true" } else { "false" }.to_string(),
         }
     }
 
@@ -187,31 +192,33 @@ impl Fields {
 
     pub fn get_editor_mut(&mut self, field: FieldId) -> Option<&mut EditorState> {
         match field {
-            FieldId::MainEmail       => Some(&mut self.main_email),
-            FieldId::MainPassword    => Some(&mut self.main_password),
-            FieldId::MonitorEmail    => Some(&mut self.monitor_email),
-            FieldId::MonitorPassword => Some(&mut self.monitor_password),
-            FieldId::ServerBind      => Some(&mut self.server_bind),
-            FieldId::ServerPort      => Some(&mut self.server_port),
-            FieldId::LogLevel        => Some(&mut self.log_level),
-            FieldId::LogFile         => Some(&mut self.log_file),
-            FieldId::PidFile         => Some(&mut self.pid_file),
-            FieldId::ServerHttps     => None,
+            FieldId::MainEmail         => Some(&mut self.main_email),
+            FieldId::MainPassword      => Some(&mut self.main_password),
+            FieldId::MonitorEmail      => Some(&mut self.monitor_email),
+            FieldId::MonitorPassword   => Some(&mut self.monitor_password),
+            FieldId::WatchedAthleteId  => Some(&mut self.watched_athlete_id),
+            FieldId::ServerBind        => Some(&mut self.server_bind),
+            FieldId::ServerPort        => Some(&mut self.server_port),
+            FieldId::LogLevel          => Some(&mut self.log_level),
+            FieldId::LogFile           => Some(&mut self.log_file),
+            FieldId::PidFile           => Some(&mut self.pid_file),
+            FieldId::ServerHttps       => None,
         }
     }
 
     pub fn get_editor(&self, field: FieldId) -> Option<&EditorState> {
         match field {
-            FieldId::MainEmail       => Some(&self.main_email),
-            FieldId::MainPassword    => Some(&self.main_password),
-            FieldId::MonitorEmail    => Some(&self.monitor_email),
-            FieldId::MonitorPassword => Some(&self.monitor_password),
-            FieldId::ServerBind      => Some(&self.server_bind),
-            FieldId::ServerPort      => Some(&self.server_port),
-            FieldId::LogLevel        => Some(&self.log_level),
-            FieldId::LogFile         => Some(&self.log_file),
-            FieldId::PidFile         => Some(&self.pid_file),
-            FieldId::ServerHttps     => None,
+            FieldId::MainEmail         => Some(&self.main_email),
+            FieldId::MainPassword      => Some(&self.main_password),
+            FieldId::MonitorEmail      => Some(&self.monitor_email),
+            FieldId::MonitorPassword   => Some(&self.monitor_password),
+            FieldId::WatchedAthleteId  => Some(&self.watched_athlete_id),
+            FieldId::ServerBind        => Some(&self.server_bind),
+            FieldId::ServerPort        => Some(&self.server_port),
+            FieldId::LogLevel          => Some(&self.log_level),
+            FieldId::LogFile           => Some(&self.log_file),
+            FieldId::PidFile           => Some(&self.pid_file),
+            FieldId::ServerHttps       => None,
         }
     }
 }
@@ -319,6 +326,7 @@ impl Model {
         let initial_texts = [
             FieldId::MainEmail, FieldId::MainPassword,
             FieldId::MonitorEmail, FieldId::MonitorPassword,
+            FieldId::WatchedAthleteId,
             FieldId::ServerBind, FieldId::ServerPort,
             FieldId::LogLevel, FieldId::LogFile, FieldId::PidFile,
         ].into_iter()
@@ -1153,7 +1161,11 @@ impl Model {
                 pidfile: self.fields.text(FieldId::PidFile),
             },
             tui: TuiConfig { editing_mode: editing_mode_cfg },
-            zwift: self.zwift.clone(),
+            zwift: crate::config::ZwiftConfig {
+                auth_base: self.zwift.auth_base.clone(),
+                api_base:  self.zwift.api_base.clone(),
+                watched_athlete_id: self.fields.text(FieldId::WatchedAthleteId).parse::<u64>().ok(),
+            },
             relay: crate::config::RelayConfig::default(),
             keyring: crate::config::KeyringConfig::default(),
         }
@@ -1207,6 +1219,8 @@ mod tests {
         assert_eq!(m.focus, FieldId::MonitorEmail);
         m.update(key(KeyCode::Down));
         assert_eq!(m.focus, FieldId::MonitorPassword);
+        m.update(key(KeyCode::Down));
+        assert_eq!(m.focus, FieldId::WatchedAthleteId);
         // wraps around
         m.update(key(KeyCode::Down));
         assert_eq!(m.focus, FieldId::MainEmail);
@@ -1218,7 +1232,7 @@ mod tests {
         assert_eq!(m.focus, FieldId::MainEmail);
         m.update(key(KeyCode::Up));
         // wraps to last field on screen
-        assert_eq!(m.focus, FieldId::MonitorPassword);
+        assert_eq!(m.focus, FieldId::WatchedAthleteId);
     }
 
     #[test]

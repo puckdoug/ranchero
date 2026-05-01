@@ -42,6 +42,7 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
             api_base:  "http://127.0.0.1:1".into(),
         },
         relay_enabled: true,
+        watched_athlete_id: None,
     }
 }
 

@@ -1108,9 +1108,13 @@ impl RelayRuntime {
         let shutdown = Arc::new(Notify::new());
         let (udp_events_tx, udp_events_rx) =
             tokio::sync::broadcast::channel::<zwift_relay::ChannelEvent>(64);
+        let initial_watched = match cfg.watched_athlete_id {
+            Some(id) => WatchedAthleteState::for_athlete(id as i64),
+            None => WatchedAthleteState::default(),
+        };
         let inner = Arc::new(RuntimeInner {
             pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
-            watched_state: std::sync::Mutex::new(WatchedAthleteState::default()),
+            watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
         });
 
@@ -1262,9 +1266,13 @@ impl RelayRuntime {
 
         // Internal routing state, shared with the recv-loop and
         // with the test-only injection methods.
+        let initial_watched = match cfg.watched_athlete_id {
+            Some(id) => WatchedAthleteState::for_athlete(id as i64),
+            None => WatchedAthleteState::default(),
+        };
         let inner = Arc::new(RuntimeInner {
             pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
-            watched_state: std::sync::Mutex::new(WatchedAthleteState::default()),
+            watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
         });
 
@@ -1738,6 +1746,7 @@ mod tests {
                 api_base:  "http://127.0.0.1:1".into(),
             },
             relay_enabled: true,
+            watched_athlete_id: None,
         }
     }
 

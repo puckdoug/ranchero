@@ -561,3 +561,241 @@ fn start_exits_nonzero_when_log_directory_missing() {
         "expected 'log file' and 'not writable' in stderr, got: {stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Step 12.9 Item 1 — capture path resolved before fork; file opened pre-fork
+// ---------------------------------------------------------------------------
+
+/// Sub-7: a relative `--capture` path is resolved against the operator's CWD,
+/// not the daemon's CWD after `chdir("/")`.
+///
+/// RED: current code forwards the raw PathBuf to `RelayRuntime::start`, which
+/// runs after `chdir("/")`. With relay disabled the file is never opened at all,
+/// so `<tempdir>/session.cap` does not exist.
+#[test]
+fn start_canonicalizes_relative_capture_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("s");
+    std::fs::create_dir_all(&state).unwrap();
+    let pidfile_path = state.join("ranchero.pid");
+    let socket_path = state.join("ranchero.sock");
+    let logfile_path = state.join("ranchero.log");
+    let config_path = dir.path().join("ranchero.toml");
+
+    let toml = format!(
+        "schema_version = 1\n\
+         [daemon]\n\
+         pidfile = \"{pidfile}\"\n\
+         [logging]\n\
+         file = \"{logfile}\"\n\
+         [relay]\n\
+         enabled = false\n\
+         [keyring]\n\
+         service = \"{TEST_KEYRING_SERVICE}\"\n",
+        pidfile = pidfile_path.display(),
+        logfile = logfile_path.display(),
+    );
+    std::fs::write(&config_path, &toml).unwrap();
+
+    // Background start with a relative capture path; CWD is the tempdir.
+    let out = Command::new(binary_path())
+        .current_dir(dir.path())
+        .args(["--config", &config_path.to_string_lossy()])
+        .args(["start", "--capture", "session.cap"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn ranchero");
+    assert!(
+        out.status.success(),
+        "Sub-7: background start must exit zero; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    // Wait for the daemon to signal it is ready.
+    let deadline = Instant::now() + READY_TIMEOUT;
+    let mut daemon_pid: Option<u32> = None;
+    while Instant::now() < deadline {
+        if let Ok(s) = std::fs::read_to_string(&pidfile_path)
+            && let Ok(p) = s.trim().parse::<u32>()
+            && socket_path.exists()
+        {
+            daemon_pid = Some(p);
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+
+    // Stop daemon; SIGKILL as a fallback so the test does not leak the process.
+    let _ = Command::new(binary_path())
+        .args(["--config", &config_path.to_string_lossy()])
+        .arg("stop")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if let Some(p) = daemon_pid {
+        let _ = Command::new("kill")
+            .args(["-9", &p.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    let capture_path = dir.path().join("session.cap");
+    assert!(
+        capture_path.exists(),
+        "Sub-7: capture file must appear at <tempdir>/session.cap when a relative path \
+         is given; current code resolves the path after chdir('/') and never opens the \
+         file when relay is disabled",
+    );
+    let bytes = std::fs::read(&capture_path).unwrap_or_default();
+    assert!(
+        bytes.len() >= 10,
+        "Sub-7: capture file must contain at least the 10-byte RNCWCAP header; \
+         got {} bytes",
+        bytes.len()
+    );
+}
+
+/// Sub-8: `ranchero start --capture <dir>` exits non-zero before forking when
+/// the capture path names an existing directory (not openable as a write target).
+///
+/// RED: current code only probes the parent directory for writability and then
+/// forks, so the foreground parent exits 0 even though the open will fail.
+#[test]
+fn start_exits_nonzero_when_capture_path_not_openable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("s");
+    std::fs::create_dir_all(&state).unwrap();
+    let pidfile_path = state.join("ranchero.pid");
+    let logfile_path = state.join("ranchero.log");
+    let config_path = dir.path().join("ranchero.toml");
+    // A directory at the capture location: the parent dir probe passes, but
+    // the actual open of a directory as a file must fail.
+    let capture_dir = dir.path().join("capture.cap");
+    std::fs::create_dir_all(&capture_dir).unwrap();
+
+    let toml = format!(
+        "schema_version = 1\n\
+         [daemon]\n\
+         pidfile = \"{pidfile}\"\n\
+         [logging]\n\
+         file = \"{logfile}\"\n\
+         [relay]\n\
+         enabled = false\n\
+         [keyring]\n\
+         service = \"{TEST_KEYRING_SERVICE}\"\n",
+        pidfile = pidfile_path.display(),
+        logfile = logfile_path.display(),
+    );
+    std::fs::write(&config_path, &toml).unwrap();
+
+    let out = Command::new(binary_path())
+        .args(["--config", &config_path.to_string_lossy()])
+        .args(["start", "--capture", &capture_dir.to_string_lossy()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn ranchero");
+    assert!(
+        !out.status.success(),
+        "Sub-8: start must exit non-zero when the capture path is an existing directory; \
+         current code forks after the parent-dir probe passes and the foreground \
+         parent exits 0; got {:?}",
+        out.status,
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.to_lowercase().contains("capture"),
+        "Sub-8: stderr must mention 'capture'; got: {stderr}",
+    );
+    assert!(
+        !pidfile_path.exists(),
+        "Sub-8: no pidfile must be written when start fails pre-fork",
+    );
+}
+
+/// Sub-9: the capture file header is written before the process forks, so the
+/// header bytes are present on disk as soon as the backgrounded `ranchero start`
+/// foreground process exits.
+///
+/// RED: current code opens the capture file inside `RelayRuntime::start`, which
+/// runs post-fork and is skipped entirely when relay is disabled. The file is
+/// therefore never created, and reading it yields zero bytes.
+#[test]
+fn capture_file_handle_survives_fork() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let state = dir.path().join("s");
+    std::fs::create_dir_all(&state).unwrap();
+    let pidfile_path = state.join("ranchero.pid");
+    let logfile_path = state.join("ranchero.log");
+    let config_path = dir.path().join("ranchero.toml");
+
+    let toml = format!(
+        "schema_version = 1\n\
+         [daemon]\n\
+         pidfile = \"{pidfile}\"\n\
+         [logging]\n\
+         file = \"{logfile}\"\n\
+         [relay]\n\
+         enabled = false\n\
+         [keyring]\n\
+         service = \"{TEST_KEYRING_SERVICE}\"\n",
+        pidfile = pidfile_path.display(),
+        logfile = logfile_path.display(),
+    );
+    std::fs::write(&config_path, &toml).unwrap();
+
+    // Background start returns after the foreground parent process exits.
+    // In green state the capture file is opened and the header written before the
+    // fork, so the bytes must be on disk by the time output() returns.
+    let out = Command::new(binary_path())
+        .current_dir(dir.path())
+        .args(["--config", &config_path.to_string_lossy()])
+        .args(["start", "--capture", "session.cap"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn ranchero");
+
+    // Best-effort cleanup: wait for pidfile, then stop.
+    let deadline = Instant::now() + READY_TIMEOUT;
+    let mut daemon_pid: Option<u32> = None;
+    while Instant::now() < deadline {
+        if let Ok(s) = std::fs::read_to_string(&pidfile_path)
+            && let Ok(p) = s.trim().parse::<u32>()
+        {
+            daemon_pid = Some(p);
+            break;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    let _ = Command::new(binary_path())
+        .args(["--config", &config_path.to_string_lossy()])
+        .arg("stop")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if let Some(p) = daemon_pid {
+        let _ = Command::new("kill")
+            .args(["-9", &p.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    assert!(
+        out.status.success(),
+        "Sub-9: background start must exit zero; stderr: {}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let capture_path = dir.path().join("session.cap");
+    let bytes = std::fs::read(&capture_path).unwrap_or_default();
+    assert!(
+        bytes.len() >= 10,
+        "Sub-9: capture file must contain at least the 10-byte RNCWCAP header written \
+         pre-fork; current code opens the file post-fork inside RelayRuntime::start and \
+         skips it when relay is disabled; got {} bytes",
+        bytes.len()
+    );
+}

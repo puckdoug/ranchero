@@ -133,6 +133,7 @@ mod tests {
                 api_base: "https://us-or-rly101.zwift.com".to_string(),
             },
             relay_enabled,
+            watched_athlete_id: None,
         }
     }
 
@@ -277,6 +278,56 @@ mod tests {
         let capture = dir.path().join("capture.bin");
         let cfg = make_config(false, None, None, None, None, pidfile, log_file);
         assert!(validate_startup(&cfg, Some(&capture)).is_ok(), "writable capture dir should be ok");
+    }
+
+    // S-4d — RED: validate_startup currently returns Result<(), ...>;
+    // StartupArtifacts does not exist yet.
+    #[test]
+    fn validate_capture_path_returns_open_writer_with_header() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pidfile = dir.path().join("ranchero.pid");
+        let log_file = dir.path().join("ranchero.log");
+        let capture = dir.path().join("capture.bin");
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
+
+        let artifacts: StartupArtifacts = // RED: type does not exist; return type is ()
+            validate_startup(&cfg, Some(&capture))
+                .expect("S-4d: validate_startup must succeed with a writable capture path");
+
+        let _writer = artifacts.capture_writer // RED: field does not exist
+            .expect("S-4d: capture_writer must be Some when a capture path is provided");
+
+        let bytes = std::fs::read(&capture).expect("S-4d: capture file must be created on disk");
+        assert!(
+            bytes.len() >= 10,
+            "S-4d: capture file must contain at least the 10-byte header; got {} bytes",
+            bytes.len()
+        );
+        assert_eq!(
+            &bytes[..8],
+            b"RNCWCAP\0",
+            "S-4d: capture file must start with the RNCWCAP magic bytes"
+        );
+    }
+
+    // S-4e — RED: StartupArtifacts does not exist; validate_startup currently returns
+    // Ok(()) when the capture path is a directory (parent dir probe passes).
+    #[test]
+    fn validate_capture_path_no_partial_file_on_open_failure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pidfile = dir.path().join("ranchero.pid");
+        let log_file = dir.path().join("ranchero.log");
+        // A directory at the capture location cannot be opened as a write target.
+        let capture_dir = dir.path().join("capture.dir");
+        std::fs::create_dir_all(&capture_dir).unwrap();
+
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
+
+        let _: Option<StartupArtifacts> = None; // RED: StartupArtifacts does not exist
+        validate_startup(&cfg, Some(&capture_dir)).expect_err(
+            "S-4e: validate_startup must fail when the capture path is a directory; \
+             current code only probes the parent directory and returns Ok",
+        );
     }
 
     // S-1f: Defect 11 — relay enabled, monitor email absent → error even if main email is set.

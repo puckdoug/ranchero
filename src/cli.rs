@@ -349,6 +349,11 @@ pub fn print_auth_check_to<W: std::io::Write>(
     writeln!(out, "  api_base:   {}", cfg.api_base)?;
     writeln!(out, "  token path: {TOKEN_PATH}")?;
     writeln!(out)?;
+    match resolved.watched_athlete_id {
+        Some(id) => writeln!(out, "Watched athlete:   {id}")?,
+        None     => writeln!(out, "Watched athlete:   not configured")?,
+    }
+    writeln!(out)?;
 
     let roles: [(&str, Option<&str>, Option<&str>); 2] = [
         (

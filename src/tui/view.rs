@@ -147,6 +147,7 @@ fn render_accounts(model: &Model, frame: &mut Frame, area: Rect) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
+            Constraint::Length(3),
             Constraint::Min(0),
         ])
         .split(area);
@@ -155,6 +156,7 @@ fn render_accounts(model: &Model, frame: &mut Frame, area: Rect) {
     render_field(frame, chunks[1], "Main account password", FieldId::MainPassword, model);
     render_field(frame, chunks[2], "Monitor account email", FieldId::MonitorEmail, model);
     render_field(frame, chunks[3], "Monitor account password", FieldId::MonitorPassword, model);
+    render_field(frame, chunks[4], "Watched athlete ID", FieldId::WatchedAthleteId, model);
 }
 
 fn render_server(model: &Model, frame: &mut Frame, area: Rect) {
