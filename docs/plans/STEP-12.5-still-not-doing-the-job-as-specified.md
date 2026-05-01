@@ -1,19 +1,36 @@
 # Step 12.5 — Still not doing the job as specified
 
-**Status:** review (2026-04-29).
+**Status:** complete (verified 2026-05-01). All deficiencies §A–§E and
+addendum items §F.3.1–§F.3.6 are implemented in the current tree. The
+end-to-end operator workflow gap that this document originally described
+is closed in production code; further operator-path defects discovered
+afterwards were tracked separately in
+`docs/plans/STEP-12.6-really-basic-implementation-details-that-were-screwed-up-anyway.md`.
 
 ## Completion Checklist
 
-- [ ] A. Default dependency-injection implementations
-- [ ] B. Implement `RelayRuntime::start`
-- [ ] C. Extend `daemon::start` and `runtime::start` signatures
-- [ ] D. `runtime::run_daemon` constructs and owns the orchestrator
-- [ ] E. Forward `cli.global.capture` from dispatch into `daemon::start`
-- [ ] F.3.1 Add a `[zwift]` section to the configuration schema
-- [ ] F.3.2 Resolve endpoints through CLI → env → file pattern
-- [ ] F.3.3 Build `zwift_api::Config` from `ResolvedConfig`
-- [ ] F.3.5 Adjust red-state tests
-- [ ] F.3.6 Update `daemon_lifecycle.rs` baseline
+- [x] A. Default dependency-injection implementations
+      (`DefaultAuthLogin`, `DefaultSessionLogin`, `DefaultTcpTransportFactory`
+      defined in `src/daemon/relay.rs`)
+- [x] B. `RelayRuntime::start` implemented; no `unimplemented!()` remains
+      on the production path (`src/daemon/relay.rs:664`)
+- [x] C. `daemon::start` and `runtime::start` accept `capture_path:
+      Option<PathBuf>` (`src/daemon/mod.rs:90`, `src/daemon/runtime.rs:30`)
+- [x] D. `runtime::run_daemon` constructs `RelayRuntime`, holds it across
+      the `select!` loop, and calls `shutdown()` / `join()` on exit
+      (`src/daemon/runtime.rs:237-280`)
+- [x] E. `cli::dispatch` forwards `cli.global.capture.clone()` into
+      `daemon::start` (`src/cli.rs:209`)
+- [x] F.3.1 `[zwift]` section added to configuration schema as
+      `ZwiftConfig` (`src/config/mod.rs:69`)
+- [x] F.3.2 Endpoints resolved through CLI → env → file pattern using
+      `RANCHERO_ZWIFT_AUTH_BASE` / `RANCHERO_ZWIFT_API_BASE`
+      (`src/config/mod.rs:439-443`)
+- [x] F.3.3 `zwift_api::Config` built from `cfg.zwift_endpoints` inside
+      `RelayRuntime::start` (`src/daemon/relay.rs:668-674`)
+- [x] F.3.5 Red-state tests adjusted: `tests/full_scope.rs` uses
+      `UNROUTABLE_ZWIFT_BASE` and `pin_unroutable_zwift_endpoints`
+- [x] F.3.6 `daemon_lifecycle.rs` baseline still green (17 / 17 pass)
 
 This document records the gap between what was reported as complete
 under STEP-12 and what the system actually does at runtime. The

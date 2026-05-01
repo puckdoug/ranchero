@@ -1,6 +1,9 @@
 # Step 12.6 — Really basic implementation details that were screwed up anyway
 
-**Status:** in progress (2026-05-01). Defects 1–10 complete. Defects 11–13 pending.
+**Status:** complete (2026-05-01). Defects 1–13 and Minor 1 resolved. The
+`watched_athlete_id` config field proposal (separate from any defect) is
+deferred; without it the relay starts and connects correctly, but
+`WatchedAthleteState` has no target rider configured.
 
 ## Summary of findings
 
@@ -68,12 +71,14 @@ but produce silently wrong or misleading behaviour):
       `main_password` to the auth and session login steps
       (`src/daemon/relay.rs:875–882`, `1138–1145`); `monitor_email`
       / `monitor_password` are loaded and discarded.
+      **Complete 2026-05-01.**
 - [x] **Defect 12** — `athlete_id` is hardcoded to 0 in
       `TcpChannelConfig`, `UdpChannelConfig`, and
       `HeartbeatScheduler` (`src/daemon/relay.rs:930, 993, 1021`).
       The correct value is the monitor account's athlete ID,
       obtained from the profile response after monitor-account
       login. Resolved as part of Defect 11.
+      **Complete 2026-05-01.**
 - [x] **Defect 13** — `conn_id` is hardcoded to 0 in
       `TcpChannelConfig` and `UdpChannelConfig`
       (`src/daemon/relay.rs:931, 994`). The correct value is a
@@ -81,6 +86,7 @@ but produce silently wrong or misleading behaviour):
       the reference's `getConnInc()` logic. The counter is used
       directly in the AES-GCM encryption IV; hardcoding it causes
       IV reuse on reconnection.
+      **Complete 2026-05-01.**
 
 Minor cosmetic findings:
 
@@ -2301,7 +2307,22 @@ failures between steps:
 | 8    | Defect 3  | TCP hello send; requires Defect 6                                                                                                                                                                                                                    | **Done 2026-05-01** |
 | 9    | Defect 4  | UDP channel construction; requires Defect 3                                                                                                                                                                                                          | **Done 2026-05-01** |
 | 10   | Defect 5  | Heartbeat spawn; requires Defect 4                                                                                                                                                                                                                   | **Done 2026-05-01** |
-| 11   | Defect 11 | Swap main→monitor credentials in relay; add `watched_athlete_id` config field to eliminate main-account login                                                                                                                                        | —                   |
-| 12   | Defect 12 | Thread monitor profile ID into `TcpChannelConfig`, `UdpChannelConfig`, `HeartbeatScheduler`; resolved as part of Defect 11                                                                                                                           | —                   |
-| 13   | Defect 13 | Per-channel `conn_id` counter; independent of Defect 11                                                                                                                                                                                              | —                   |
+| 11   | Defect 11 | Swap main→monitor credentials in relay. The `watched_athlete_id` config field originally bundled here is deferred — see note below.                                                                                                                  | **Done 2026-05-01** |
+| 12   | Defect 12 | Thread monitor profile ID into `TcpChannelConfig`, `UdpChannelConfig`, `HeartbeatScheduler`; resolved as part of Defect 11                                                                                                                           | **Done 2026-05-01** |
+| 13   | Defect 13 | Per-channel `conn_id` counter; independent of Defect 11                                                                                                                                                                                              | **Done 2026-05-01** |
 | 14   | Minor 1   | Renumber `start_inner` step comments                                                                                                                                                                                                                 | **Done 2026-05-01** |
+
+**Deviation from plan (Defect 11 step 3).** The plan called for adding new
+`MissingMonitorEmail` / `MissingMonitorPassword` variants to
+`RelayRuntimeError`. The implementation instead repurposed the existing
+`MissingEmail` / `MissingPassword` variants, updating their `#[error("...")]`
+messages to refer to the monitor account. No caller distinguishes between
+main and monitor since the main account is no longer checked, so the smaller
+change was preferred.
+
+**Deferred.** The `watched_athlete_id` config field proposal (separate
+section above) was not implemented. The relay now starts and connects with
+monitor credentials alone (test S-1h confirms this), but `WatchedAthleteState`
+has no target rider configured. Adding `watched_athlete_id` is the
+straightforward way to identify the rider being watched without requiring a
+main-account login; treat it as a follow-up step.
