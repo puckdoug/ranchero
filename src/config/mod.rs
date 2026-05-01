@@ -725,4 +725,56 @@ mod tests {
         // env or file override is set.
         assert_eq!(r.zwift_endpoints.api_base, "https://us-or-rly101.zwift.com");
     }
+
+    // -----------------------------------------------------------------
+    // STEP-12.9 §Item-2 — watched_athlete_id configuration field.
+    //
+    // `[zwift] watched_athlete_id` identifies the Zwift rider that
+    // ranchero relays. It flows ConfigFile → ResolvedConfig and
+    // surfaces in `ranchero configure` and `ranchero auth-check`.
+    //
+    // Tests C-1 through C-3 fail to compile until `ZwiftConfig` gains
+    // a `watched_athlete_id: Option<u64>` field and `ResolvedConfig`
+    // gains a matching field populated by `resolve`.
+    // -----------------------------------------------------------------
+
+    // C-1
+    #[test]
+    fn parse_watched_athlete_id_from_zwift_section() {
+        let toml = "\
+            schema_version = 1\n\
+            [zwift]\n\
+            watched_athlete_id = 123456\n\
+        ";
+        let parsed: ConfigFile = toml::from_str(toml).expect("toml parse");
+        assert_eq!(
+            parsed.zwift.watched_athlete_id,
+            Some(123456u64),
+            "watched_athlete_id must parse from the [zwift] TOML section",
+        );
+    }
+
+    // C-2
+    #[test]
+    fn default_watched_athlete_id_is_none() {
+        let cfg = ZwiftConfig::default();
+        assert!(
+            cfg.watched_athlete_id.is_none(),
+            "watched_athlete_id must default to None when absent from config",
+        );
+    }
+
+    // C-3
+    #[test]
+    fn resolve_carries_watched_athlete_id_through() {
+        let mut file = ConfigFile::default();
+        file.zwift.watched_athlete_id = Some(42_000u64);
+        let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), Some(file))
+            .unwrap();
+        assert_eq!(
+            r.watched_athlete_id,
+            Some(42_000u64),
+            "ResolvedConfig::resolve must carry watched_athlete_id from [zwift] to the resolved struct",
+        );
+    }
 }

@@ -514,6 +514,28 @@ mod tests {
             .unwrap_or("")
     }
 
+    // STEP-12.9 §Item-2 — TUI-1: the configure screen must render the
+    // watched athlete ID field. Fails to compile until FieldId gains
+    // WatchedAthleteId and ZwiftConfig gains watched_athlete_id.
+    #[test]
+    fn configure_screen_renders_watched_athlete_id_field() {
+        use crate::tui::model::FieldId;
+        let mut cfg = ConfigFile::default();
+        cfg.zwift.watched_athlete_id = Some(55_555u64); // RED: field missing on ZwiftConfig
+        // Confirm the FieldId variant exists (compile-time check):
+        let _ = FieldId::WatchedAthleteId; // RED: variant missing
+        let m = Model::new(cfg);
+        let buf = render_to_buffer(&m, 80, 30);
+        let content = buffer_to_string(&buf);
+        // The rendered output must show either the value or the field label.
+        assert!(
+            content.contains("55555")
+                || content.contains("Watched")
+                || content.contains("athlete"),
+            "configure screen must render the watched athlete ID label or value; got:\n{content}",
+        );
+    }
+
     fn buffer_to_string(buf: &ratatui::buffer::Buffer) -> String {
         let area = buf.area;
         let mut out = String::new();

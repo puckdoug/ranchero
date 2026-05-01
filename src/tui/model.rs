@@ -2552,4 +2552,41 @@ mod tests {
         assert!(text.contains("Enter"), "emacs editing hint should mention Enter: got {text}");
         assert!(text.contains("Esc"), "emacs editing hint should mention Esc: got {text}");
     }
+
+    // STEP-12.9 §Item-2 — TUI round-trip tests for watched_athlete_id.
+    //
+    // Tests TUI-2 and TUI-3 fail to compile until:
+    //   - ZwiftConfig gains a `watched_athlete_id: Option<u64>` field
+    //   - FieldId gains a `WatchedAthleteId` variant
+    //   - Model::to_config_file() carries watched_athlete_id through
+
+    // TUI-2: A ConfigFile loaded with watched_athlete_id set must round-trip
+    // through the model without losing the value.
+    #[test]
+    fn configure_round_trip_persists_watched_athlete_id() {
+        let mut cfg = ConfigFile::default();
+        cfg.zwift.watched_athlete_id = Some(12_345u64); // RED: field missing on ZwiftConfig
+        let _ = FieldId::WatchedAthleteId; // RED: variant missing
+        let m = Model::new(cfg);
+        let out = m.to_config_file();
+        assert_eq!(
+            out.zwift.watched_athlete_id,
+            Some(12_345u64),
+            "TUI-2: to_config_file must round-trip watched_athlete_id through the model",
+        );
+    }
+
+    // TUI-3: Clearing the watched athlete ID field must produce None in the output.
+    #[test]
+    fn configure_round_trip_clears_watched_athlete_id() {
+        let mut cfg = ConfigFile::default();
+        cfg.zwift.watched_athlete_id = Some(12_345u64); // RED: field missing on ZwiftConfig
+        let mut m = Model::new(cfg);
+        m.fields.set_text(FieldId::WatchedAthleteId, ""); // RED: variant missing
+        let out = m.to_config_file();
+        assert!(
+            out.zwift.watched_athlete_id.is_none(),
+            "TUI-3: clearing the watched athlete ID field must produce None in the output config",
+        );
+    }
 }

@@ -2877,4 +2877,58 @@ mod tests {
         runtime.shutdown();
         let _ = runtime.join().await;
     }
+
+    // -----------------------------------------------------------------
+    // STEP-12.9 §Item-2 — WatchedAthleteState initialisation from config.
+    //
+    // Tests W-1 and W-2 fail to compile until `ResolvedConfig` gains a
+    // `watched_athlete_id: Option<u64>` field. They verify that the relay
+    // runtime seeds `RuntimeInner::watched_state` from `cfg.watched_athlete_id`
+    // rather than always defaulting to `WatchedAthleteState::default()`.
+    // -----------------------------------------------------------------
+
+    // W-1
+    #[tokio::test]
+    async fn relay_runtime_initialises_watched_state_from_config() {
+        let counter = CallCounter::new();
+        let mut cfg = make_config(Some("rider@example.com"), Some("secret"));
+        cfg.watched_athlete_id = Some(99_999u64); // RED: field does not exist yet
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await.unwrap();
+
+        // The runtime must seed watched_state from cfg.watched_athlete_id at startup.
+        let watched_id = runtime.inner.watched_state.lock().unwrap().athlete_id;
+        assert_eq!(
+            watched_id, 99_999i64,
+            "W-1: watched_state must be seeded from cfg.watched_athlete_id at startup",
+        );
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
+
+    // W-2
+    #[tokio::test]
+    async fn relay_runtime_default_watched_state_when_none() {
+        let counter = CallCounter::new();
+        let cfg = make_config(Some("rider@example.com"), Some("secret"));
+        // cfg.watched_athlete_id is implicitly None once the field exists;
+        // make_config will initialise it to None by default.
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await.unwrap();
+
+        let watched_id = runtime.inner.watched_state.lock().unwrap().athlete_id;
+        assert_eq!(
+            watched_id,
+            WatchedAthleteState::default().athlete_id,
+            "W-2: watched_state must be the default when cfg.watched_athlete_id is None",
+        );
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
 }
