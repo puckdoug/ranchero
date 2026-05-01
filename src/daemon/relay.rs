@@ -95,6 +95,55 @@ pub trait TcpTransportFactory: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send;
 }
 
+/// Dependency-injection trait for the UDP transport factory.
+/// The default production implementation constructs a
+/// `zwift_relay::TokioUdpTransport`. Tests substitute a recording
+/// stub that tracks which address was passed to `connect` and
+/// captures every datagram passed to `send`.
+///
+/// Defect 4 (red state): this trait exists but `start_with_all_deps`
+/// does not yet call `connect`. The trait is present so that the
+/// integration tests can compile and fail at the assertion level.
+pub trait UdpTransportFactory: Send + Sync + 'static {
+    type Transport: zwift_relay::UdpTransport;
+    fn connect(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send;
+}
+
+/// Read-only view over a supervisor-managed relay session. The
+/// production implementation delegates to
+/// `zwift_relay::RelaySessionSupervisor`. Tests substitute a stub
+/// that returns a pre-configured session and emits pre-loaded events.
+pub trait SessionSupervisorHandle: Send + Sync + 'static {
+    fn current(
+        &self,
+    ) -> impl std::future::Future<Output = zwift_relay::RelaySession> + Send;
+
+    fn subscribe_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<zwift_relay::SessionEvent>;
+
+    fn shutdown(&self);
+}
+
+/// Dependency-injection factory for the relay-session supervisor.
+/// The default production implementation calls
+/// `RelaySessionSupervisor::start`. Tests substitute a stub
+/// factory whose `start` returns a handle with pre-loaded events.
+///
+/// Defect 7 (red state): this trait exists and `start_with_all_deps`
+/// calls `start()` to obtain the initial session, but does not yet
+/// subscribe to the event broadcast. Tests that assert log records for
+/// `relay.session.refreshed` therefore fail.
+pub trait SessionSupervisorFactory: Send + Sync + 'static {
+    type Handle: SessionSupervisorHandle;
+    fn start(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Self::Handle, RelayRuntimeError>> + Send;
+}
+
 /// Internal state owned by the runtime, shared between the
 /// recv-loop task and any test-only injection points.
 ///
@@ -661,6 +710,230 @@ impl RelayRuntime {
         .await
     }
 
+    /// Full dependency-injected entry point used by the Defect 3–7
+    /// integration tests. Accepts the complete set of replaceable
+    /// dependencies: auth, session supervisor factory, TCP transport
+    /// factory, and UDP transport factory.
+    ///
+    /// Defect 3–7 (red state): the stub implementation below calls
+    /// `sf.start()` to obtain the supervisor handle and derives the
+    /// initial session from `handle.current()`. It does NOT yet
+    /// subscribe to supervisor events (Defect 7), does NOT yet call
+    /// `udp_factory.connect()` (Defect 4), and does NOT yet send a TCP
+    /// hello packet (Defect 3). Tests that assert those behaviours
+    /// fail at the assertion level.
+    pub async fn start_with_all_deps<A, SF, F, U>(
+        cfg: &ResolvedConfig,
+        capture_path: Option<PathBuf>,
+        auth: A,
+        sf: SF,
+        tcp_factory: F,
+        udp_factory: U,
+    ) -> Result<Self, RelayRuntimeError>
+    where
+        A: AuthLogin,
+        SF: SessionSupervisorFactory,
+        F: TcpTransportFactory,
+        U: UdpTransportFactory,
+    {
+        let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
+        Self::start_all_inner(
+            cfg,
+            capture_path,
+            None,
+            auth,
+            sf,
+            tcp_factory,
+            udp_factory,
+            game_events_tx,
+        )
+        .await
+    }
+
+    /// Variant of [`Self::start_with_all_deps`] that pre-opens a
+    /// capture writer (so the test can hold its own `Arc` clone).
+    pub async fn start_with_all_deps_and_writer<A, SF, F, U>(
+        cfg: &ResolvedConfig,
+        capture_writer: Arc<zwift_relay::capture::CaptureWriter>,
+        auth: A,
+        sf: SF,
+        tcp_factory: F,
+        udp_factory: U,
+    ) -> Result<Self, RelayRuntimeError>
+    where
+        A: AuthLogin,
+        SF: SessionSupervisorFactory,
+        F: TcpTransportFactory,
+        U: UdpTransportFactory,
+    {
+        let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
+        Self::start_all_inner(
+            cfg,
+            None,
+            Some(capture_writer),
+            auth,
+            sf,
+            tcp_factory,
+            udp_factory,
+            game_events_tx,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn start_all_inner<A, SF, F, U>(
+        cfg: &ResolvedConfig,
+        capture_path: Option<PathBuf>,
+        preopen_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
+        auth: A,
+        sf: SF,
+        tcp_factory: F,
+        #[allow(unused_variables)]
+        udp_factory: U,
+        game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    ) -> Result<Self, RelayRuntimeError>
+    where
+        A: AuthLogin,
+        SF: SessionSupervisorFactory,
+        F: TcpTransportFactory,
+        U: UdpTransportFactory,
+    {
+        // 1. Credential validation.
+        let email = cfg
+            .main_email
+            .as_deref()
+            .ok_or(RelayRuntimeError::MissingEmail)?;
+        let password = cfg
+            .main_password
+            .as_ref()
+            .ok_or(RelayRuntimeError::MissingPassword)?;
+
+        // 2. Auth login.
+        auth.login(email, password.expose())
+            .await
+            .map_err(RelayRuntimeError::Auth)?;
+        tracing::info!(target: "ranchero::relay", email, "relay.login.ok");
+
+        // 3. Session supervisor start. In the red state we obtain the
+        //    initial session from the handle but do NOT subscribe to
+        //    the supervisor's event broadcast (Defect 7).
+        let handle = sf.start().await?;
+        let session = handle.current().await;
+
+        // 4. Reject empty TCP-server pool before any further I/O.
+        if session.tcp_servers.is_empty() {
+            return Err(RelayRuntimeError::NoTcpServers);
+        }
+
+        // Resolve the capture writer: prefer the preopen, fall back
+        // to opening from the supplied path (None → no capture).
+        let capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
+            if let Some(writer) = preopen_writer {
+                Some(writer)
+            } else if let Some(path) = capture_path {
+                let writer = zwift_relay::capture::CaptureWriter::open(&path)
+                    .await
+                    .map_err(RelayRuntimeError::CaptureIo)?;
+                tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
+                Some(Arc::new(writer))
+            } else {
+                None
+            };
+
+        // 5. Pick the first TCP server and connect.
+        let server = &session.tcp_servers[0];
+        let addr_str = format!("{}:{}", server.ip, server.port);
+        let addr: std::net::SocketAddr = addr_str
+            .parse()
+            .map_err(|_| RelayRuntimeError::BadTcpAddress(addr_str.clone()))?;
+        tracing::info!(target: "ranchero::relay", addr = %addr, "relay.tcp.connecting");
+        let transport = tcp_factory
+            .connect(addr)
+            .await
+            .map_err(RelayRuntimeError::TcpConnect)?;
+
+        // 6. Establish the TCP channel and wait for Established.
+        let tcp_config = zwift_relay::TcpChannelConfig {
+            athlete_id: 0,
+            conn_id: 0,
+            watchdog_timeout: zwift_relay::CHANNEL_TIMEOUT,
+            capture: capture_writer.clone(),
+        };
+        let (channel, mut events_rx) =
+            zwift_relay::TcpChannel::establish(transport, &session, tcp_config)
+                .await
+                .map_err(RelayRuntimeError::TcpChannel)?;
+
+        let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::Authenticating));
+        let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::SessionLoggedIn));
+
+        let established_deadline = std::time::Duration::from_secs(5);
+        match tokio::time::timeout(established_deadline, events_rx.recv()).await {
+            Ok(Ok(zwift_relay::TcpChannelEvent::Established)) => {
+                tracing::info!(target: "ranchero::relay", addr = %addr, "relay.tcp.established");
+                let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::TcpEstablished));
+            }
+            Ok(Ok(other)) => {
+                return Err(RelayRuntimeError::TcpChannel(
+                    zwift_relay::TcpError::Io(std::io::Error::other(format!(
+                        "expected Established as first event, got {other:?}",
+                    ))),
+                ));
+            }
+            Ok(Err(_)) | Err(_) => {
+                return Err(RelayRuntimeError::EstablishedTimeout(established_deadline));
+            }
+        }
+
+        // Defect 3 (red state): the TCP hello packet is not sent here yet.
+        // Defect 4 (red state): udp_factory.connect() is not called here yet.
+
+        // 7. Set up the event broadcast and spawn the recv-loop.
+        let (events_tx, recv_rx) = tokio::sync::broadcast::channel::<zwift_relay::TcpChannelEvent>(64);
+        let forwarder_tx = events_tx.clone();
+        tokio::spawn(async move {
+            let mut rx = events_rx;
+            while let Ok(event) = rx.recv().await {
+                if forwarder_tx.send(event).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let shutdown = Arc::new(Notify::new());
+        let (udp_events_tx, udp_events_rx) =
+            tokio::sync::broadcast::channel::<zwift_relay::ChannelEvent>(64);
+        let inner = Arc::new(RuntimeInner {
+            pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
+            watched_state: std::sync::Mutex::new(WatchedAthleteState::default()),
+            current_udp_server: std::sync::Mutex::new(None),
+        });
+
+        let recv_shutdown = shutdown.clone();
+        let recv_writer = capture_writer.clone();
+        let recv_game_events = game_events_tx.clone();
+        let join_handle = tokio::spawn(async move {
+            recv_loop(
+                channel,
+                recv_rx,
+                udp_events_rx,
+                recv_shutdown,
+                recv_writer,
+                recv_game_events,
+            )
+            .await
+        });
+
+        Ok(Self {
+            join_handle,
+            shutdown,
+            events_tx,
+            game_events_tx,
+            udp_events_tx,
+            inner,
+        })
+    }
+
     async fn start_inner<A, S, F>(
         cfg: &ResolvedConfig,
         capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
@@ -919,6 +1192,22 @@ impl RelayRuntime {
         let _ = self.events_tx.send(event);
     }
 
+    /// Send a `ClientToServer` packet over the live TCP channel.
+    ///
+    /// Defect 6 (red state): this method is declared so that integration
+    /// tests can call it and assert that bytes reach the underlying
+    /// transport. The implementation is a no-op stub that always returns
+    /// `Ok(())`; it will be wired to `Arc<TcpChannel<T>>` once the
+    /// `Arc`-wrapping step from Defect 6 lands.
+    #[allow(unused_variables)]
+    pub async fn send_tcp(
+        &self,
+        payload: zwift_proto::ClientToServer,
+        hello: bool,
+    ) -> Result<(), RelayRuntimeError> {
+        Ok(())
+    }
+
     /// Request a graceful shutdown. Idempotent. The signal is
     /// stored if no task is yet waiting on it; the recv loop will
     /// observe the signal at its next `notified().await` point.
@@ -1005,6 +1294,89 @@ impl TcpTransportFactory for DefaultTcpTransportFactory {
             std::time::Duration::from_secs(10),
         )
         .await
+    }
+}
+
+/// Production [`SessionSupervisorHandle`] backed by `DefaultSessionLogin`
+/// (single-shot, no supervisor). In the red state this returns a
+/// pre-loaded session and a dead event channel; the real supervisor
+/// implementation lands with Defect 7 green state.
+pub struct DefaultSessionSupervisorHandle {
+    session: zwift_relay::RelaySession,
+}
+
+impl SessionSupervisorHandle for DefaultSessionSupervisorHandle {
+    fn current(
+        &self,
+    ) -> impl std::future::Future<Output = zwift_relay::RelaySession> + Send {
+        let s = self.session.clone();
+        async move { s }
+    }
+
+    fn subscribe_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<zwift_relay::SessionEvent> {
+        let (_, rx) = tokio::sync::broadcast::channel(1);
+        rx
+    }
+
+    fn shutdown(&self) {}
+}
+
+/// Production [`SessionSupervisorFactory`]. In the red state this
+/// delegates to `zwift_relay::login` (the same single-shot function
+/// `DefaultSessionLogin` used) and wraps the result in
+/// `DefaultSessionSupervisorHandle`. The real supervisor call lands
+/// with Defect 7 green state.
+pub struct DefaultSessionSupervisorFactory {
+    auth: Arc<zwift_api::ZwiftAuth>,
+    config: zwift_relay::RelaySessionConfig,
+}
+
+impl DefaultSessionSupervisorFactory {
+    pub fn new(
+        auth: Arc<zwift_api::ZwiftAuth>,
+        config: zwift_relay::RelaySessionConfig,
+    ) -> Self {
+        Self { auth, config }
+    }
+}
+
+impl SessionSupervisorFactory for DefaultSessionSupervisorFactory {
+    type Handle = DefaultSessionSupervisorHandle;
+
+    fn start(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Self::Handle, RelayRuntimeError>> + Send {
+        let auth = Arc::clone(&self.auth);
+        let config = self.config.clone();
+        async move {
+            let session = zwift_relay::login(&auth, &config)
+                .await
+                .map_err(RelayRuntimeError::Session)?;
+            Ok(DefaultSessionSupervisorHandle { session })
+        }
+    }
+}
+
+/// Production [`UdpTransportFactory`]. In the red state this panics
+/// with `unimplemented!` — it is never called because `start_all_inner`
+/// does not yet connect UDP (Defect 4). The real call lands with
+/// Defect 4 green state.
+pub struct DefaultUdpTransportFactory;
+
+impl UdpTransportFactory for DefaultUdpTransportFactory {
+    type Transport = zwift_relay::TokioUdpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        async move {
+            Err(std::io::Error::other(
+                "Defect 4: UDP connection not yet implemented",
+            ))
+        }
     }
 }
 

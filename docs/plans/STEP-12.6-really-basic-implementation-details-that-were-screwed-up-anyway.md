@@ -1,6 +1,6 @@
 # Step 12.6 — Really basic implementation details that were screwed up anyway
 
-**Status:** in progress (2026-04-30). Defects 1 and 2 complete.
+**Status:** in progress (2026-05-01). Defects 1 and 2 complete. Defects 3–7 red-state tests complete.
 
 ## Summary of findings
 
@@ -19,22 +19,34 @@ Operator-path defects (block `start --capture` → `stop` →
 - [ ] **Defect 3** — The TCP hello `ClientToServer` is never sent;
   the Zwift server has no basis to scope inbound traffic to
   the connection. (`src/daemon/relay.rs:716-756`)
+  *Red-state test: `relay_runtime_sends_tcp_hello_after_established`
+  (tests/relay_runtime.rs). 2026-05-01.*
 - [ ] **Defect 4** — No UDP transport or `UdpChannel` is ever
   constructed in production; the live telemetry stream
   (spec §4.6, §4.10) does not run.
   (`src/daemon/relay.rs:664-812`)
+  *Red-state tests: `relay_runtime_connects_udp_transport_after_tcp_hello`,
+  `relay_runtime_logs_udp_established_at_info`
+  (tests/relay_runtime.rs). 2026-05-01.*
 - [ ] **Defect 5** — The 1 Hz `HeartbeatScheduler` is never spawned
   in production; without it the server-side liveness model
   expires the connection. (`src/daemon/relay.rs:165-239`,
   no production instantiation)
+  *Red-state test: `relay_runtime_sends_udp_heartbeat_at_one_hz_after_udp_established`
+  (tests/relay_runtime.rs). 2026-05-01.*
 - [ ] **Defect 6** — `TcpChannel<T>` is moved into the recv-loop
   spawn, leaving no handle through which any later step
   could send a hello or heartbeat.
   (`src/daemon/relay.rs:792-802`)
+  *Red-state test: `relay_runtime_exposes_outbound_tcp_send_path_after_start`
+  (tests/relay_runtime.rs). 2026-05-01.*
 - [ ] **Defect 7** — `RelaySessionSupervisor` is never started;
   only the single-shot `zwift_relay::login` runs, so the
   session is never refreshed and silently expires.
   (`src/daemon/relay.rs:983-988`)
+  *Red-state tests: `relay_runtime_logs_session_logged_in_at_info`,
+  `relay_runtime_logs_session_refreshed_at_info`
+  (tests/relay_runtime.rs). 2026-05-01.*
 
 Configuration / diagnostic defects (do not block the workflow
 but produce silently wrong or misleading behaviour):
