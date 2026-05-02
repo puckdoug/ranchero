@@ -616,15 +616,16 @@ async fn udp_channel_with_capture_records_outbound_player_state() {
         .filter_map(|r| r.ok())
         .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Udp)
         .collect();
+    // 6 hellos + 5 steady-state = 11 outbound records with wire-byte capture.
     assert!(
         outbound.len() >= 5,
-        "expected at least 5 outbound captures (steady-state sends), got {}",
+        "expected at least 5 outbound captures, got {}",
         outbound.len(),
     );
-    // Captured payload is proto-only — no `[1]` envelope byte.
-    // Decode the last capture as ClientToServer to verify.
+    // Captured payload is now the encrypted wire bytes (header + ciphertext + tag).
+    // Decode the last capture via parse_outbound to verify the original payload.
     let last = outbound.last().expect("at least one");
-    let decoded = ClientToServer::decode(last.payload.as_slice()).expect("CTS decode");
+    let (_header, decoded) = parse_outbound(&last.payload);
     assert_eq!(decoded.player_id, TEST_ATHLETE_ID);
     assert_eq!(decoded.state.power, Some(104));
 }

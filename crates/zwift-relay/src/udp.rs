@@ -236,13 +236,19 @@ impl<T: UdpTransport> UdpChannel<T> {
         let mut recv_iv_conn_id: u16 = config.conn_id;
         let mut latency_ms: Option<i64> = None;
 
+        tracing::info!(
+            target: "ranchero::relay",
+            athlete_id = config.athlete_id,
+            max_hellos = config.max_hellos,
+            "relay.udp.hello.started",
+        );
+
         'hello_loop: for hello_idx in 1..=config.max_hellos {
             // ── send hello ──
             let hello_app_seqno = app_seqno;
             let hello_iv_seqno = send_iv_seqno;
             let cts = build_hello(config.athlete_id, hello_app_seqno);
             let proto_bytes = cts.encode_to_vec();
-            record_outbound(config.capture.as_ref(), TransportKind::Udp, false, &proto_bytes);
             let plaintext = udp_plaintext(&proto_bytes);
 
             let header = build_send_header(
@@ -263,9 +269,18 @@ impl<T: UdpTransport> UdpChannel<T> {
             wire.extend_from_slice(&header_bytes);
             wire.extend_from_slice(&cipher);
 
+            record_outbound(config.capture.as_ref(), TransportKind::Udp, false, &wire);
             let send_world_time = clock.now();
             send_times.insert(hello_app_seqno, send_world_time);
             transport.send(&wire).await?;
+            tracing::debug!(
+                target: "ranchero::relay",
+                hello_idx,
+                app_seqno = hello_app_seqno,
+                iv_seqno = hello_iv_seqno,
+                payload_size = wire.len(),
+                "relay.udp.hello.sent",
+            );
 
             send_iv_seqno = send_iv_seqno.wrapping_add(1);
             app_seqno = app_seqno.wrapping_add(1);
@@ -283,6 +298,7 @@ impl<T: UdpTransport> UdpChannel<T> {
                     biased;
                     result = transport.recv() => {
                         let bytes = result?;
+                        record_inbound(config.capture.as_ref(), TransportKind::Udp, &bytes);
                         let plaintext = process_inbound_packet(
                             &bytes,
                             &session.aes_key,
@@ -290,7 +306,6 @@ impl<T: UdpTransport> UdpChannel<T> {
                             &mut recv_iv_conn_id,
                             &mut recv_iv_seqno,
                         )?;
-                        record_inbound(config.capture.as_ref(), TransportKind::Udp, &plaintext);
                         let stc = zwift_proto::ServerToClient::decode(plaintext.as_slice())?;
 
                         if let Some(ack) = stc.seqno {
@@ -305,6 +320,13 @@ impl<T: UdpTransport> UdpChannel<T> {
                                     latency_ms: latency,
                                     offset_ms: offset,
                                 });
+                                tracing::debug!(
+                                    target: "ranchero::relay",
+                                    app_seqno = ack_u32,
+                                    latency_ms = latency,
+                                    offset_ms = offset,
+                                    "relay.udp.hello.ack",
+                                );
                             }
                         }
 
@@ -312,6 +334,13 @@ impl<T: UdpTransport> UdpChannel<T> {
                             SyncOutcome::Converged { mean_offset_ms, median_latency_ms } => {
                                 clock.adjust_offset(-mean_offset_ms);
                                 latency_ms = Some(median_latency_ms);
+                                tracing::info!(
+                                    target: "ranchero::relay",
+                                    mean_offset_ms,
+                                    median_latency_ms,
+                                    sample_count = samples.len(),
+                                    "relay.udp.sync.converged",
+                                );
                                 break 'hello_loop;
                             }
                             SyncOutcome::NeedMore => continue,
@@ -387,20 +416,22 @@ impl<T: UdpTransport> UdpChannel<T> {
 
     /// Send one `ClientToServer` payload (typically a `PlayerState`).
     pub async fn send_player_state(&self, state: zwift_proto::PlayerState) -> Result<(), Error> {
-        let (header_bytes, cipher) = {
+        let (header_bytes, cipher, app_seqno, iv_seqno, world_time) = {
             let mut send = self.send_state.lock().expect("send_state mutex");
+            let app_seqno = send.app_seqno;
+            let iv_seqno = send.iv_seqno;
+            let world_time = state.world_time.unwrap_or(0);
             let cts = zwift_proto::ClientToServer {
                 server_realm: 1,
                 player_id: self.athlete_id,
                 world_time: state.world_time,
-                seqno: Some(send.app_seqno),
+                seqno: Some(app_seqno),
                 state,
                 last_update: 0,
                 last_player_update: 0,
                 ..Default::default()
             };
             let proto_bytes = cts.encode_to_vec();
-            record_outbound(self.capture.as_ref(), TransportKind::Udp, false, &proto_bytes);
             let plaintext = udp_plaintext(&proto_bytes);
 
             // Steady-state header: SEQNO only (CONN_ID and RELAY_ID
@@ -409,26 +440,35 @@ impl<T: UdpTransport> UdpChannel<T> {
                 flags: HeaderFlags::SEQNO,
                 relay_id: None,
                 conn_id: None,
-                seqno: Some(send.iv_seqno),
+                seqno: Some(iv_seqno),
             };
             let header_bytes = header.encode();
             let iv = RelayIv {
                 device: DeviceType::Relay,
                 channel: ChannelType::UdpClient,
                 conn_id: self.conn_id,
-                seqno: send.iv_seqno,
+                seqno: iv_seqno,
             };
             let cipher = encrypt(&self.aes_key, &iv.to_bytes(), &header_bytes, &plaintext);
 
             send.iv_seqno = send.iv_seqno.wrapping_add(1);
             send.app_seqno = send.app_seqno.wrapping_add(1);
-            (header_bytes, cipher)
+            (header_bytes, cipher, app_seqno, iv_seqno, world_time)
         };
 
         let mut wire = Vec::with_capacity(header_bytes.len() + cipher.len());
         wire.extend_from_slice(&header_bytes);
         wire.extend_from_slice(&cipher);
+        record_outbound(self.capture.as_ref(), TransportKind::Udp, false, &wire);
         self.transport.send(&wire).await?;
+        tracing::debug!(
+            target: "ranchero::relay",
+            world_time,
+            app_seqno,
+            iv_seqno,
+            payload_size = wire.len(),
+            "relay.udp.playerstate.sent",
+        );
         Ok(())
     }
 
@@ -563,6 +603,7 @@ async fn recv_loop<T: UdpTransport>(
             result = tokio::time::timeout(watchdog_timeout, transport.recv()) => {
                 match result {
                     Ok(Ok(bytes)) => {
+                        record_inbound(capture.as_ref(), TransportKind::Udp, &bytes);
                         match process_inbound_packet(
                             &bytes,
                             &aes_key,
@@ -571,9 +612,15 @@ async fn recv_loop<T: UdpTransport>(
                             &mut recv_iv_seqno,
                         ) {
                             Ok(plaintext) => {
-                                record_inbound(capture.as_ref(), TransportKind::Udp, &plaintext);
                                 match zwift_proto::ServerToClient::decode(plaintext.as_slice()) {
                                     Ok(stc) => {
+                                        tracing::debug!(
+                                            target: "ranchero::relay",
+                                            world_time = stc.world_time.unwrap_or(0),
+                                            player_count = stc.player_states.len(),
+                                            payload_size = plaintext.len(),
+                                            "relay.udp.message.recv",
+                                        );
                                         let _ = events_tx.send(ChannelEvent::Inbound(Box::new(stc)));
                                     }
                                     Err(e) => {
