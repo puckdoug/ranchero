@@ -91,14 +91,13 @@ pub trait AuthLogin: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = Result<(), zwift_api::Error>> + Send;
 
     /// Returns the authenticated account's Zwift athlete ID (profile ID).
-    /// Called after a successful `login` to populate the `athlete_id` field
-    /// in outbound `ClientToServer` packets (Defect 12). Defaults to 0 until
-    /// the production implementation reads it from the OAuth profile response.
+    /// Populated by `login` via `GET /api/profiles/me`. Every implementor
+    /// must provide an explicit override — there is no default so that a
+    /// missing implementation fails at compile time rather than silently
+    /// sending `player_id = 0` in relay packets.
     fn athlete_id(
         &self,
-    ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send {
-        async { Ok(0i64) }
-    }
+    ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send;
 }
 
 /// Dependency-injection trait for the relay-session login step.
@@ -1524,6 +1523,10 @@ impl AuthLogin for DefaultAuthLogin {
     async fn login(&self, email: &str, password: &str) -> Result<(), zwift_api::Error> {
         self.auth.login(email, password).await
     }
+
+    async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
+        self.auth.athlete_id().await
+    }
 }
 
 /// Production [`SessionLogin`] that delegates to
@@ -1879,6 +1882,12 @@ mod tests {
                 .expect("StubAuth::login called more than once");
             async move { result }
         }
+
+        fn athlete_id(
+            &self,
+        ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send {
+            async { Ok(12345i64) }
+        }
     }
 
     /// A stub `SessionLogin` that records the call and returns a
@@ -2016,7 +2025,7 @@ mod tests {
 
     /// A `zwift_api::Error` value usable in error-propagation tests.
     fn auth_error_fixture() -> zwift_api::Error {
-        zwift_api::Error::AuthFailed("test fixture".into())
+        zwift_api::Error::AuthFailedUnauthorized("test fixture".into())
     }
 
     /// A `zwift_relay::SessionError` value usable in error-propagation

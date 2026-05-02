@@ -57,8 +57,24 @@ pub enum Error {
     #[error("invalid token response: {0}")]
     InvalidTokenResponse(String),
 
+    /// 401 from the token or profile endpoint — bad credentials or expired
+    /// token.
+    #[error("authentication failed: unauthorized: {0}")]
+    AuthFailedUnauthorized(String),
+
+    /// 403 from the token or profile endpoint — credentials valid but access
+    /// denied.
+    #[error("authentication failed: forbidden: {0}")]
+    AuthFailedForbidden(String),
+
+    /// 200 from the profile endpoint but the body cannot be decoded as a
+    /// [`Profile`] (missing or wrong-type `id` field).
+    #[error("authentication failed: unexpected response shape: {0}")]
+    AuthFailedBadSchema(String),
+
+    /// Any other non-success status from the token or profile endpoint.
     #[error("authentication failed: {0}")]
-    AuthFailed(String),
+    AuthFailedUnknown(String),
 
     #[error("no tokens available; call login() first")]
     NotAuthenticated,
@@ -85,6 +101,12 @@ pub struct Tokens {
     pub refresh_expires_in: u64,
     #[serde(default)]
     pub token_type: String,
+}
+
+/// Minimal athlete profile from `GET /api/profiles/me`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct Profile {
+    pub id: i64,
 }
 
 /// Hosts and fixed-header configuration for a `ZwiftAuth`. Tests inject
@@ -129,6 +151,8 @@ struct Inner {
     http: reqwest::Client,
     config: Config,
     tokens: RwLock<Option<Tokens>>,
+    /// Cached from `GET /api/profiles/me` during `login()`.
+    profile: RwLock<Option<Profile>>,
     /// Handle to the in-flight preemptive-refresh task, if any.
     /// `std::sync::Mutex` is fine here: the critical section is just a
     /// `take`/`replace` and never crosses an `.await`.
@@ -154,14 +178,17 @@ impl ZwiftAuth {
                 http,
                 config,
                 tokens: RwLock::new(None),
+                profile: RwLock::new(None),
                 refresh_task: Mutex::new(None),
             }),
         }
     }
 
     /// Perform the OAuth2 password grant against the Keycloak token
-    /// endpoint. On success, stores the resulting tokens and schedules
-    /// a background refresh at `expires_in / 2` seconds from now.
+    /// endpoint. On success, fetches `GET /api/profiles/me` and caches
+    /// the result so [`Self::athlete_id`] is available without further
+    /// I/O. If either step fails the whole call returns an error and no
+    /// state is committed.
     pub async fn login(&self, username: &str, password: &str) -> Result<()> {
         let url = format!("{}{}", self.inner.config.auth_base, TOKEN_PATH);
         let resp = self
@@ -180,14 +207,81 @@ impl ZwiftAuth {
         let bytes = resp.bytes().await?;
         if !status.is_success() {
             let body = String::from_utf8_lossy(&bytes).to_string();
-            return Err(Error::AuthFailed(body));
+            return Err(match status.as_u16() {
+                401 => Error::AuthFailedUnauthorized(body),
+                403 => Error::AuthFailedForbidden(body),
+                _ => Error::AuthFailedUnknown(body),
+            });
         }
         let tokens: Tokens = serde_json::from_slice(&bytes)
             .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?;
         let expires_in = tokens.expires_in;
+
+        // Store the token temporarily so get_profile_me can call bearer().
         *self.inner.tokens.write().await = Some(tokens);
+
+        // Eagerly fetch the profile. Roll back the token on failure so
+        // callers never see a half-committed state.
+        let profile = match self.get_profile_me().await {
+            Ok(p) => p,
+            Err(e) => {
+                *self.inner.tokens.write().await = None;
+                return Err(e);
+            }
+        };
+
+        // Both steps succeeded — commit the refresh schedule and profile.
         Inner::schedule_refresh(self.inner.clone(), Duration::from_secs(expires_in / 2));
+        *self.inner.profile.write().await = Some(profile);
         Ok(())
+    }
+
+    /// Fetch `GET /api/profiles/me` using the current bearer token and
+    /// return the decoded [`Profile`]. Unlike [`Self::fetch`] this method
+    /// does NOT retry on 401; all non-success statuses map directly to
+    /// typed [`Error`] variants so callers can match exhaustively.
+    pub async fn get_profile_me(&self) -> Result<Profile> {
+        let bearer = self.bearer().await?;
+        let url = format!("{}/api/profiles/me", self.inner.config.api_base);
+        let resp = self
+            .inner
+            .http
+            .get(&url)
+            .bearer_auth(&bearer)
+            .header("Source", &self.inner.config.source)
+            .header("User-Agent", &self.inner.config.user_agent)
+            .send()
+            .await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        match status.as_u16() {
+            200 => serde_json::from_slice::<Profile>(&bytes)
+                .map_err(|e| Error::AuthFailedBadSchema(e.to_string())),
+            401 => Err(Error::AuthFailedUnauthorized(
+                String::from_utf8_lossy(&bytes).into_owned(),
+            )),
+            403 => Err(Error::AuthFailedForbidden(
+                String::from_utf8_lossy(&bytes).into_owned(),
+            )),
+            _ => Err(Error::AuthFailedUnknown(format!(
+                "HTTP {}: {}",
+                status,
+                String::from_utf8_lossy(&bytes),
+            ))),
+        }
+    }
+
+    /// Return the authenticated athlete's Zwift profile ID. Populated by
+    /// [`Self::login`]; returns [`Error::NotAuthenticated`] if `login` has
+    /// not yet been called.
+    pub async fn athlete_id(&self) -> Result<i64> {
+        self.inner
+            .profile
+            .read()
+            .await
+            .as_ref()
+            .map(|p| p.id)
+            .ok_or(Error::NotAuthenticated)
     }
 
     /// Use the current `refresh_token` to obtain a fresh `access_token`

@@ -67,6 +67,12 @@ async fn login_success_parses_tokens_and_exposes_bearer() {
         .mount(&server)
         .await;
 
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
     let auth = ZwiftAuth::new(config_for(&server));
     auth.login("alice", "hunter2")
         .await
@@ -104,6 +110,12 @@ async fn login_sends_password_grant_form_body_with_literal_client_id() {
         .mount(&server)
         .await;
 
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
     let auth = ZwiftAuth::new(config_for(&server));
     auth.login("alice", "hunter2").await.expect("login");
 
@@ -123,6 +135,12 @@ async fn authed_post_includes_bearer_source_and_user_agent_headers() {
     Mock::given(method("POST"))
         .and(path(TOKEN_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
         .mount(&server)
         .await;
 
@@ -161,13 +179,16 @@ async fn authed_fetch_sends_bearer_source_and_user_agent_headers() {
         .mount(&server)
         .await;
 
+    // login() calls get_profile_me() eagerly, and then the test calls
+    // auth.fetch() explicitly — both hit this mock with identical headers,
+    // so expect(2).
     Mock::given(method("GET"))
         .and(path("/api/profiles/me"))
         .and(header("authorization", "Bearer ATOK"))
         .and(header("source", DEFAULT_SOURCE))
         .and(header("user-agent", DEFAULT_USER_AGENT))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
-        .expect(1)
+        .expect(2)
         .mount(&server)
         .await;
 
@@ -207,8 +228,21 @@ async fn authed_fetch_401_triggers_inline_refresh_and_retries() {
         .mount(&server)
         .await;
 
-    // The first GET with stale ATOK1 returns 401; the retry with the
-    // freshly-refreshed ATOK2 returns 200.
+    // GET /api/profiles/me mocks.  wiremock 0.6 matches in registration
+    // order (FIFO) and an exhausted up_to_n_times mock falls through to
+    // the next one.  Order matters:
+    //   1. ATOK1 → 200 one-shot: consumed by login()'s eager get_profile_me.
+    //   2. ATOK1 → 401: served to the subsequent auth.fetch() call.
+    //   3. ATOK2 → 200: served to the retry after inline refresh.
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .and(header("authorization", "Bearer ATOK1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+
     Mock::given(method("GET"))
         .and(path("/api/profiles/me"))
         .and(header("authorization", "Bearer ATOK1"))
@@ -263,6 +297,12 @@ async fn refresh_failure_surfaces_error() {
         .mount(&server)
         .await;
 
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
     let auth = ZwiftAuth::new(config_for(&server));
     auth.login("alice", "hunter2").await.expect("login");
 
@@ -294,8 +334,8 @@ async fn login_failure_401_surfaces_auth_error() {
         .expect_err("401 from token endpoint should fail login");
 
     match err {
-        Error::AuthFailed(_) | Error::Status { .. } => {}
-        other => panic!("expected AuthFailed/Status, got {other:?}"),
+        Error::AuthFailedUnauthorized(_) | Error::Status { .. } => {}
+        other => panic!("expected AuthFailedUnauthorized/Status, got {other:?}"),
     }
     assert!(
         auth.tokens().await.is_none(),
@@ -347,6 +387,12 @@ async fn preemptive_refresh_fires_at_half_expires_in() {
         .and(body_string_contains("grant_type=refresh_token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK2", "RTOK2", 60)))
         .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
         .mount(&server)
         .await;
 

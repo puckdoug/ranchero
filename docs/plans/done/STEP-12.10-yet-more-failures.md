@@ -187,39 +187,39 @@ those before starting any item if the rationale is unclear.
 
 #### Green-state implementation
 
-- [ ] **G2-1** Split `Error::AuthFailed(String)` into the four typed
+- [x] **G2-1** Split `Error::AuthFailed(String)` into the four typed
   variants. Update every existing constructor.
-- [ ] **G2-2** Add `pub struct Profile { pub id: i64, ... }` to
+- [x] **G2-2** Add `pub struct Profile { pub id: i64, ... }` to
   `crates/zwift-api/src/lib.rs`. Decode at minimum the `id` field;
   optional fields can land later if any consumer needs them.
-- [ ] **G2-3** Add `ZwiftAuth::get_profile_me() -> Result<Profile,
+- [x] **G2-3** Add `ZwiftAuth::get_profile_me() -> Result<Profile,
   Error>` issuing `GET /api/profiles/me` with the bearer token.
   Mapping table: 200 + valid body → `Ok`; 200 + bad body →
   `AuthFailedBadSchema`; 401 → `AuthFailedUnauthorized`; 403 →
   `AuthFailedForbidden`; everything else → `AuthFailedUnknown`.
-- [ ] **G2-4** Cache the profile on `ZwiftAuth` (e.g. `profile:
+- [x] **G2-4** Cache the profile on `ZwiftAuth` (e.g. `profile:
   RwLock<Option<Profile>>`). Add `ZwiftAuth::athlete_id() -> Result<i64,
   Error>` that reads from the cache and returns
   `Error::NotAuthenticated` if `login` has not been called.
-- [ ] **G2-5** Extend `ZwiftAuth::login` so that on success it calls
+- [x] **G2-5** Extend `ZwiftAuth::login` so that on success it calls
   `get_profile_me` and stores the result in the cache. If
   `get_profile_me` fails, the whole `login` returns the error (do not
   half-succeed).
-- [ ] **G2-6** Enumerate every `impl AuthLogin` in the workspace
+- [x] **G2-6** Enumerate every `impl AuthLogin` in the workspace
   (`grep -rn "impl AuthLogin"`). Confirm the list matches the stubs
   named in the relay.rs and relay_runtime.rs test sections — this is
   the guide for G2-8.
-- [ ] **G2-7** Remove the default impl on `AuthLogin::athlete_id` in
+- [x] **G2-7** Remove the default impl on `AuthLogin::athlete_id` in
   `src/daemon/relay.rs`. The trait method becomes:
   ```rust
   fn athlete_id(&self)
       -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send;
   ```
-- [ ] **G2-8** `DefaultAuthLogin::athlete_id` delegates to
+- [x] **G2-8** `DefaultAuthLogin::athlete_id` delegates to
   `self.auth.athlete_id().await`. Add an explicit `athlete_id` override
   to every stub flagged by G2-6, returning a deterministic non-zero id
   (e.g. `12345`) so stubs remain distinct from the production zero-bug.
-- [ ] **G2-9** `cargo test` clean across all crates.
+- [x] **G2-9** `cargo test` clean across all crates.
 
 #### Done when
 

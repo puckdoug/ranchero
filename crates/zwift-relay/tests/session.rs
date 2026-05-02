@@ -106,8 +106,15 @@ fn tcp_addr(ip: &str, port: i32, lb_realm: i32, lb_course: i32) -> TcpAddress {
 
 /// Pre-loaded `ZwiftAuth` whose stored access token is `access`.
 /// Calls `login` against the wiremock token endpoint internally.
+/// Also mounts a `GET /api/profiles/me` stub so `login()`'s eager
+/// profile fetch does not hit an unmatched request.
 async fn authed(server: &MockServer, access: &str) -> ZwiftAuth {
     mount_token_endpoint(server, access).await;
+    Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(server)
+        .await;
     let auth = ZwiftAuth::new(auth_config_for(server));
     auth.login("alice", "hunter2").await.expect("auth login");
     auth

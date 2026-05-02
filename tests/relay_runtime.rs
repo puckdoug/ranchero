@@ -67,6 +67,10 @@ impl AuthLogin for RecordingAuth {
         *self.called_with_email.lock().unwrap() = Some(email.to_string());
         Ok(())
     }
+
+    async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
+        Ok(12345)
+    }
 }
 
 /// Returns a fixed athlete ID from `athlete_id()` for Defect 12 tests.
@@ -91,6 +95,10 @@ impl AuthLogin for StubAuth {
         _password: &str,
     ) -> Result<(), zwift_api::Error> {
         Ok(())
+    }
+
+    async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
+        Ok(12345)
     }
 }
 
