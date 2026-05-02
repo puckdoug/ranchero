@@ -876,3 +876,129 @@ async fn follower_with_poll_interval_respects_setting() {
     let (count, _elapsed) = follower_handle.await.expect("follower task");
     assert_eq!(count, 5, "follower must observe all five records");
 }
+
+// --- 8. Phase 3a: capture writer diagnostics on the --debug channel
+//
+// These tests pin the contract for Phase 3b: the writer task must
+// emit `relay.capture.*` tracing events so an operator looking at
+// the daemon log can tell whether records were dropped, flushed, or
+// successfully closed. Today the writer is silent on all three
+// paths; the only signal is the `dropped_count` accessor surfaced
+// at shutdown.
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn capture_record_drop_emits_warn_event_with_total_dropped() {
+    // Capacity-1 channel + tight push loop so the writer task
+    // can't keep up; at least some records must be dropped.
+    let path = NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open_with_capacity(path.path(), 1)
+        .await
+        .expect("open");
+    let writer = Arc::new(writer);
+
+    for i in 0..10_000u32 {
+        writer.record(record_with_payload(
+            Direction::Inbound,
+            TransportKind::Udp,
+            vec![(i & 0xFF) as u8; 32],
+        ));
+    }
+
+    let dropped = writer.dropped_count();
+    assert!(
+        dropped > 0,
+        "test setup must trigger at least one drop; got {dropped}",
+    );
+
+    let _ = writer; // keep alive until end of scope; tempfile cleans up
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.capture.record.dropped",
+        ),
+        "STEP-12.12 Phase 3a: relay.capture.record.dropped must be emitted at \
+         warn for each drop on a saturated channel; not found in tracing log",
+    );
+    for field in ["direction=", "transport=", "payload_size=", "total_dropped="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 3a: relay.capture.record.dropped must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn capture_writer_flush_emits_debug_event_with_record_and_byte_counts() {
+    // Push some records then call flush_and_close, which forces the
+    // writer task to drain its queue and reach a flush boundary
+    // (whatever the implementation chooses — per-batch, per-N, or
+    // shutdown only).
+    let path = NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("open");
+
+    for i in 0..50u32 {
+        writer.record(record_with_payload(
+            Direction::Inbound,
+            TransportKind::Udp,
+            vec![(i & 0xFF) as u8; 16],
+        ));
+    }
+    writer.flush_and_close().await.expect("close");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.capture.writer.flushed",
+        ),
+        "STEP-12.12 Phase 3a: relay.capture.writer.flushed must be emitted at \
+         debug at least once when records are written and the file is flushed; \
+         not found in tracing log",
+    );
+    for field in ["records_in_batch=", "bytes_written="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 3a: relay.capture.writer.flushed must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn capture_writer_close_emits_info_event_with_totals() {
+    // Write N records, close, and assert the close-rollup info event
+    // fires with the running totals so operators see the final
+    // record / byte count without needing a separate accessor.
+    let path = NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("open");
+
+    let n = 25usize;
+    for i in 0..n {
+        writer.record(record_with_payload(
+            Direction::Outbound,
+            TransportKind::Tcp,
+            vec![(i & 0xFF) as u8; 16],
+        ));
+    }
+    writer.flush_and_close().await.expect("close");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.capture.writer.closed",
+        ),
+        "STEP-12.12 Phase 3a: relay.capture.writer.closed must be emitted at \
+         info on shutdown; not found in tracing log",
+    );
+    for field in ["total_records=", "total_bytes="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 3a: relay.capture.writer.closed must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}

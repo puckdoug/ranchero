@@ -60,7 +60,7 @@ Phased work (this step):
       / `record_inbound` calls to wire bytes at all four sites; emit the
       six tracing events; replace bare `relay.udp.inbound` with
       `relay.udp.message.recv` carrying decoded fields.
-- [ ] **3a** — Capture writer diagnostics tests
+- [x] **3a** — Capture writer diagnostics tests
       (`zwift-relay::capture`): `relay.capture.record.dropped` (warn) on
       channel saturation; `relay.capture.writer.flushed` (debug) per
       flush; `relay.capture.writer.closed` (info) with totals.
