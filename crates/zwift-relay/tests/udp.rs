@@ -628,3 +628,410 @@ async fn udp_channel_with_capture_records_outbound_player_state() {
     assert_eq!(decoded.player_id, TEST_ATHLETE_ID);
     assert_eq!(decoded.state.power, Some(104));
 }
+
+// ==========================================================================
+// Phase 2a (STEP-12.12) — UDP capture correctness and tracing coverage.
+//
+// Red state: record_outbound / record_inbound calls in udp.rs record
+// proto_bytes (pre-encryption for outbound) and plaintext (post-decryption
+// for inbound) rather than the wire bytes that crossed the socket. The
+// tracing events relay.udp.hello.started / hello.sent / hello.ack /
+// sync.converged / playerstate.sent / message.recv are not yet emitted.
+// ==========================================================================
+
+// --- 15. hello outbound capture correctness ----------------------------
+
+#[tokio::test]
+async fn udp_hello_send_records_encrypted_datagram() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    // Receive the first hello wire bytes from the mock transport.
+    let first_hello_wire = handle.outbound_receiver.recv().await.expect("first hello");
+
+    // Abort before more sends occur so the capture holds exactly one outbound record.
+    task.abort();
+    let _ = task.await;
+
+    let writer = std::sync::Arc::try_unwrap(writer).expect("sole owner after task abort");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let outbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Udp)
+        .collect();
+
+    assert_eq!(outbound.len(), 1, "expected exactly one outbound capture from one hello");
+    assert_eq!(
+        outbound[0].payload, first_hello_wire,
+        "Phase 2a red state: hello outbound capture must hold the encrypted wire bytes \
+         sent to transport.send() (header + ciphertext + tag), not proto_bytes; \
+         expected {} bytes, captured {} bytes",
+        first_hello_wire.len(),
+        outbound[0].payload.len(),
+    );
+}
+
+// --- 16. hello inbound capture correctness -----------------------------
+
+#[tokio::test]
+async fn udp_hello_recv_records_raw_datagram_pre_decrypt() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    // Send the first hello and script exactly one reply; save the raw wire bytes.
+    let first_hello = handle.outbound_receiver.recv().await.expect("hello 1");
+    let (_h, cts) = parse_outbound(&first_hello);
+    let ack = cts.seqno.expect("seqno");
+    let raw_reply = build_inbound(0, ack, 1_000_000);
+    handle.inbound_sender.send(raw_reply.clone()).expect("script reply");
+
+    // Give the channel time to process the reply, then abort.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    task.abort();
+    let _ = task.await;
+
+    let writer = std::sync::Arc::try_unwrap(writer).expect("sole owner after task abort");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let inbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Inbound && r.transport == TransportKind::Udp)
+        .collect();
+
+    assert_eq!(inbound.len(), 1, "expected exactly one inbound capture");
+    assert_eq!(
+        inbound[0].payload, raw_reply,
+        "Phase 2a red state: hello inbound capture must hold the raw datagram bytes \
+         as returned from transport.recv() (header + ciphertext + tag), not \
+         post-decryption plaintext; expected {} bytes, captured {} bytes",
+        raw_reply.len(),
+        inbound[0].payload.len(),
+    );
+}
+
+// --- 17. steady-state outbound capture correctness ---------------------
+
+#[tokio::test]
+async fn udp_steady_state_send_records_encrypted_datagram() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    // Establish with 6 replies; drain each hello from the outbound channel.
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("seqno");
+        handle
+            .inbound_sender
+            .send(build_inbound(i, ack, 1_000_000 + i64::from(i) * 100))
+            .expect("reply");
+    }
+    let (channel, _events) = task.await.expect("task").expect("converged");
+
+    // Send one player state and capture the wire bytes from the mock transport.
+    let state = PlayerState {
+        id: Some(TEST_ATHLETE_ID),
+        power: Some(999),
+        ..Default::default()
+    };
+    channel.send_player_state(state).await.expect("send");
+    let wire = handle.outbound_receiver.recv().await.expect("steady-state wire");
+
+    channel.shutdown_and_wait().await;
+    drop(channel);
+
+    let writer = std::sync::Arc::try_unwrap(writer).expect("sole owner after channel drop");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let outbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Udp)
+        .collect();
+
+    // 6 hellos + 1 steady-state = at least 7 outbound records.
+    assert!(
+        outbound.len() >= 7,
+        "expected at least 7 outbound captures (6 hellos + 1 steady-state), got {}",
+        outbound.len(),
+    );
+    let steady = outbound.last().expect("at least one");
+    assert_eq!(
+        steady.payload, wire,
+        "Phase 2a red state: steady-state outbound capture must hold the encrypted \
+         wire bytes sent to transport.send() (header + ciphertext + tag), not \
+         proto_bytes; expected {} bytes, captured {} bytes",
+        wire.len(),
+        steady.payload.len(),
+    );
+}
+
+// --- 18. steady-state inbound capture correctness ----------------------
+
+#[tokio::test]
+async fn udp_steady_state_recv_records_raw_datagram_pre_decrypt() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    // Establish.
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("seqno");
+        handle
+            .inbound_sender
+            .send(build_inbound(i, ack, 1_000_000 + i64::from(i) * 100))
+            .expect("reply");
+    }
+    let (channel, mut events) = task.await.expect("task").expect("converged");
+    let _ = events.recv().await.expect("Established");
+
+    // Script one steady-state inbound packet (recv_iv_seqno = 6 after 6 hellos).
+    let raw_packet = build_inbound(6, 100, 2_000_000);
+    handle.inbound_sender.send(raw_packet.clone()).expect("steady-state inbound");
+
+    let ev = tokio::time::timeout(Duration::from_millis(500), events.recv())
+        .await
+        .expect("event within budget")
+        .expect("event");
+    assert!(matches!(ev, ChannelEvent::Inbound(_)), "got {ev:?}");
+
+    channel.shutdown_and_wait().await;
+    drop(channel);
+
+    let writer = std::sync::Arc::try_unwrap(writer).expect("sole owner after channel drop");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let inbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Inbound && r.transport == TransportKind::Udp)
+        .collect();
+
+    // 6 hello-phase inbounds + 1 steady-state = at least 7.
+    assert!(
+        inbound.len() >= 7,
+        "expected at least 7 inbound captures (6 hello replies + 1 steady-state), got {}",
+        inbound.len(),
+    );
+    let steady = inbound.last().expect("at least one");
+    assert_eq!(
+        steady.payload, raw_packet,
+        "Phase 2a red state: steady-state inbound capture must hold the raw datagram \
+         bytes from transport.recv() (header + ciphertext + tag), not post-decryption \
+         plaintext; expected {} bytes, captured {} bytes",
+        raw_packet.len(),
+        steady.payload.len(),
+    );
+}
+
+// --- 19. hello tracing — started + per-attempt sent -------------------
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn udp_hello_emits_started_and_per_attempt_sent_events() {
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let config = UdpChannelConfig {
+        max_hellos: 3,
+        ..test_config()
+    };
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    // Drain 3 hellos so the loop runs to max_hellos.
+    for _ in 0..3 {
+        let _ = handle.outbound_receiver.recv().await.expect("hello");
+    }
+    let _ = task.await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.udp.hello.started"),
+        "Phase 2a red state: relay.udp.hello.started must be emitted once at info \
+         before the first hello is sent; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.udp.hello.sent"),
+        "Phase 2a red state: relay.udp.hello.sent must be emitted at debug for each \
+         hello attempt; not found in tracing log",
+    );
+}
+
+// --- 20. hello tracing — ack per response + converged ------------------
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn udp_hello_recv_emits_ack_per_response_and_one_converged_event() {
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let config = test_config();
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("seqno");
+        let reply = build_inbound(i, ack, 1_000_000 + i64::from(i) * 100);
+        handle.inbound_sender.send(reply).expect("reply");
+    }
+    let (channel, _events) = task.await.expect("task").expect("converged");
+    channel.shutdown_and_wait().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.udp.hello.ack"),
+        "Phase 2a red state: relay.udp.hello.ack must be emitted at debug for each \
+         hello ack received; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.udp.sync.converged"),
+        "Phase 2a red state: relay.udp.sync.converged must be emitted at info once \
+         when the SNTP filter converges; not found in tracing log",
+    );
+}
+
+// --- 21. steady-state outbound tracing ---------------------------------
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn udp_steady_state_send_emits_relay_udp_playerstate_sent() {
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let config = test_config();
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("seqno");
+        handle
+            .inbound_sender
+            .send(build_inbound(i, ack, 1_000_000 + i64::from(i) * 100))
+            .expect("reply");
+    }
+    let (channel, _events) = task.await.expect("task").expect("converged");
+
+    let state = PlayerState {
+        id: Some(TEST_ATHLETE_ID),
+        power: Some(123),
+        ..Default::default()
+    };
+    channel.send_player_state(state).await.expect("send");
+    let _ = handle.outbound_receiver.recv().await;
+
+    channel.shutdown_and_wait().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.udp.playerstate.sent"),
+        "Phase 2a red state: relay.udp.playerstate.sent must be emitted at debug for \
+         each send_player_state call; not found in tracing log",
+    );
+}
+
+// --- 22. steady-state inbound tracing ----------------------------------
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn udp_steady_state_recv_emits_relay_udp_message_recv_with_fields() {
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let config = test_config();
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("seqno");
+        handle
+            .inbound_sender
+            .send(build_inbound(i, ack, 1_000_000 + i64::from(i) * 100))
+            .expect("reply");
+    }
+    let (_channel, mut events) = task.await.expect("task").expect("converged");
+    let _ = events.recv().await.expect("Established");
+
+    // Push one steady-state inbound packet.
+    handle
+        .inbound_sender
+        .send(build_inbound(6, 100, 2_000_000))
+        .expect("inbound");
+    let ev = tokio::time::timeout(Duration::from_millis(500), events.recv())
+        .await
+        .expect("event within budget")
+        .expect("event");
+    assert!(matches!(ev, ChannelEvent::Inbound(_)), "got {ev:?}");
+
+    _channel.shutdown_and_wait().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.udp.message.recv"),
+        "Phase 2a red state: relay.udp.message.recv must be emitted at debug for each \
+         decoded inbound ServerToClient; not found in tracing log",
+    );
+    assert!(
+        !tracing_test::internal::logs_with_scope_contain("ranchero", "relay.udp.inbound"),
+        "Phase 2a red state: bare relay.udp.inbound must be replaced by \
+         relay.udp.message.recv; found the old event name in tracing log",
+    );
+}
