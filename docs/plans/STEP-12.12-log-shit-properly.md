@@ -43,7 +43,7 @@ Phased work (this step):
 - [x] **0b** — Pre-requisites implementation: bump capture format to
       v2 (reject v1), add `TransportKind::Http`, add `RecordKind::Manifest`
       / `record_session_manifest` API, fix `--debug` filter scope.
-- [ ] **1a** — TCP module tests (`zwift-relay::tcp`): capture stores
+- [x] **1a** — TCP module tests (`zwift-relay::tcp`): capture stores
       framed wire bytes (length + header + ciphertext + tag) for both
       send and recv; `relay.tcp.frame.sent` / `relay.tcp.frame.recv` /
       `relay.tcp.decrypt.ok` events with correct fields.

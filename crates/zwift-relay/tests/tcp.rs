@@ -644,3 +644,234 @@ async fn tcp_channel_with_capture_records_outbound_packets_with_hello_flag() {
     assert_eq!(cts0.player_id, TEST_ATHLETE_ID);
     assert_eq!(cts1.player_id, TEST_ATHLETE_ID);
 }
+
+// --- STEP-12.12 Phase 1a: TCP wire-byte capture + tracing ----------
+//
+// These tests pin the contract for Phase 1b: every TCP send / recv
+// site must capture the bytes that crossed the socket (not the
+// pre-encryption / post-decryption plaintext) and emit a tracing
+// event so an operator can reconstruct the conversation from the
+// daemon log alone. The byte tests fail in red state because the
+// current capture sites in `tcp.rs` record `proto_bytes` (send) and
+// `plaintext` (recv); the tracing tests fail because no event of
+// those names exists today.
+
+#[tokio::test]
+async fn tcp_send_records_framed_wire_bytes_not_proto() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("capture writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, mut handle) = MockTcpTransport::new();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+    let (channel, _events) = TcpChannel::establish(transport, &test_session(), config)
+        .await
+        .expect("establish");
+
+    let payload = test_payload(0);
+    let payload_proto_bytes = payload.encode_to_vec();
+    channel
+        .send_packet(payload, /* hello */ true)
+        .await
+        .expect("send hello");
+
+    // The mock transport's outbox holds exactly the bytes the channel
+    // wrote — i.e. the framed wire (length prefix + header + ciphertext
+    // + tag). This is what a real socket would have transmitted.
+    let wire_bytes = handle
+        .outbound_receiver
+        .recv()
+        .await
+        .expect("hello packet sent");
+
+    channel.shutdown_and_wait().await;
+    drop(channel);
+
+    let writer = std::sync::Arc::try_unwrap(writer).expect("only test owner");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let outbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Tcp)
+        .collect();
+    assert_eq!(outbound.len(), 1, "expected exactly one outbound TCP capture");
+
+    assert_eq!(
+        outbound[0].payload, wire_bytes,
+        "STEP-12.12 Phase 1a: outbound TCP capture must hold the framed wire \
+         bytes the channel sent, not the pre-encryption proto bytes",
+    );
+    assert_ne!(
+        outbound[0].payload, payload_proto_bytes,
+        "STEP-12.12 Phase 1a: outbound TCP capture must not be the bare \
+         ClientToServer proto bytes — that's the bug being fixed",
+    );
+}
+
+#[tokio::test]
+async fn tcp_recv_records_pre_decrypt_buffer() {
+    use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("capture writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let (transport, handle) = MockTcpTransport::new();
+    let mut config = test_config();
+    config.capture = Some(writer.clone());
+    let (channel, mut events) = TcpChannel::establish(transport, &test_session(), config)
+        .await
+        .expect("establish");
+    let _ = events.recv().await.expect("Established"); // drain
+
+    // Build a frame whose plaintext (post-decrypt proto) we know, so
+    // we can prove the capture does NOT hold those bytes.
+    let stc = test_stc(42);
+    let plaintext_proto_bytes = stc.encode_to_vec();
+    let frame = build_inbound_tcp(0, &stc);
+    // The recv loop drains `payload_owned = &frame[2..]` from the
+    // buffer (after `next_tcp_frame` strips the BE u16 size prefix).
+    // Phase 1b must capture exactly that slice.
+    let expected_payload_owned: Vec<u8> = frame[2..].to_vec();
+
+    handle.inbound_sender.send(frame).expect("inject frame");
+
+    let ev = tokio::time::timeout(Duration::from_millis(500), events.recv())
+        .await
+        .expect("event arrives")
+        .expect("event ok");
+    assert!(matches!(ev, TcpChannelEvent::Inbound(_)), "got {ev:?}");
+
+    channel.shutdown_and_wait().await;
+    drop(channel);
+
+    let writer = std::sync::Arc::try_unwrap(writer).expect("only test owner");
+    writer.flush_and_close().await.expect("flush");
+
+    let reader = CaptureReader::open(path.path()).expect("reader");
+    let inbound: Vec<_> = reader
+        .filter_map(|r| r.ok())
+        .filter(|r| r.direction == Direction::Inbound && r.transport == TransportKind::Tcp)
+        .collect();
+    assert_eq!(inbound.len(), 1, "expected exactly one inbound TCP capture");
+
+    assert_eq!(
+        inbound[0].payload, expected_payload_owned,
+        "STEP-12.12 Phase 1a: inbound TCP capture must hold the pre-decrypt \
+         framed bytes drained from the buffer (header + ciphertext + tag), \
+         not the post-decrypt plaintext",
+    );
+    assert_ne!(
+        inbound[0].payload, plaintext_proto_bytes,
+        "STEP-12.12 Phase 1a: inbound TCP capture must not be the post-decrypt \
+         ServerToClient proto bytes — that's the bug being fixed",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn tcp_send_emits_relay_tcp_frame_sent_with_required_fields() {
+    let (transport, mut handle) = MockTcpTransport::new();
+    let (channel, _events) = TcpChannel::establish(transport, &test_session(), test_config())
+        .await
+        .expect("establish");
+
+    channel
+        .send_packet(test_payload(7), /* hello */ true)
+        .await
+        .expect("send");
+    let _ = handle.outbound_receiver.recv().await.expect("packet sent");
+
+    channel.shutdown_and_wait().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.tcp.frame.sent"),
+        "STEP-12.12 Phase 1a: relay.tcp.frame.sent must be emitted at debug for \
+         every TCP send; not found in tracing log",
+    );
+    // The plan specifies fields { seqno, iv_seqno, hello, wire_size }. We
+    // only sanity-check that each field name appears at least once in a
+    // captured log line; precise value assertions are left to the
+    // implementation step.
+    for field in ["seqno=", "iv_seqno=", "hello=", "wire_size="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 1a: relay.tcp.frame.sent must carry field {field:?} \
+             — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn tcp_recv_emits_relay_tcp_frame_recv_with_required_fields() {
+    let (transport, handle) = MockTcpTransport::new();
+    let (channel, mut events) = TcpChannel::establish(transport, &test_session(), test_config())
+        .await
+        .expect("establish");
+    let _ = events.recv().await.expect("Established");
+
+    handle
+        .inbound_sender
+        .send(build_inbound_tcp(0, &test_stc(13)))
+        .expect("inject");
+    let _ = tokio::time::timeout(Duration::from_millis(500), events.recv())
+        .await
+        .expect("event arrives")
+        .expect("event ok");
+
+    channel.shutdown_and_wait().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.tcp.frame.recv"),
+        "STEP-12.12 Phase 1a: relay.tcp.frame.recv must be emitted at debug for \
+         every framed TCP receive; not found in tracing log",
+    );
+    for field in ["size=", "seqno=", "relay_id_present=", "conn_id_present="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 1a: relay.tcp.frame.recv must carry field {field:?} \
+             — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn tcp_recv_emits_relay_tcp_decrypt_ok_at_trace_level() {
+    // tracing-test's `no-env-filter` mode admits trace-level events,
+    // so this test sees the trace emission directly.
+    let (transport, handle) = MockTcpTransport::new();
+    let (channel, mut events) = TcpChannel::establish(transport, &test_session(), test_config())
+        .await
+        .expect("establish");
+    let _ = events.recv().await.expect("Established");
+
+    handle
+        .inbound_sender
+        .send(build_inbound_tcp(0, &test_stc(99)))
+        .expect("inject");
+    let _ = tokio::time::timeout(Duration::from_millis(500), events.recv())
+        .await
+        .expect("event arrives")
+        .expect("event ok");
+
+    channel.shutdown_and_wait().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.tcp.decrypt.ok"),
+        "STEP-12.12 Phase 1a: relay.tcp.decrypt.ok must be emitted at trace for \
+         each successful TCP decrypt; not found in tracing log",
+    );
+    for field in ["seqno=", "relay_id=", "conn_id="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 1a: relay.tcp.decrypt.ok must carry field {field:?} \
+             — not present in any captured log line",
+        );
+    }
+}
