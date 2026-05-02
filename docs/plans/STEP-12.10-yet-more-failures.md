@@ -30,6 +30,209 @@ error: I/O error: TCP connect: Connection refused (os error 61)
 This document captures what was found while investigating both lines and
 sets up the work that needs to follow.
 
+## Implementation plan
+
+Two independent items must land for the workflow to complete end-to-end.
+Item 1 is the smaller change and unblocks runtime testing of Item 2; do
+it first. Each item follows the project's red-then-green TDD discipline:
+write the failing test surface, watch it fail, implement, watch it pass.
+
+Reference: the diagnoses behind these decisions live in **Issue A**,
+**Issue B**, and **Error type for the profile-fetch path** below — read
+those before starting any item if the rationale is unclear.
+
+### Order
+
+1. **Item 1** — Hard-code TCP relay port to 3025; remove the misleading
+   `port` field on `TcpServer`.
+2. **Item 2** — Fetch `/api/profiles/me` during `ZwiftAuth::login`;
+   remove the `AuthLogin::athlete_id` trait default; split
+   `zwift_api::Error::AuthFailed` into typed variants.
+3. **Out of scope, deferred to a later step** — Sticky TCP server
+   selection across reconnects (`_lastTCPServer` in sauce). Track in a
+   follow-up plan, not here.
+
+### Item 1 — TCP relay port
+
+#### Pinned decisions
+
+- The TCP listener port is `3025`, matching sauce
+  (`sauce4zwift/src/zwift.mjs:1212`). Introduce
+  `pub const TCP_PORT_SECURE: u16 = 3025;` next to `UDP_PORT_SECURE`
+  in `crates/zwift-relay/src/consts.rs`, re-export from
+  `crates/zwift-relay/src/lib.rs`.
+- Drop the `port` field from `TcpServer` entirely. Reading the proto
+  field at all is what regressed the implementation away from the
+  documented constant. Removing the field eliminates the foot-gun and
+  surfaces any future regression at compile time.
+- `lb_realm == 0 && lb_course == 0` filtering stays — that part already
+  matches sauce semantics.
+
+#### Files to touch
+
+- `crates/zwift-relay/src/consts.rs` — add `TCP_PORT_SECURE`
+- `crates/zwift-relay/src/lib.rs` — re-export `TCP_PORT_SECURE`
+- `crates/zwift-relay/src/session.rs` — drop `port` from `TcpServer`,
+  drop the `n.port?` decode, update doc comment on `TcpServer`
+- `src/daemon/relay.rs` lines 986-992 and 1240-1245 — replace
+  `format!("{}:{}", server.ip, server.port)` with
+  `format!("{}:{}", server.ip, zwift_relay::TCP_PORT_SECURE)`
+- `src/daemon/relay.rs` test fixtures that construct `TcpServer { ip,
+  port }` — remove `port`
+- `crates/zwift-relay/src/session.rs` tests — same
+
+#### Red-state tests (write first, watch fail)
+
+- [ ] **T1-A** `tcp_connect_uses_constant_port_not_proto_field`. In
+  `tests/relay_runtime.rs` (or a new test in
+  `crates/zwift-relay/tests/`), build a `LoginResponse` whose first
+  node has `port = 3023` and assert the connect address ends in
+  `:3025`. Fails today (the connect address ends in `:3023`).
+- [ ] **T1-B** Structural: removing the `port` field from `TcpServer`
+  causes every `TcpServer { ip, port }` literal in the workspace to
+  fail to compile. This is the build-time test — confirm the failures
+  list lines up with the call sites listed under "Files to touch"
+  before fixing them.
+
+#### Green-state implementation
+
+- [ ] **G1-1** Add `pub const TCP_PORT_SECURE: u16 = 3025;` to
+  `crates/zwift-relay/src/consts.rs` next to `UDP_PORT_SECURE`. Mirror
+  the comment style.
+- [ ] **G1-2** Re-export `TCP_PORT_SECURE` from
+  `crates/zwift-relay/src/lib.rs`.
+- [ ] **G1-3** Remove `pub port: u16,` from
+  `crates/zwift-relay/src/session.rs::TcpServer`. Remove `n.port?` from
+  the `filter_map` decode (it now becomes
+  `filter_map(|n| Some(TcpServer { ip: n.ip? }))`).
+- [ ] **G1-4** Update the call sites in `src/daemon/relay.rs:988` and
+  `:1242` to use the constant.
+- [ ] **G1-5** Update every `TcpServer { ip, port: ... }` literal in
+  the test surface (the structural test above gives you the exact
+  list).
+- [ ] **G1-6** `cargo test` clean.
+
+#### Done when
+
+- T1-A passes (connect goes to `:3025`).
+- T1-B no longer applies (no `port` literals remain).
+- Re-running the live workflow advances past `connect()` — the failure
+  point shifts from `Connection refused` to whatever happens at the
+  application layer (likely a malformed-hello rejection driven by
+  Item 2's `athlete_id = 0`, until Item 2 lands).
+
+### Item 2 — Athlete identity from `/api/profiles/me`
+
+#### Pinned decisions
+
+- Eager fetch: `ZwiftAuth::login` calls `get_profile_me` as the last
+  step before returning `Ok`, matching sauce's
+  `authenticate()` (`zwift.mjs:362`). On success the profile is cached
+  on `ZwiftAuth`. Any caller that sees `Ok(())` from `login` can rely
+  on `athlete_id()` returning a real value without further I/O.
+- **Remove `AuthLogin::athlete_id` trait default**. Every implementor
+  must override explicitly. This is the whole reason for choosing
+  Rust here: catch the placeholder bug at compile time rather than via
+  a tracing log on a real account.
+- Split `zwift_api::Error::AuthFailed(String)` into four typed
+  variants: `AuthFailedUnauthorized` (401), `AuthFailedForbidden`
+  (403), `AuthFailedBadSchema` (200 with malformed body), and
+  `AuthFailedUnknown` (everything else). `Status { status, body }`
+  stays for non-auth HTTP failures.
+- The same monitor account flow applies: `monitorAPI` in sauce is just
+  a second `ZwiftAPI` instance with the monitor credentials, running
+  the identical `authenticate()` body. Confirmed in
+  `sauce4zwift/src/main.mjs:111, 660-670`. So one code path covers
+  both accounts.
+
+#### Files to touch
+
+- `crates/zwift-api/src/lib.rs` — `Error` variants split, `Profile`
+  struct, `get_profile_me`, `athlete_id`, eager profile fetch in
+  `login`
+- `crates/zwift-api/tests/auth.rs` — wiremock tests for each new
+  variant and for the eager profile fetch
+- `src/daemon/relay.rs` — remove the `AuthLogin::athlete_id` default,
+  add `DefaultAuthLogin::athlete_id` delegating to `ZwiftAuth`
+- `src/daemon/relay.rs` test stubs (`StubAuth` at line 1867, plus any
+  other `impl AuthLogin`) — explicit `athlete_id` override returning a
+  deterministic non-zero value
+- Any call site that constructed `Error::AuthFailed(_)` — re-route to
+  the right variant
+- `RelayRuntimeError::Auth` consumers — confirm error messages on the
+  daemon stderr name the failure precisely
+
+#### Red-state tests (write first, watch fail)
+
+- [ ] **T2-A** `login_eager_fetches_profile_and_caches_id`. Wiremock
+  serves `200 + token` on the Keycloak endpoint and `200 + {"id":
+  12345, ...}` on `GET /api/profiles/me`. After
+  `ZwiftAuth::login(...).await?`, `auth.athlete_id().await?` returns
+  `12345` without further I/O (use a `.expect(1)` on the wiremock
+  profile mock to assert the call count).
+- [ ] **T2-B** `get_profile_me_401_returns_unauthorized`. Wiremock
+  returns 401; assert the error matches
+  `Error::AuthFailedUnauthorized(_)`. Fails to compile until the
+  variant exists.
+- [ ] **T2-C** `get_profile_me_403_returns_forbidden`. Same as T2-B
+  with 403 → `AuthFailedForbidden`.
+- [ ] **T2-D** `get_profile_me_200_with_malformed_body_returns_bad_schema`.
+  Body is `{}` (no `id` field) → `AuthFailedBadSchema`.
+- [ ] **T2-E** `get_profile_me_5xx_returns_unknown`. 503 →
+  `AuthFailedUnknown`.
+- [ ] **T2-F** `relay_login_log_carries_real_athlete_id`. End-to-end
+  assertion through the relay-runtime test surface that the
+  `relay.login.ok` log line carries the wired athlete id (e.g. read it
+  off the captured tracing events). Fails today (`athlete_id=0`).
+- [ ] **T2-G** Structural / build-time: removing the
+  `AuthLogin::athlete_id` default produces compile errors for every
+  stub that does not override it. List the failing stubs before
+  fixing — this is your guide to the test-stub update step.
+
+#### Green-state implementation
+
+- [ ] **G2-1** Split `Error::AuthFailed(String)` into the four typed
+  variants. Update every existing constructor.
+- [ ] **G2-2** Add `pub struct Profile { pub id: i64, ... }` to
+  `crates/zwift-api/src/lib.rs`. Decode at minimum the `id` field;
+  optional fields can land later if any consumer needs them.
+- [ ] **G2-3** Add `ZwiftAuth::get_profile_me() -> Result<Profile,
+  Error>` issuing `GET /api/profiles/me` with the bearer token.
+  Mapping table: 200 + valid body → `Ok`; 200 + bad body →
+  `AuthFailedBadSchema`; 401 → `AuthFailedUnauthorized`; 403 →
+  `AuthFailedForbidden`; everything else → `AuthFailedUnknown`.
+- [ ] **G2-4** Cache the profile on `ZwiftAuth` (e.g. `profile:
+  RwLock<Option<Profile>>`). Add `ZwiftAuth::athlete_id() -> Result<i64,
+  Error>` that reads from the cache and returns
+  `Error::NotAuthenticated` if `login` has not been called.
+- [ ] **G2-5** Extend `ZwiftAuth::login` so that on success it calls
+  `get_profile_me` and stores the result in the cache. If
+  `get_profile_me` fails, the whole `login` returns the error (do not
+  half-succeed).
+- [ ] **G2-6** Remove the default impl on `AuthLogin::athlete_id` in
+  `src/daemon/relay.rs:97-101`. The trait method becomes:
+  ```rust
+  fn athlete_id(&self)
+      -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send;
+  ```
+- [ ] **G2-7** `DefaultAuthLogin::athlete_id` delegates to
+  `self.auth.athlete_id().await`.
+- [ ] **G2-8** Update every test stub flagged by T2-G with an explicit
+  `athlete_id` override returning a deterministic non-zero id (e.g.
+  `12345`).
+- [ ] **G2-9** `cargo test` clean across all crates.
+
+#### Done when
+
+- All T2-* tests pass.
+- The live workflow logs `relay.login.ok email=... athlete_id=<real
+  id>` instead of `athlete_id=0`.
+- The first hello packet captured into `session.cap` (after Item 1
+  also lands) decodes to a `ClientToServer` with
+  `player_id = <real id>`.
+- A future `impl AuthLogin` for any new type fails to build unless it
+  provides an `athlete_id` override.
+
 ## Issue A — `athlete_id=0` after a successful login
 
 ### What the log records
