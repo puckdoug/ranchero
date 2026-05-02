@@ -16,8 +16,9 @@ use ranchero::config::{
     EditingMode, RedactedString, ResolvedConfig, ZwiftEndpoints,
 };
 use ranchero::daemon::relay::{
-    AuthLogin, RelayRuntime, SessionLogin, SessionSupervisorFactory, SessionSupervisorHandle,
-    TcpTransportFactory, UdpTransportFactory,
+    AuthLogin, DefaultUdpTransportFactory, RelayRuntime, SessionLogin,
+    SessionSupervisorFactory, SessionSupervisorHandle, TcpTransportFactory,
+    UdpTransportFactory,
 };
 
 fn make_config(email: &str, password: &str) -> ResolvedConfig {
@@ -912,5 +913,96 @@ async fn relay_runtime_logs_monitor_athlete_id_after_login() {
         tracing_test::internal::logs_with_scope_contain("ranchero", "99999"),
         "Defect 12 red state: relay must retrieve and log the monitor account's \
          athlete ID after login; athlete_id 99999 was not found in any log record",
+    );
+}
+
+// ==========================================================================
+// STEP-12.11 Item 1 — DefaultUdpTransportFactory connects to a real UDP socket.
+//
+// Red state: DefaultUdpTransportFactory::connect returns the stub error
+// "Defect 4: UDP connection not yet implemented".
+// ==========================================================================
+
+#[tokio::test]
+async fn default_udp_transport_factory_connects_to_bound_socket() {
+    // Bind a local UDP socket to 127.0.0.1:0 to get an OS-assigned port.
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("bind UDP socket");
+    let addr = socket.local_addr()
+        .expect("get local address");
+
+    // Call the production factory's connect method.
+    let factory = DefaultUdpTransportFactory;
+    let result = factory.connect(addr).await;
+
+    if let Err(e) = &result {
+        panic!(
+            "STEP-12.11 Item 1 red state: DefaultUdpTransportFactory::connect must \
+             connect to a real UDP socket; currently fails with: {}",
+            e,
+        );
+    }
+    assert!(result.is_ok());
+}
+
+// ==========================================================================
+// STEP-12.11 Item 2 — The full relay pipeline emits all lifecycle events.
+//
+// Red state: start_all_inner (called by start_with_all_deps_and_writer)
+// is incomplete; it does not emit relay.tcp.hello.sent, relay.udp.established,
+// or relay.heartbeat.started.
+//
+// This test uses the full DI pipeline (start_with_all_deps_and_writer) to
+// verify that when all components are wired correctly, the complete event
+// sequence is emitted. The production daemon entry point (start_with_writer)
+// must eventually route through this same pipeline.
+// ==========================================================================
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn start_with_all_deps_and_writer_emits_full_lifecycle_event_sequence() {
+    // This test verifies that when RelayRuntime is started with the full
+    // dependency stack and a capture writer, it emits the complete event
+    // sequence. When Item 2 is implemented, RelayRuntime::start_with_writer
+    // (the production entry point) must route through the same pipeline.
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+
+    // Create a capture writer to pass along.
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+        .await
+        .expect("open writer");
+    let writer = Arc::new(writer);
+
+    let runtime = RelayRuntime::start_with_all_deps_and_writer(
+        &cfg,
+        Arc::clone(&writer),
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps_and_writer must succeed");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    // Verify the full event sequence is emitted.
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.tcp.hello.sent"),
+        "STEP-12.11 Item 2 red state: full pipeline must emit \
+         relay.tcp.hello.sent after TCP is established; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.udp.established"),
+        "STEP-12.11 Item 2 red state: full pipeline must emit \
+         relay.udp.established after UDP connect; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.heartbeat.started"),
+        "STEP-12.11 Item 2 red state: full pipeline must emit \
+         relay.heartbeat.started after UDP is ready; not found in tracing log",
     );
 }
