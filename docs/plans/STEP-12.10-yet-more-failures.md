@@ -91,22 +91,22 @@ those before starting any item if the rationale is unclear.
 
 #### Green-state implementation
 
-- [ ] **G1-1** Add `pub const TCP_PORT_SECURE: u16 = 3025;` to
+- [x] **G1-1** Add `pub const TCP_PORT_SECURE: u16 = 3025;` to
   `crates/zwift-relay/src/consts.rs` next to `UDP_PORT_SECURE`. Mirror
   the comment style.
-- [ ] **G1-2** Re-export `TCP_PORT_SECURE` from
+- [x] **G1-2** Re-export `TCP_PORT_SECURE` from
   `crates/zwift-relay/src/lib.rs`.
-- [ ] **G1-3** Enumerate every `TcpServer { ip, port` literal in the
+- [x] **G1-3** Enumerate every `TcpServer { ip, port` literal in the
   workspace (`grep -rn "TcpServer {"`). Confirm the list matches the
   files named under "Files to touch" before proceeding.
-- [ ] **G1-4** Remove `pub port: u16,` from
+- [x] **G1-4** Remove `pub port: u16,` from
   `crates/zwift-relay/src/session.rs::TcpServer`. Remove `n.port?` from
   the `filter_map` decode (it now becomes
   `filter_map(|n| Some(TcpServer { ip: n.ip? }))`). Fix every broken
   literal surfaced in G1-3.
-- [ ] **G1-5** Update the call sites in `src/daemon/relay.rs:988` and
+- [x] **G1-5** Update the call sites in `src/daemon/relay.rs:988` and
   `:1242` to use the constant.
-- [ ] **G1-6** `cargo test` clean.
+- [x] **G1-6** `cargo test` clean.
 
 #### Done when
 

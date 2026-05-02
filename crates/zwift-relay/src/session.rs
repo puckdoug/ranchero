@@ -28,11 +28,11 @@ use zwift_api::{DEFAULT_SOURCE, DEFAULT_USER_AGENT};
 
 /// One TCP relay endpoint from `LoginResponse.info.nodes.nodes`,
 /// already filtered to the `lb_realm == 0 && lb_course == 0` generic
-/// pool.
+/// pool. The proto `TcpAddress.port` field is not stored here — the
+/// listener port is always [`crate::TCP_PORT_SECURE`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TcpServer {
     pub ip: String,
-    pub port: u16,
 }
 
 /// Everything STEP 10 / 11 channels need to construct an IV and open
@@ -170,12 +170,7 @@ pub async fn login(
         .unwrap_or_default()
         .into_iter()
         .filter(|n| n.lb_realm.unwrap_or(0) == 0 && n.lb_course.unwrap_or(0) == 0)
-        .filter_map(|n| {
-            Some(TcpServer {
-                ip: n.ip?,
-                port: u16::try_from(n.port?).ok()?,
-            })
-        })
+        .filter_map(|n| Some(TcpServer { ip: n.ip? }))
         .collect();
 
     if !config.post_login_settle.is_zero() {

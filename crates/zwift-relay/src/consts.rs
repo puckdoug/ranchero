@@ -39,6 +39,10 @@ pub const MIN_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_
 /// milliseconds since this point. Spec §4.3 / `zwift.mjs:92`.
 pub const ZWIFT_EPOCH_MS: i64 = 1_414_016_074_400;
 
+/// TCP port the relay server listens on. Hard-coded by sauce
+/// (`zwift.mjs:1212`); the proto `TcpAddress.port` field is ignored.
+pub const TCP_PORT_SECURE: u16 = 3025;
+
 /// UDP port the secure (AES-GCM-encrypted) telemetry channel uses.
 /// Spec §7.4.
 pub const UDP_PORT_SECURE: u16 = 3024;

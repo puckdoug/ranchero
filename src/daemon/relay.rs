@@ -985,7 +985,7 @@ impl RelayRuntime {
 
         // 5. Pick the first TCP server and connect.
         let server = &session.tcp_servers[0];
-        let addr_str = format!("{}:{}", server.ip, server.port);
+        let addr_str = format!("{}:{}", server.ip, zwift_relay::TCP_PORT_SECURE);
         let addr: std::net::SocketAddr = addr_str
             .parse()
             .map_err(|_| RelayRuntimeError::BadTcpAddress(addr_str.clone()))?;
@@ -1238,7 +1238,7 @@ impl RelayRuntime {
 
         // 5. Pick the first TCP server and connect.
         let server = &session.tcp_servers[0];
-        let addr_str = format!("{}:{}", server.ip, server.port);
+        let addr_str = format!("{}:{}", server.ip, zwift_relay::TCP_PORT_SECURE);
         let addr: std::net::SocketAddr = addr_str
             .parse()
             .map_err(|_| RelayRuntimeError::BadTcpAddress(addr_str.clone()))?;
@@ -2011,10 +2011,7 @@ mod tests {
     }
 
     fn fixture_servers() -> Vec<zwift_relay::TcpServer> {
-        vec![zwift_relay::TcpServer {
-            ip: "127.0.0.1".into(),
-            port: 3025,
-        }]
+        vec![zwift_relay::TcpServer { ip: "127.0.0.1".into() }]
     }
 
     /// A `zwift_api::Error` value usable in error-propagation tests.

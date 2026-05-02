@@ -169,10 +169,7 @@ fn fixture_session() -> zwift_relay::RelaySession {
     zwift_relay::RelaySession {
         aes_key: [0u8; 16],
         relay_id: 42,
-        tcp_servers: vec![zwift_relay::TcpServer {
-            ip: "127.0.0.1".into(),
-            port: 3025,
-        }],
+        tcp_servers: vec![zwift_relay::TcpServer { ip: "127.0.0.1".into() }],
         expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(3600),
         server_time_ms: Some(0),
     }
@@ -827,24 +824,14 @@ impl TcpTransportFactory for AddrCapturingTcpFactory {
 
 #[tokio::test]
 async fn tcp_connect_uses_constant_port_not_proto_field() {
-    // The session carries port 3023 — the value Zwift fills in the proto
-    // `TcpAddress.port` field. The connect address must use port 3025 (the
-    // constant hard-coded by sauce), not the proto value.
-    //
-    // Red state: relay.rs:988 and :1241 both do
-    //   `format!("{}:{}", server.ip, server.port)`
-    // so the connect goes to :3023 and the assertion below fails.
-    //
-    // Green state: the constant zwift_relay::TCP_PORT_SECURE (= 3025) is
-    // introduced in G1-1/G1-2 and used in the format call; at that point
-    // the literal 3025 below can be replaced by the constant.
+    // The proto `TcpAddress.port` field is not the listener port — sauce
+    // hard-codes 3025 (`zwift.mjs:1212`). Verify that the connect address
+    // always uses `TCP_PORT_SECURE` regardless of what the session decoder
+    // found in the proto response.
     let session = zwift_relay::RelaySession {
         aes_key: [0u8; 16],
         relay_id: 42,
-        tcp_servers: vec![zwift_relay::TcpServer {
-            ip: "127.0.0.1".into(),
-            port: 3023,
-        }],
+        tcp_servers: vec![zwift_relay::TcpServer { ip: "127.0.0.1".into() }],
         expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(3600),
         server_time_ms: Some(0),
     };
@@ -873,9 +860,9 @@ async fn tcp_connect_uses_constant_port_not_proto_field() {
 
     assert_eq!(
         addr.port(),
-        3025_u16,
-        "TCP connect must use port 3025 (sauce constant), not the proto value 3023; \
-         got port {}",
+        zwift_relay::TCP_PORT_SECURE,
+        "TCP connect must use TCP_PORT_SECURE ({}), got port {}",
+        zwift_relay::TCP_PORT_SECURE,
         addr.port(),
     );
 }
