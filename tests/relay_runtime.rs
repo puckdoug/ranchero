@@ -791,6 +791,96 @@ async fn relay_runtime_start_fails_when_monitor_credentials_absent() {
 }
 
 // ==========================================================================
+// Item 1 (STEP-12.10) — TCP relay port must be 3025 regardless of what the
+// LoginResponse proto field carries.
+//
+// Red state: relay.rs reads `server.port` from the `TcpServer` struct, so the
+// connect address inherits whatever value the session decoder placed there.
+// The proto value today is 3023; sauce hard-codes 3025.  The connect must use
+// the constant.
+// ==========================================================================
+
+/// A [`TcpTransportFactory`] that records the [`SocketAddr`] passed to the
+/// first `connect()` call, then hands back a [`NoopTcpTransport`].
+struct AddrCapturingTcpFactory {
+    captured: Arc<StdMutex<Option<std::net::SocketAddr>>>,
+}
+
+impl AddrCapturingTcpFactory {
+    fn new() -> (Self, Arc<StdMutex<Option<std::net::SocketAddr>>>) {
+        let slot = Arc::new(StdMutex::new(None));
+        (Self { captured: Arc::clone(&slot) }, slot)
+    }
+}
+
+impl TcpTransportFactory for AddrCapturingTcpFactory {
+    type Transport = NoopTcpTransport;
+
+    fn connect(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        *self.captured.lock().unwrap() = Some(addr);
+        async { Ok(NoopTcpTransport) }
+    }
+}
+
+#[tokio::test]
+async fn tcp_connect_uses_constant_port_not_proto_field() {
+    // The session carries port 3023 — the value Zwift fills in the proto
+    // `TcpAddress.port` field. The connect address must use port 3025 (the
+    // constant hard-coded by sauce), not the proto value.
+    //
+    // Red state: relay.rs:988 and :1241 both do
+    //   `format!("{}:{}", server.ip, server.port)`
+    // so the connect goes to :3023 and the assertion below fails.
+    //
+    // Green state: the constant zwift_relay::TCP_PORT_SECURE (= 3025) is
+    // introduced in G1-1/G1-2 and used in the format call; at that point
+    // the literal 3025 below can be replaced by the constant.
+    let session = zwift_relay::RelaySession {
+        aes_key: [0u8; 16],
+        relay_id: 42,
+        tcp_servers: vec![zwift_relay::TcpServer {
+            ip: "127.0.0.1".into(),
+            port: 3023,
+        }],
+        expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(3600),
+        server_time_ms: Some(0),
+    };
+
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+    let (factory, captured) = AddrCapturingTcpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(session),
+        factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let addr = captured
+        .lock()
+        .unwrap()
+        .expect("TcpTransportFactory::connect was never called");
+
+    assert_eq!(
+        addr.port(),
+        3025_u16,
+        "TCP connect must use port 3025 (sauce constant), not the proto value 3023; \
+         got port {}",
+        addr.port(),
+    );
+}
+
+// ==========================================================================
 // Defect 12 — athlete_id hardcoded to 0 in TcpChannelConfig, UdpChannelConfig,
 // and HeartbeatScheduler.
 //

@@ -83,16 +83,11 @@ those before starting any item if the rationale is unclear.
 
 #### Red-state tests (write first, watch fail)
 
-- [ ] **T1-A** `tcp_connect_uses_constant_port_not_proto_field`. In
+- [x] **T1-A** `tcp_connect_uses_constant_port_not_proto_field`. In
   `tests/relay_runtime.rs` (or a new test in
   `crates/zwift-relay/tests/`), build a `LoginResponse` whose first
   node has `port = 3023` and assert the connect address ends in
   `:3025`. Fails today (the connect address ends in `:3023`).
-- [ ] **T1-B** Structural: removing the `port` field from `TcpServer`
-  causes every `TcpServer { ip, port }` literal in the workspace to
-  fail to compile. This is the build-time test — confirm the failures
-  list lines up with the call sites listed under "Files to touch"
-  before fixing them.
 
 #### Green-state implementation
 
@@ -101,15 +96,16 @@ those before starting any item if the rationale is unclear.
   the comment style.
 - [ ] **G1-2** Re-export `TCP_PORT_SECURE` from
   `crates/zwift-relay/src/lib.rs`.
-- [ ] **G1-3** Remove `pub port: u16,` from
+- [ ] **G1-3** Enumerate every `TcpServer { ip, port` literal in the
+  workspace (`grep -rn "TcpServer {"`). Confirm the list matches the
+  files named under "Files to touch" before proceeding.
+- [ ] **G1-4** Remove `pub port: u16,` from
   `crates/zwift-relay/src/session.rs::TcpServer`. Remove `n.port?` from
   the `filter_map` decode (it now becomes
-  `filter_map(|n| Some(TcpServer { ip: n.ip? }))`).
-- [ ] **G1-4** Update the call sites in `src/daemon/relay.rs:988` and
+  `filter_map(|n| Some(TcpServer { ip: n.ip? }))`). Fix every broken
+  literal surfaced in G1-3.
+- [ ] **G1-5** Update the call sites in `src/daemon/relay.rs:988` and
   `:1242` to use the constant.
-- [ ] **G1-5** Update every `TcpServer { ip, port: ... }` literal in
-  the test surface (the structural test above gives you the exact
-  list).
 - [ ] **G1-6** `cargo test` clean.
 
 #### Done when
