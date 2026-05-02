@@ -32,77 +32,77 @@ those pairs.
 External prerequisite (must already be in `done/` before phase 7
 verification can run against live traffic):
 
-- [ ] STEP-12.11 — `start_with_writer` routed through `start_all_inner`,
-  `DefaultUdpTransportFactory` no longer a stub.
+- [x] STEP-12.11 — `start_with_writer` routed through `start_all_inner`,
+      `DefaultUdpTransportFactory` no longer a stub.
 
 Phased work (this step):
 
 - [ ] **0a** — Pre-requisites tests: capture format v2 round-trip,
-  manifest record decode, `Http` transport variant, `--debug` filter
-  enables `debug` for `zwift_relay::*` and `zwift_api::*`.
+      manifest record decode, `Http` transport variant, `--debug` filter
+      enables `debug` for `zwift_relay::*` and `zwift_api::*`.
 - [ ] **0b** — Pre-requisites implementation: bump capture format to
-  v2 (reject v1), add `TransportKind::Http`, add `RecordKind::Manifest`
-  / `record_session_manifest` API, fix `--debug` filter scope.
+      v2 (reject v1), add `TransportKind::Http`, add `RecordKind::Manifest`
+      / `record_session_manifest` API, fix `--debug` filter scope.
 - [ ] **1a** — TCP module tests (`zwift-relay::tcp`): capture stores
-  framed wire bytes (length + header + ciphertext + tag) for both
-  send and recv; `relay.tcp.frame.sent` / `relay.tcp.frame.recv` /
-  `relay.tcp.decrypt.ok` events with correct fields.
+      framed wire bytes (length + header + ciphertext + tag) for both
+      send and recv; `relay.tcp.frame.sent` / `relay.tcp.frame.recv` /
+      `relay.tcp.decrypt.ok` events with correct fields.
 - [ ] **1b** — TCP module implementation: relocate `record_outbound`
-  to write `wire` (not `proto_bytes`); relocate `record_inbound` to
-  write `payload_owned` before `process_inbound`; emit the three
-  tracing events.
-- [ ] **2a** — UDP module tests (`zwift-relay::udp`): capture stores
-  the encrypted datagram for both hello and steady-state, send and
-  recv; `relay.udp.hello.started` / `hello.sent` / `hello.ack` /
-  `sync.converged` / `playerstate.sent` / `message.recv` events
-  with correct fields.
-- [ ] **2b** — UDP module implementation: relocate `record_outbound`
-  / `record_inbound` calls to wire bytes at all four sites; emit the
-  six tracing events; replace bare `relay.udp.inbound` with
-  `relay.udp.message.recv` carrying decoded fields.
+      to write `wire` (not `proto_bytes`); relocate `record_inbound` to
+      write `payload_owned` before `process_inbound`; emit the three
+      tracing events.
+- [x] **2a** — UDP module tests (`zwift-relay::udp`): capture stores
+      the encrypted datagram for both hello and steady-state, send and
+      recv; `relay.udp.hello.started` / `hello.sent` / `hello.ack` /
+      `sync.converged` / `playerstate.sent` / `message.recv` events
+      with correct fields.
+- [x] **2b** — UDP module implementation: relocate `record_outbound`
+      / `record_inbound` calls to wire bytes at all four sites; emit the
+      six tracing events; replace bare `relay.udp.inbound` with
+      `relay.udp.message.recv` carrying decoded fields.
 - [ ] **3a** — Capture writer diagnostics tests
-  (`zwift-relay::capture`): `relay.capture.record.dropped` (warn) on
-  channel saturation; `relay.capture.writer.flushed` (debug) per
-  flush; `relay.capture.writer.closed` (info) with totals.
+      (`zwift-relay::capture`): `relay.capture.record.dropped` (warn) on
+      channel saturation; `relay.capture.writer.flushed` (debug) per
+      flush; `relay.capture.writer.closed` (info) with totals.
 - [ ] **3b** — Capture writer diagnostics implementation: emit the
-  three tracing events from the writer task and the producer-side
-  drop path.
+      three tracing events from the writer task and the producer-side
+      drop path.
 - [ ] **4a** — Session and supervisor tests
-  (`zwift-relay::session`): `relay.session.login.started` /
-  `login.ok` / `tcp_servers` / `refresh.ok`; `relay.supervisor.
-  logged_in` / `refreshed` / `refresh_failed` / `relogin_attempt` /
-  `relogin_ok` / `login_failed`.
+      (`zwift-relay::session`): `relay.session.login.started` /
+      `login.ok` / `tcp_servers` / `refresh.ok`; `relay.supervisor.
+logged_in` / `refreshed` / `refresh_failed` / `relogin_attempt` /
+      `relogin_ok` / `login_failed`.
 - [ ] **4b** — Session and supervisor implementation: emit the
-  events from the single-shot helpers and the supervisor refresh
-  loop.
+      events from the single-shot helpers and the supervisor refresh
+      loop.
 - [ ] **5a** — Auth / HTTP tests (`zwift-api`): every request and
-  response body appears in the capture as a `TransportKind::Http`
-  record; `relay.auth.token.requested` / `token.granted` /
-  `profile.ok` / `profile.failed` / `http.request` / `http.response`
-  / `http.retry` / `refresh.completed` events with correct fields.
+      response body appears in the capture as a `TransportKind::Http`
+      record; `relay.auth.token.requested` / `token.granted` /
+      `profile.ok` / `profile.failed` / `http.request` / `http.response`
+      / `http.retry` / `refresh.completed` events with correct fields.
 - [ ] **5b** — Auth / HTTP implementation: inject a capture-sink
-  dependency into `ZwiftAuth`, route request and response bodies
-  through it, emit the eight tracing events.
+      dependency into `ZwiftAuth`, route request and response bodies
+      through it, emit the eight tracing events.
 - [ ] **6a** — Daemon integration tests (`ranchero::daemon::relay`):
-  `start_all_inner` writes a session-manifest record after relay-
-  session login; supervisor refresh / re-login writes a fresh
-  manifest; `recv_loop` handles `TcpChannelEvent::Inbound` and emits
-  `relay.tcp.message.recv`; `relay.state.change` info event on every
-  `RuntimeState` transition; `relay.heartbeat.tick` debug events;
-  `relay.heartbeat.send_failed` warn on tick failure.
+      `start_all_inner` writes a session-manifest record after relay-
+      session login; supervisor refresh / re-login writes a fresh
+      manifest; `recv_loop` handles `TcpChannelEvent::Inbound` and emits
+      `relay.tcp.message.recv`; `relay.state.change` info event on every
+      `RuntimeState` transition; `relay.heartbeat.tick` debug events;
+      `relay.heartbeat.send_failed` warn on tick failure.
 - [ ] **6b** — Daemon integration implementation: call
-  `record_session_manifest` from `start_all_inner` and the
-  supervisor-event handler; add the `Inbound` arm to `recv_loop`;
-  add state-change tracing alongside every `GameEvent::StateChange`
-  emission; add heartbeat tick tracing.
+      `record_session_manifest` from `start_all_inner` and the
+      supervisor-event handler; add the `Inbound` arm to `recv_loop`;
+      add state-change tracing alongside every `GameEvent::StateChange`
+      emission; add heartbeat tick tracing.
 - [ ] **7a** — Closing review verification: live `ranchero start
-  --debug --capture output.cap` matches the Acceptance event
-  sequence; `CaptureReader` + manifest decrypt-and-decode round
-  trip succeeds; audit confirms no `transport.send` / `write_all` /
-  `recv` site lacks an adjacent `record_*` call; `cargo test` clean.
+--debug --capture output.cap` matches the Acceptance event
+      sequence; `CaptureReader` + manifest decrypt-and-decode round
+      trip succeeds; audit confirms no `transport.send` / `write_all` /
+      `recv` site lacks an adjacent `record_*` call; `cargo test` clean.
 - [ ] **7b** — Closing review cleanup: remove obsolete TODOs and
-  Defect 4 / Defect 7 comments tied to this work; refresh any plan-
-  doc references that point at the now-changed line numbers.
+      Defect 4 / Defect 7 comments tied to this work; refresh any plan-
+      doc references that point at the now-changed line numbers.
 
 Implementation will be tracked under STEP-12.13 (or whichever
 follow-up step is opened to act on this).
@@ -266,7 +266,7 @@ or proposed:
   player-state send, message recv, shutdown.
 - `relay.heartbeat.*` — the 1 Hz heartbeat scheduler.
 - `relay.capture.*` — capture writer lifecycle and writer-state
-  diagnostics. These are `--debug`-channel tracing events *about* the
+  diagnostics. These are `--debug`-channel tracing events _about_ the
   writer; they are distinct from the records the writer puts into the
   `--capture` file. The capture file itself has no event names — only
   framed records.
@@ -284,7 +284,7 @@ connection is large enough that not everything can stay at `info`.
 - **`info`** — every lifecycle event, every connection-state
   transition, every authentication exchange, every supervisor event,
   every error. This tier must be sufficient to reconstruct what the
-  daemon was *trying* to do and where it stopped. Default verbosity.
+  daemon was _trying_ to do and where it stopped. Default verbosity.
 - **`debug`** — per-packet send and recv events, per-record capture
   writes, per-tick heartbeat output. Off by default; enabled by
   `--debug`.
@@ -331,7 +331,7 @@ today are not captured at all and should be (see 5.0).
 - **Today:** zero log output. `relay.tcp.hello.sent` was named in the
   STEP-12.6 plan but never landed in code. Capture: the hello's
   plaintext is recorded but the wire-byte hello (header + ciphertext
-  + tag) is not — see 1.2.
+  - tag) is not — see 1.2.
 - **Proposed:** `relay.tcp.hello.sent` at `info`, fields
   `{ athlete_id, server_realm, seqno }`. This is a one-shot event;
   `info` is appropriate.
@@ -342,7 +342,7 @@ today are not captured at all and should be (see 5.0).
   records the wrong content).
 - **Site:** `crates/zwift-relay/src/tcp.rs:225-273` —
   `TcpChannel::send_packet(payload, hello)`. `record_outbound(...,
-  &proto_bytes)` runs at line 234 (writes plaintext proto bytes);
+&proto_bytes)` runs at line 234 (writes plaintext proto bytes);
   `transport.write_all(&wire)` runs at line 271 (writes the framed
   ciphertext that actually crossed the socket).
 - **Today:** zero `--debug` output. Capture records the wrong bytes
@@ -365,7 +365,7 @@ Capture coverage for this section is wrong today: `tcp.rs:400` records
 the post-decryption plaintext, not the wire bytes that arrived.
 Correction: move the `record_inbound` call to record `payload_owned`
 (the framed wire bytes drained from the buffer at `tcp.rs:390`)
-*before* `process_inbound` runs, so the file holds what the server
+_before_ `process_inbound` runs, so the file holds what the server
 actually sent. The `--debug` items below are otherwise additive.
 
 #### 2.1 Frame extraction from buffer
@@ -395,7 +395,7 @@ actually sent. The `--debug` items below are otherwise additive.
 
 - **Channel:** `--debug`.
 - **Site:** `crates/zwift-relay/src/tcp.rs:401-405` — `ServerToClient::
-  decode(plaintext)` followed by `TcpChannelEvent::Inbound(stc)`
+decode(plaintext)` followed by `TcpChannelEvent::Inbound(stc)`
   broadcast.
 - **Today:** the broadcast is silent; the recv loop in the daemon
   receives the event but does not log it (`recv_loop` only handles
@@ -462,7 +462,7 @@ additive.
 Capture coverage is wrong today: `udp.rs:293` (hello path) and
 `udp.rs:574` (steady state) record post-decryption plaintext.
 Correction: move the `record_inbound` calls to record the encrypted
-datagram returned from `transport.recv()` *before*
+datagram returned from `transport.recv()` _before_
 `process_inbound_packet` runs. The `--debug` items below are
 otherwise additive.
 
@@ -475,7 +475,7 @@ otherwise additive.
   latency/offset sample collection at 296-309, `SyncOutcome` transition
   at 311.
 - **Today:** silent. The latency reported by
-  `relay.udp.established { latency_ms }` is the *only* surviving
+  `relay.udp.established { latency_ms }` is the _only_ surviving
   artefact; the per-sample data and convergence path are invisible.
 - **Proposed:**
   - `relay.udp.hello.ack` at `debug`, fields
@@ -743,17 +743,17 @@ are observable from outside the function only via their absence. List
 included here so they are not forgotten when the implementation step
 is scoped.
 
-| Site | Mutation | Suggested trace event |
-| --- | --- | --- |
-| `tcp.rs:261` | `send.iv_seqno` increment | included in 1.2 fields |
-| `tcp.rs:340` | `recv_iv_seqno` increment | included in 2.2 fields |
-| `udp.rs:270-271` | hello-path seqno increments | included in 3.1 fields |
-| `udp.rs:423-424` | playerstate seqno increments | included in 3.2 fields |
-| `udp.rs:540` | recv-path `recv_iv_seqno` increment | new `relay.udp.iv.seqno` at `trace` |
-| `capture.rs:210` | `dropped_count` increment | included in 7.1 |
-| `session.rs:316` | refresh-delay computation | included in 6.3 `refresh.fire` |
-| `session.rs:356` | re-login `attempt` increment | included in 6.3 `relogin_attempt` |
-| `udp.rs:300-307` | sync sample accumulation | included in 4.1 `hello.ack` |
+| Site             | Mutation                            | Suggested trace event               |
+| ---------------- | ----------------------------------- | ----------------------------------- |
+| `tcp.rs:261`     | `send.iv_seqno` increment           | included in 1.2 fields              |
+| `tcp.rs:340`     | `recv_iv_seqno` increment           | included in 2.2 fields              |
+| `udp.rs:270-271` | hello-path seqno increments         | included in 3.1 fields              |
+| `udp.rs:423-424` | playerstate seqno increments        | included in 3.2 fields              |
+| `udp.rs:540`     | recv-path `recv_iv_seqno` increment | new `relay.udp.iv.seqno` at `trace` |
+| `capture.rs:210` | `dropped_count` increment           | included in 7.1                     |
+| `session.rs:316` | refresh-delay computation           | included in 6.3 `refresh.fire`      |
+| `session.rs:356` | re-login `attempt` increment        | included in 6.3 `relogin_attempt`   |
+| `udp.rs:300-307` | sync sample accumulation            | included in 4.1 `hello.ack`         |
 
 ## Cross-cutting work needed before the events are useful
 
@@ -866,7 +866,7 @@ version 2. It must contain:
   header + ciphertext + tag), direction inbound/outbound, transport
   `Tcp`;
 - every UDP datagram as it appeared on the wire (unencrypted header
-  + ciphertext + tag), direction inbound/outbound, transport `Udp`.
+  - ciphertext + tag), direction inbound/outbound, transport `Udp`.
 
 No record may contain decoded fields, event names, log levels, or
 human-readable prose. The only annotation alongside payload bytes is
@@ -934,10 +934,10 @@ Tests live in `crates/zwift-relay/tests/capture.rs` and a new
     transport byte) to distinguish `Manifest` from `Frame`.
   - add `TransportKind::Http`.
   - add `pub struct SessionManifest { aes_key: [u8; 16],
-    device: DeviceType, channel: ChannelType, send_iv_seqno_tcp:
-    u32, recv_iv_seqno_tcp: u32, send_iv_seqno_udp: u32,
-    recv_iv_seqno_udp: u32, relay_id: u32, conn_id: u32,
-    expires_at_unix_ns: u64 }` (field set adjusted to match the
+device: DeviceType, channel: ChannelType, send_iv_seqno_tcp:
+u32, recv_iv_seqno_tcp: u32, send_iv_seqno_udp: u32,
+recv_iv_seqno_udp: u32, relay_id: u32, conn_id: u32,
+expires_at_unix_ns: u64 }` (field set adjusted to match the
     real codec; verify against `RelayIv`).
   - add `pub fn record_session_manifest(&self, m: SessionManifest)`
     on `CaptureWriter`.
@@ -961,7 +961,7 @@ Add to `crates/zwift-relay/tests/tcp.rs` (or a new
   in-memory transport fixture with a capture writer attached; read
   the recorded record back; assert the bytes equal the framed wire
   produced by `frame_tcp(...)` (length prefix + header + ciphertext
-  + tag), **not** `payload.encode_to_vec()`.
+  - tag), **not** `payload.encode_to_vec()`.
 - `tcp_recv_records_pre_decrypt_buffer` — feed a known
   framed-and-encrypted payload into the channel's read side; assert
   the recorded record holds the raw framed wire bytes (matching
@@ -1169,7 +1169,7 @@ Extend `crates/zwift-api/tests/auth.rs`.
 
 - Choose the cross-crate sharing approach (trait location). Add
   the `CaptureSink` trait with a single `record(direction,
-  transport, &[u8])` method.
+transport, &[u8])` method.
 - `crates/zwift-api/src/lib.rs`: add an optional
   `Arc<dyn CaptureSink>` field to `Inner`; thread it into
   `with_client` / `Config` so the daemon can supply one. Default
@@ -1234,7 +1234,7 @@ Extend `tests/relay_runtime.rs` (or a new
   `interval_ms` and `send_ok`. On failure, emit
   `relay.heartbeat.send_failed` at `warn` with the error.
 - Remove the bare `tracing::debug!(target: "ranchero::relay",
-  "relay.udp.inbound");` at relay.rs:1738 (replaced by
+"relay.udp.inbound");` at relay.rs:1738 (replaced by
   `relay.udp.message.recv` from phase 2).
 
 ### Phase 7 — Closing review

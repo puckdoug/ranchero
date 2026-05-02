@@ -636,6 +636,211 @@ fn follower_rejects_unsupported_version() {
     }
 }
 
+// --- 7. Phase 0a: format v2, manifest record, Http transport -------
+//
+// These tests target the new `RecordKind::Manifest` / `SessionManifest`
+// API, the bumped `VERSION = 2`, and `TransportKind::Http`. They are
+// written against the API the implementation step (0b) is required to
+// produce; until 0b lands they must fail to compile.
+
+use zwift_relay::capture::{CaptureItem, RecordKind, SessionManifest};
+
+fn sample_manifest() -> SessionManifest {
+    SessionManifest {
+        aes_key: [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+            0xEE, 0xFF,
+        ],
+        device_type: 1,
+        channel_type: 2,
+        send_iv_seqno_tcp: 0,
+        recv_iv_seqno_tcp: 0,
+        send_iv_seqno_udp: 7,
+        recv_iv_seqno_udp: 11,
+        relay_id: 0xDEAD_BEEF,
+        conn_id: 0xCAFE_F00D,
+        expires_at_unix_ns: 1_700_000_000_000_000_000,
+    }
+}
+
+#[tokio::test]
+async fn capture_format_v2_round_trip_writes_and_reads_manifest_then_frames() {
+    let path = NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("open writer");
+    let manifest = sample_manifest();
+    writer.record_session_manifest(manifest.clone());
+    writer.record(record_with_payload(
+        Direction::Outbound,
+        TransportKind::Tcp,
+        b"tcp-frame-bytes".to_vec(),
+    ));
+    writer.record(record_with_payload(
+        Direction::Inbound,
+        TransportKind::Udp,
+        b"udp-datagram-bytes".to_vec(),
+    ));
+    writer.flush_and_close().await.expect("close");
+
+    // File header advertises VERSION = 2 (the current format).
+    let bytes = std::fs::read(path.path()).expect("read file");
+    let version = u16::from_le_bytes([bytes[8], bytes[9]]);
+    assert_eq!(
+        version, VERSION,
+        "STEP-12.12 Phase 0a: capture file must be written at the current VERSION ({VERSION}); \
+         got {version}",
+    );
+    assert_eq!(
+        VERSION, 2,
+        "STEP-12.12 Phase 0a: capture format VERSION must be bumped to 2 by Phase 0b",
+    );
+
+    let mut reader = CaptureReader::open(path.path()).expect("reader");
+    assert_eq!(reader.version(), VERSION);
+
+    let first = reader
+        .next_item()
+        .expect("first item present")
+        .expect("decode ok");
+    match first {
+        CaptureItem::Manifest(m) => assert_eq!(m, manifest, "manifest fields must round-trip"),
+        other => panic!(
+            "STEP-12.12 Phase 0a: first item after header must be a Manifest record, got {other:?}",
+        ),
+    }
+
+    let second = reader
+        .next_item()
+        .expect("second item present")
+        .expect("decode ok");
+    match second {
+        CaptureItem::Frame(rec) => {
+            assert_eq!(rec.direction, Direction::Outbound);
+            assert_eq!(rec.transport, TransportKind::Tcp);
+            assert_eq!(rec.payload, b"tcp-frame-bytes".to_vec());
+        }
+        other => panic!("expected Frame(TCP outbound), got {other:?}"),
+    }
+
+    let third = reader
+        .next_item()
+        .expect("third item present")
+        .expect("decode ok");
+    match third {
+        CaptureItem::Frame(rec) => {
+            assert_eq!(rec.direction, Direction::Inbound);
+            assert_eq!(rec.transport, TransportKind::Udp);
+            assert_eq!(rec.payload, b"udp-datagram-bytes".to_vec());
+        }
+        other => panic!("expected Frame(UDP inbound), got {other:?}"),
+    }
+
+    assert!(reader.next_item().is_none(), "no more items after the third");
+}
+
+#[test]
+fn capture_reader_rejects_v1_file_with_clear_error() {
+    // A hand-crafted file with the magic and version-1 header must be
+    // rejected by `CaptureReader::open` with `UnsupportedVersion(1)`,
+    // because Phase 0b bumps the format to VERSION = 2 and there are
+    // no production v1 captures to migrate.
+    let mut path = NamedTempFile::new().expect("tempfile");
+    use std::io::Write;
+    path.write_all(MAGIC).expect("write magic");
+    path.write_all(&1u16.to_le_bytes()).expect("write version 1");
+    path.flush().expect("flush");
+
+    match CaptureReader::open(path.path()) {
+        Err(CaptureError::UnsupportedVersion(1)) => {}
+        other => panic!(
+            "STEP-12.12 Phase 0a: CaptureReader must reject v1 files with \
+             Err(UnsupportedVersion(1)); got {other:?}",
+        ),
+    }
+}
+
+#[test]
+fn capture_record_supports_http_transport_kind() {
+    // Round-trip a record with `TransportKind::Http`. Phase 0b adds
+    // the variant; until then this test fails to compile.
+    let original = CaptureRecord {
+        ts_unix_ns: 1_700_000_000_000_000_000,
+        direction: Direction::Outbound,
+        transport: TransportKind::Http,
+        hello: false,
+        payload: b"POST /token HTTP/1.1 ...".to_vec(),
+    };
+    let path = write_records(vec![original.clone()]);
+
+    let mut reader = CaptureReader::open(path.path()).expect("reader");
+    let recovered = reader
+        .next()
+        .expect("first record present")
+        .expect("decode ok");
+    assert_eq!(
+        recovered.transport,
+        TransportKind::Http,
+        "STEP-12.12 Phase 0a: TransportKind::Http must round-trip",
+    );
+    assert_eq!(recovered, original);
+}
+
+#[tokio::test]
+async fn record_session_manifest_can_be_called_again_after_rotation() {
+    // Manifest, frame, manifest, frame: simulates a supervisor refresh
+    // that rotates AES key material mid-session.
+    let path = NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("open writer");
+
+    let first_manifest = sample_manifest();
+    let mut second_manifest = first_manifest.clone();
+    second_manifest.aes_key = [0xAA; 16];
+    second_manifest.relay_id = 0x1234_5678;
+    second_manifest.send_iv_seqno_udp = 999;
+
+    writer.record_session_manifest(first_manifest.clone());
+    writer.record(record_with_payload(
+        Direction::Outbound,
+        TransportKind::Udp,
+        b"frame-1".to_vec(),
+    ));
+    writer.record_session_manifest(second_manifest.clone());
+    writer.record(record_with_payload(
+        Direction::Outbound,
+        TransportKind::Udp,
+        b"frame-2".to_vec(),
+    ));
+    writer.flush_and_close().await.expect("close");
+
+    let mut reader = CaptureReader::open(path.path()).expect("reader");
+    let items: Vec<CaptureItem> = std::iter::from_fn(|| reader.next_item())
+        .map(|r| r.expect("decode"))
+        .collect();
+    assert_eq!(items.len(), 4, "expected 4 items, got {}", items.len());
+
+    match &items[0] {
+        CaptureItem::Manifest(m) => assert_eq!(m, &first_manifest),
+        other => panic!("item 0 must be Manifest, got {other:?}"),
+    }
+    match &items[1] {
+        CaptureItem::Frame(r) => assert_eq!(r.payload, b"frame-1".to_vec()),
+        other => panic!("item 1 must be Frame, got {other:?}"),
+    }
+    match &items[2] {
+        CaptureItem::Manifest(m) => assert_eq!(m, &second_manifest),
+        other => panic!("item 2 must be Manifest, got {other:?}"),
+    }
+    match &items[3] {
+        CaptureItem::Frame(r) => assert_eq!(r.payload, b"frame-2".to_vec()),
+        other => panic!("item 3 must be Frame, got {other:?}"),
+    }
+
+    // Sanity: the writer's manifest path uses a distinct RecordKind
+    // discriminant, so the byte-level guard is exposed for hex-viewer
+    // audits in Phase 7.
+    let _ = RecordKind::Manifest;
+    let _ = RecordKind::Frame;
+}
+
 #[tokio::test]
 async fn follower_with_poll_interval_respects_setting() {
     // A follower with poll_interval = 5 ms retries faster than
