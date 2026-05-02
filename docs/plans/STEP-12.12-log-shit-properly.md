@@ -37,10 +37,10 @@ verification can run against live traffic):
 
 Phased work (this step):
 
-- [ ] **0a** — Pre-requisites tests: capture format v2 round-trip,
+- [x] **0a** — Pre-requisites tests: capture format v2 round-trip,
       manifest record decode, `Http` transport variant, `--debug` filter
       enables `debug` for `zwift_relay::*` and `zwift_api::*`.
-- [ ] **0b** — Pre-requisites implementation: bump capture format to
+- [x] **0b** — Pre-requisites implementation: bump capture format to
       v2 (reject v1), add `TransportKind::Http`, add `RecordKind::Manifest`
       / `record_session_manifest` API, fix `--debug` filter scope.
 - [ ] **1a** — TCP module tests (`zwift-relay::tcp`): capture stores

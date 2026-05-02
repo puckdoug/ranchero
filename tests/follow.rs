@@ -91,7 +91,7 @@ async fn follow_prints_format_version_header() {
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
     assert!(
-        text.contains("Format version: 1"),
+        text.contains("Format version: 2"),
         "follow must print the format-version header before iterating records; got:\n{text}",
     );
 }

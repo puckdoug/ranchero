@@ -32,7 +32,9 @@ pub enum LogSink {
 /// log level from the TOML file. Precedence, highest to lowest:
 ///
 /// 1. `RUST_LOG` (non-empty) — returned verbatim.
-/// 2. `--debug` → `"info,ranchero=debug"`
+/// 2. `--debug` → `"info,ranchero=debug,zwift_relay=debug,zwift_api=debug"`
+///    so the per-packet tracing emitted from the relay and auth crates
+///    reaches the log alongside the daemon's own events (STEP-12.12).
 /// 3. `--verbose` or background → `"warn,ranchero=info"`
 /// 4. `configured_level` (from `[logging] level` in TOML) →
 ///    `"warn,ranchero=<level>"`
@@ -49,7 +51,7 @@ pub fn filter_directive(
         return s.to_string();
     }
     if opts.debug {
-        "info,ranchero=debug".to_string()
+        "info,ranchero=debug,zwift_relay=debug,zwift_api=debug".to_string()
     } else if opts.verbose || !foreground {
         "warn,ranchero=info".to_string()
     } else if let Some(level) = configured_level {

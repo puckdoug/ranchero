@@ -77,12 +77,12 @@ fn reader_rejects_unsupported_version() {
     let mut path = NamedTempFile::new().expect("tempfile");
     use std::io::Write;
     path.write_all(MAGIC).expect("write magic");
-    path.write_all(&[0x02, 0x00]).expect("write version 2");
+    path.write_all(&[0x03, 0x00]).expect("write version 3");
     path.flush().expect("flush");
 
     match CaptureReader::open(path.path()) {
-        Err(CaptureError::UnsupportedVersion(2)) => {}
-        other => panic!("expected UnsupportedVersion(2), got {other:?}"),
+        Err(CaptureError::UnsupportedVersion(3)) => {}
+        other => panic!("expected UnsupportedVersion(3), got {other:?}"),
     }
 }
 
@@ -227,16 +227,17 @@ fn reader_handles_truncated_record_header() {
 
 #[test]
 fn reader_handles_truncated_payload() {
-    // Valid file header + complete record header advertising
+    // Valid file header + complete v2 record header advertising
     // len=100, but only 50 payload bytes follow.
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&VERSION.to_le_bytes());
-    bytes.extend_from_slice(&0u64.to_le_bytes()); // ts
-    bytes.push(Direction::Inbound.as_byte());
-    bytes.push(TransportKind::Udp.as_byte());
-    bytes.push(0); // flags
-    bytes.extend_from_slice(&100u32.to_le_bytes()); // len
+    bytes.extend_from_slice(&0u64.to_le_bytes()); // ts (8)
+    bytes.push(0); // kind = Frame (1)
+    bytes.push(Direction::Inbound.as_byte()); // direction (1)
+    bytes.push(TransportKind::Udp.as_byte()); // transport (1)
+    bytes.push(0); // flags (1)
+    bytes.extend_from_slice(&100u32.to_le_bytes()); // len (4)
     bytes.extend_from_slice(&[0u8; 50]); // half the payload
     let path = write_partial_capture(&bytes);
 
@@ -255,11 +256,12 @@ fn reader_handles_bad_direction_byte() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&VERSION.to_le_bytes());
-    bytes.extend_from_slice(&0u64.to_le_bytes());
-    bytes.push(0xFF); // invalid direction
-    bytes.push(0); // transport
-    bytes.push(0); // flags
-    bytes.extend_from_slice(&0u32.to_le_bytes()); // len = 0
+    bytes.extend_from_slice(&0u64.to_le_bytes()); // ts (8)
+    bytes.push(0); // kind = Frame (1)
+    bytes.push(0xFF); // invalid direction (1)
+    bytes.push(0); // transport (1)
+    bytes.push(0); // flags (1)
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // len = 0 (4)
     let path = write_partial_capture(&bytes);
 
     let mut reader = CaptureReader::open(path.path()).expect("header ok");
@@ -274,11 +276,12 @@ fn reader_handles_bad_transport_byte() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&VERSION.to_le_bytes());
-    bytes.extend_from_slice(&0u64.to_le_bytes());
-    bytes.push(0); // direction
-    bytes.push(0xFF); // invalid transport
-    bytes.push(0); // flags
-    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0u64.to_le_bytes()); // ts (8)
+    bytes.push(0); // kind = Frame (1)
+    bytes.push(0); // direction (1)
+    bytes.push(0xFF); // invalid transport (1)
+    bytes.push(0); // flags (1)
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // len (4)
     let path = write_partial_capture(&bytes);
 
     let mut reader = CaptureReader::open(path.path()).expect("header ok");
@@ -479,18 +482,13 @@ async fn follower_resumes_after_truncated_record_at_eof() {
             .append(true)
             .open(&writer_path)
             .expect("open append");
-        // Complete the record header (we already wrote 5 bytes;
-        // need 10 more to reach 15). Then write a small payload.
-        // Use ts=0, direction=Inbound (0), transport=Udp (0),
-        // flags=0, len=4, payload=[0,1,2,3].
-        // Total record header bytes: 8 (ts) + 1 + 1 + 1 + 4 (len) = 15.
-        // We've written 5 bytes of `0xFF`. To make the record
-        // valid we need to overwrite from the start, but `append`
-        // mode won't allow that. So instead, treat the 5 0xFF
-        // bytes as part of the timestamp (the first 5 bytes of
-        // ts) and continue writing. The remaining 3 bytes of ts
-        // plus direction(1)+transport(1)+flags(1)+len(4) = 10 bytes.
+        // V2 record header is 16 bytes:
+        //   ts(8) + kind(1) + direction(1) + transport(1) + flags(1) + len(4).
+        // We've written 5 bytes of 0xFF, treated as the first 5 bytes
+        // of ts. Append the remaining 11 bytes of header plus a
+        // 4-byte payload [1,2,3,4].
         f.write_all(&[0x00, 0x00, 0x00]).expect("rest of ts");
+        f.write_all(&[0]).expect("kind Frame");
         f.write_all(&[0]).expect("direction Inbound");
         f.write_all(&[0]).expect("transport Udp");
         f.write_all(&[0]).expect("flags");
@@ -618,20 +616,19 @@ fn follower_rejects_bad_magic() {
 
 #[test]
 fn follower_rejects_unsupported_version() {
-    // A file written with magic but version 2 returns
-    // Err(UnsupportedVersion(2)).
+    // A file written with magic but version 3 returns
+    // Err(UnsupportedVersion(3)).
     let mut path = NamedTempFile::new().expect("tempfile");
     use std::io::Write;
     path.write_all(MAGIC).expect("write magic");
-    path.write_all(&[0x02, 0x00]).expect("write version 2");
+    path.write_all(&[0x03, 0x00]).expect("write version 3");
     path.flush().expect("flush");
 
     match CaptureFollower::open(path.path()) {
-        Err(CaptureError::UnsupportedVersion(2)) => {}
+        Err(CaptureError::UnsupportedVersion(3)) => {}
         other => panic!(
-            "STEP-12.2 red state: CaptureFollower::open must reject \
-             unsupported versions with Err(UnsupportedVersion(_)); \
-             got {other:?}",
+            "CaptureFollower::open must reject unsupported versions \
+             with Err(UnsupportedVersion(_)); got {other:?}",
         ),
     }
 }

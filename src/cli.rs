@@ -281,6 +281,7 @@ pub fn print_follow_to<W: std::io::Write>(
         let xport = match record.transport {
             TransportKind::Udp => "UDP",
             TransportKind::Tcp => "TCP",
+            TransportKind::Http => "HTT",
         };
         let hello = if record.hello { " hello" } else { "" };
         writeln!(
@@ -468,6 +469,7 @@ fn print_replay(path: &std::path::Path, verbose: bool) -> Result<(), Box<dyn std
             let xport = match r.transport {
                 TransportKind::Udp => "UDP",
                 TransportKind::Tcp => "TCP",
+                TransportKind::Http => "HTT",
             };
             let hello = if r.hello { " hello" } else { "" };
             println!(
