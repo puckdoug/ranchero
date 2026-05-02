@@ -1,6 +1,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use zwift_relay::capture::CaptureWriter;
+
 use crate::config::ResolvedConfig;
 
 #[derive(Debug)]
@@ -8,6 +10,7 @@ pub enum StartupValidationError {
     MissingEmail,
     MissingPassword,
     DirectoryNotWritable { label: &'static str, path: PathBuf, reason: String },
+    CaptureOpenFailed { path: PathBuf, reason: String },
 }
 
 impl fmt::Display for StartupValidationError {
@@ -19,8 +22,21 @@ impl fmt::Display for StartupValidationError {
                 write!(f, "missing main account password; set one via `ranchero configure`"),
             Self::DirectoryNotWritable { label, path, reason } =>
                 write!(f, "{label} directory is not writable ({}): {reason}", path.display()),
+            Self::CaptureOpenFailed { path, reason } =>
+                write!(f, "capture file cannot be opened ({}): {reason}", path.display()),
         }
     }
+}
+
+/// Artifacts produced by a successful [`validate_startup`] call. Callers
+/// hand these to the daemon event loop so it can use the pre-opened
+/// resources without re-opening them after the fork.
+#[derive(Debug)]
+pub struct StartupArtifacts {
+    /// Open capture file with the format header already written.
+    /// `None` when no `--capture` path was given. Post-fork, convert
+    /// this into an `Arc<CaptureWriter>` via `CaptureWriter::from_file`.
+    pub capture_file: Option<std::fs::File>,
 }
 
 #[derive(Debug)]
@@ -46,7 +62,7 @@ fn probe_writable(dir: &Path) -> Result<(), String> {
 pub fn validate_startup(
     cfg: &ResolvedConfig,
     capture_path: Option<&Path>,
-) -> Result<(), StartupValidationErrors> {
+) -> Result<StartupArtifacts, StartupValidationErrors> {
     let mut errors = Vec::new();
 
     // S-1: Relay credential presence (monitor account required)
@@ -81,21 +97,40 @@ pub fn validate_startup(
         }
     }
 
-    // S-4: Capture path directory writability
+    // S-4: Capture file validation — probe parent directory, then open
+    // the file to write the format header. Opening runs pre-fork so the
+    // file descriptor survives into the daemon grandchild.
+    let mut capture_file: Option<std::fs::File> = None;
     if let Some(capture) = capture_path {
-        if let Some(parent) = capture.parent() {
+        // Probe the parent directory first for a focused error before any
+        // partial file is created.
+        let parent_ok = if let Some(parent) = capture.parent() {
             if let Err(reason) = probe_writable(parent) {
                 errors.push(StartupValidationError::DirectoryNotWritable {
                     label: "capture file",
                     path: parent.to_path_buf(),
                     reason,
                 });
+                false
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+        if parent_ok {
+            match CaptureWriter::create_header_sync(capture) {
+                Ok(file) => capture_file = Some(file),
+                Err(e) => errors.push(StartupValidationError::CaptureOpenFailed {
+                    path: capture.to_path_buf(),
+                    reason: e.to_string(),
+                }),
             }
         }
     }
 
     if errors.is_empty() {
-        Ok(())
+        Ok(StartupArtifacts { capture_file })
     } else {
         Err(StartupValidationErrors(errors))
     }
@@ -280,8 +315,7 @@ mod tests {
         assert!(validate_startup(&cfg, Some(&capture)).is_ok(), "writable capture dir should be ok");
     }
 
-    // S-4d — RED: validate_startup currently returns Result<(), ...>;
-    // StartupArtifacts does not exist yet.
+    // S-4d
     #[test]
     fn validate_capture_path_returns_open_writer_with_header() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -290,12 +324,12 @@ mod tests {
         let capture = dir.path().join("capture.bin");
         let cfg = make_config(false, None, None, None, None, pidfile, log_file);
 
-        let artifacts: StartupArtifacts = // RED: type does not exist; return type is ()
+        let artifacts: StartupArtifacts =
             validate_startup(&cfg, Some(&capture))
                 .expect("S-4d: validate_startup must succeed with a writable capture path");
 
-        let _writer = artifacts.capture_writer // RED: field does not exist
-            .expect("S-4d: capture_writer must be Some when a capture path is provided");
+        let _file = artifacts.capture_file
+            .expect("S-4d: capture_file must be Some when a capture path is provided");
 
         let bytes = std::fs::read(&capture).expect("S-4d: capture file must be created on disk");
         assert!(
@@ -310,8 +344,7 @@ mod tests {
         );
     }
 
-    // S-4e — RED: StartupArtifacts does not exist; validate_startup currently returns
-    // Ok(()) when the capture path is a directory (parent dir probe passes).
+    // S-4e
     #[test]
     fn validate_capture_path_no_partial_file_on_open_failure() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -323,10 +356,8 @@ mod tests {
 
         let cfg = make_config(false, None, None, None, None, pidfile, log_file);
 
-        let _: Option<StartupArtifacts> = None; // RED: StartupArtifacts does not exist
         validate_startup(&cfg, Some(&capture_dir)).expect_err(
-            "S-4e: validate_startup must fail when the capture path is a directory; \
-             current code only probes the parent directory and returns Ok",
+            "S-4e: validate_startup must fail when the capture path is a directory",
         );
     }
 

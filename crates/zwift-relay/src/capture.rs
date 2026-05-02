@@ -167,6 +167,39 @@ impl CaptureWriter {
         })
     }
 
+    /// Create the capture file at `path` and write the 10-byte format header
+    /// using synchronous standard-library I/O. Returns the open `File`.
+    ///
+    /// This is the pre-fork half of the two-step capture setup used by the
+    /// daemon: `validate_startup` calls this before `daemonize_self` (no
+    /// Tokio runtime yet), and `from_file` is called post-fork inside the
+    /// runtime to complete the writer.
+    pub fn create_header_sync(path: &Path) -> std::io::Result<std::fs::File> {
+        use std::io::Write as _;
+        let mut file = std::fs::File::create(path)?;
+        let mut header = [0u8; FILE_HEADER_LEN];
+        header[0..8].copy_from_slice(MAGIC);
+        header[8..10].copy_from_slice(&VERSION.to_le_bytes());
+        file.write_all(&header)?;
+        file.flush()?;
+        Ok(file)
+    }
+
+    /// Wrap an already-opened (and header-written) `std::fs::File` in a
+    /// `CaptureWriter` by spawning the background writer task. Called
+    /// post-fork inside the Tokio runtime to complete the hand-off from
+    /// [`Self::create_header_sync`].
+    pub async fn from_file(file: std::fs::File) -> std::io::Result<Self> {
+        let file = tokio::fs::File::from_std(file);
+        let (sender, receiver) = mpsc::channel::<CaptureRecord>(DEFAULT_CHANNEL_CAPACITY);
+        let task = tokio::spawn(writer_task(file, receiver));
+        Ok(Self {
+            sender: std::sync::Mutex::new(Some(sender)),
+            dropped_count: AtomicU64::new(0),
+            writer_task: std::sync::Mutex::new(Some(task)),
+        })
+    }
+
     pub fn record(&self, record: CaptureRecord) {
         let guard = self.sender.lock().expect("capture sender mutex");
         if let Some(sender) = guard.as_ref() {

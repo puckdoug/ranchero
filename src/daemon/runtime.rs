@@ -35,7 +35,7 @@ pub fn start(
 ) -> Result<ExitCode, DaemonError> {
     let paths = DaemonPaths::from_config(cfg);
     preflight(&paths, &OsProcessProbe)?;
-    super::validate::validate_startup(cfg, capture_path.as_deref())
+    let artifacts = super::validate::validate_startup(cfg, capture_path.as_deref())
         .map_err(DaemonError::StartupValidation)?;
 
     if !foreground {
@@ -66,7 +66,7 @@ pub fn start(
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let result = rt.block_on(run_daemon(paths.clone(), cfg.clone(), capture_path));
+    let result = rt.block_on(run_daemon(paths.clone(), cfg.clone(), artifacts.capture_file));
 
     tracing::info!("ranchero stopped");
 
@@ -218,11 +218,13 @@ fn io_err(e: nix::errno::Errno) -> DaemonError {
 async fn run_daemon(
     paths: DaemonPaths,
     cfg: ResolvedConfig,
-    capture_path: Option<std::path::PathBuf>,
+    capture_file: Option<std::fs::File>,
 ) -> io::Result<()> {
+    use std::sync::Arc;
     use tokio::net::UnixListener;
     use tokio::signal::unix::{SignalKind, signal};
     use tokio::sync::mpsc;
+    use zwift_relay::capture::CaptureWriter;
 
     // Best-effort cleanup of stale socket; OS leaves UDS files behind on crash.
     let _ = std::fs::remove_file(&paths.socket);
@@ -235,8 +237,12 @@ async fn run_daemon(
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
     let runtime: Option<super::relay::RelayRuntime> = if cfg.relay_enabled {
+        let writer: Option<Arc<CaptureWriter>> = match capture_file {
+            Some(file) => Some(Arc::new(CaptureWriter::from_file(file).await?)),
+            None => None,
+        };
         Some(
-            super::relay::RelayRuntime::start(&cfg, capture_path)
+            super::relay::RelayRuntime::start_with_writer(&cfg, writer)
                 .await
                 .inspect_err(|e| {
                     tracing::error!(
@@ -286,7 +292,7 @@ async fn run_daemon(
 async fn run_daemon(
     _paths: DaemonPaths,
     _cfg: ResolvedConfig,
-    _capture_path: Option<std::path::PathBuf>,
+    _capture_file: Option<std::fs::File>,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

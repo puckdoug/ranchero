@@ -683,6 +683,55 @@ impl RelayRuntime {
         .await
     }
 
+    /// Production entry point used by the daemon when a capture file was
+    /// pre-opened by `validate_startup`. Passes the writer directly to
+    /// `start_inner`, bypassing the path-based open that runs post-fork.
+    /// Emits `relay.capture.opened` and, on the error path, flushes the
+    /// writer and emits `relay.capture.closed` before propagating.
+    pub async fn start_with_writer(
+        cfg: &ResolvedConfig,
+        capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
+    ) -> Result<Self, RelayRuntimeError> {
+        let auth_config = zwift_api::Config {
+            auth_base:  cfg.zwift_endpoints.auth_base.clone(),
+            api_base:   cfg.zwift_endpoints.api_base.clone(),
+            source:     zwift_api::DEFAULT_SOURCE.to_string(),
+            user_agent: zwift_api::DEFAULT_USER_AGENT.to_string(),
+        };
+        let auth = Arc::new(zwift_api::ZwiftAuth::new(auth_config));
+        let session_config = zwift_relay::RelaySessionConfig::default();
+        let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
+
+        if capture_writer.is_some() {
+            tracing::info!(target: "ranchero::relay", "relay.capture.opened");
+        }
+
+        match Self::start_inner(
+            cfg,
+            capture_writer.clone(),
+            DefaultAuthLogin::new(auth.clone()),
+            DefaultSessionLogin::new(auth, session_config),
+            DefaultTcpTransportFactory,
+            game_events_tx,
+        )
+        .await
+        {
+            Ok(this) => Ok(this),
+            Err(e) => {
+                if let Some(writer) = capture_writer {
+                    let dropped_count = writer.dropped_count();
+                    let _ = writer.flush_and_close().await;
+                    tracing::info!(
+                        target: "ranchero::relay",
+                        dropped_count,
+                        "relay.capture.closed",
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
+
     /// The dependency-injected entry point used by tests. Performs
     /// credential validation, then drives the auth → session → TCP
     /// connect → channel-establish sequence using the supplied

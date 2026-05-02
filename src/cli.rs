@@ -202,11 +202,14 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                         verbose: cli.global.verbose,
                         debug: cli.global.debug,
                     };
+                    let capture = cli.global.capture.as_ref()
+                        .map(|p| std::path::absolute(p))
+                        .transpose()?;
                     Ok(daemon::start(
                         &resolved,
                         cli.global.foreground,
                         log_opts,
-                        cli.global.capture.clone(),
+                        capture,
                     )?)
                 }
                 Command::Stop => Ok(daemon::stop(&resolved)?),
