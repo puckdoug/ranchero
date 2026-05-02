@@ -227,26 +227,27 @@ impl<T: TcpTransport> TcpChannel<T> {
         payload: zwift_proto::ClientToServer,
         hello: bool,
     ) -> Result<(), Error> {
-        let (header_bytes, ciphertext) = {
+        let app_seqno = payload.seqno.unwrap_or(0);
+        let (header_bytes, ciphertext, iv_seqno_used) = {
             let mut send = self.send_state.lock().expect("send_state mutex");
 
             let proto_bytes = payload.encode_to_vec();
-            record_outbound(self.capture.as_ref(), TransportKind::Tcp, hello, &proto_bytes);
             let plaintext = tcp_plaintext(&proto_bytes, hello);
 
+            let iv_seqno_used = send.iv_seqno;
             let header = if hello {
                 Header {
                     flags: HeaderFlags::RELAY_ID | HeaderFlags::CONN_ID | HeaderFlags::SEQNO,
                     relay_id: Some(self.relay_id),
                     conn_id: Some(self.conn_id),
-                    seqno: Some(send.iv_seqno),
+                    seqno: Some(iv_seqno_used),
                 }
             } else {
                 Header {
                     flags: HeaderFlags::SEQNO,
                     relay_id: None,
                     conn_id: None,
-                    seqno: Some(send.iv_seqno),
+                    seqno: Some(iv_seqno_used),
                 }
             };
             let header_bytes = header.encode();
@@ -254,7 +255,7 @@ impl<T: TcpTransport> TcpChannel<T> {
                 device: DeviceType::Relay,
                 channel: ChannelType::TcpClient,
                 conn_id: self.conn_id,
-                seqno: send.iv_seqno,
+                seqno: iv_seqno_used,
             };
             let ciphertext = encrypt(&self.aes_key, &iv.to_bytes(), &header_bytes, &plaintext);
 
@@ -264,10 +265,19 @@ impl<T: TcpTransport> TcpChannel<T> {
             // point §2 in the plan: sauce auto-increments. Picked
             // caller-owns here for simplicity; revisit if compat
             // testing surfaces an issue.)
-            (header_bytes, ciphertext)
+            (header_bytes, ciphertext, iv_seqno_used)
         };
 
         let wire = frame_tcp(&header_bytes, &ciphertext);
+        record_outbound(self.capture.as_ref(), TransportKind::Tcp, hello, &wire);
+        tracing::debug!(
+            target: "ranchero::relay",
+            seqno = app_seqno,
+            iv_seqno = iv_seqno_used,
+            hello,
+            wire_size = wire.len(),
+            "relay.tcp.frame.sent",
+        );
         self.transport.write_all(&wire).await?;
         Ok(())
     }
@@ -389,6 +399,21 @@ async fn recv_loop<T: TcpTransport>(
                     // borrowed from `buffer` and `drain` invalidates it.
                     let payload_owned = payload.to_vec();
                     buffer.drain(..consumed);
+                    record_inbound(capture.as_ref(), TransportKind::Tcp, &payload_owned);
+                    let parsed_seqno = match decode_header(&payload_owned) {
+                        Ok(p) => {
+                            tracing::debug!(
+                                target: "ranchero::relay",
+                                size = consumed,
+                                seqno = p.header.seqno.unwrap_or(0),
+                                relay_id_present = p.header.relay_id.is_some(),
+                                conn_id_present = p.header.conn_id.is_some(),
+                                "relay.tcp.frame.recv",
+                            );
+                            p.header.seqno
+                        }
+                        Err(_) => None,
+                    };
                     match process_inbound(
                         &payload_owned,
                         &aes_key,
@@ -397,7 +422,14 @@ async fn recv_loop<T: TcpTransport>(
                         &mut recv_iv_seqno,
                     ) {
                         Ok(plaintext) => {
-                            record_inbound(capture.as_ref(), TransportKind::Tcp, &plaintext);
+                            tracing::trace!(
+                                target: "ranchero::relay",
+                                seqno = parsed_seqno
+                                    .unwrap_or_else(|| recv_iv_seqno.wrapping_sub(1)),
+                                relay_id,
+                                conn_id = recv_iv_conn_id,
+                                "relay.tcp.decrypt.ok",
+                            );
                             match zwift_proto::ServerToClient::decode(plaintext.as_slice()) {
                                 Ok(stc) => {
                                     let _ = events_tx.send(TcpChannelEvent::Inbound(Box::new(stc)));

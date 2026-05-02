@@ -47,7 +47,7 @@ Phased work (this step):
       framed wire bytes (length + header + ciphertext + tag) for both
       send and recv; `relay.tcp.frame.sent` / `relay.tcp.frame.recv` /
       `relay.tcp.decrypt.ok` events with correct fields.
-- [ ] **1b** — TCP module implementation: relocate `record_outbound`
+- [x] **1b** — TCP module implementation: relocate `record_outbound`
       to write `wire` (not `proto_bytes`); relocate `record_inbound` to
       write `payload_owned` before `process_inbound`; emit the three
       tracing events.

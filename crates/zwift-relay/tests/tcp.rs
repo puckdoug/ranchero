@@ -604,20 +604,19 @@ async fn tcp_channel_with_capture_records_outbound_packets_with_hello_flag() {
         .await
         .expect("establish");
 
-    // Send one hello + one steady packet.
+    // Send one hello + one steady packet, capturing the framed wire
+    // bytes the channel hands to the transport so the assertions
+    // below can compare against the on-the-wire form.
     channel
         .send_packet(test_payload(0), /* hello */ true)
         .await
         .expect("send hello");
+    let hello_wire = handle.outbound_receiver.recv().await.expect("hello wire");
     channel
         .send_packet(test_payload(1), /* hello */ false)
         .await
         .expect("send steady");
-
-    // Drain outbound from mock so the channel doesn't block (it
-    // doesn't, but for cleanliness).
-    let _ = handle.outbound_receiver.recv().await;
-    let _ = handle.outbound_receiver.recv().await;
+    let steady_wire = handle.outbound_receiver.recv().await.expect("steady wire");
 
     channel.shutdown_and_wait().await;
     drop(channel);
@@ -632,17 +631,14 @@ async fn tcp_channel_with_capture_records_outbound_packets_with_hello_flag() {
         .collect();
     assert_eq!(outbound.len(), 2, "expected exactly 2 outbound TCP captures");
 
-    // First was hello=true; the captured payload is proto-only (no
-    // `[2, 0]` envelope) and the `hello` flag round-trips.
+    // The hello flag round-trips alongside the captured wire bytes.
     assert!(outbound[0].hello, "first capture is the hello packet");
     assert!(!outbound[1].hello, "second capture is steady-state");
 
-    // Both payloads decode as ClientToServer (proves no envelope
-    // bytes were captured).
-    let cts0 = ClientToServer::decode(outbound[0].payload.as_slice()).expect("CTS 0");
-    let cts1 = ClientToServer::decode(outbound[1].payload.as_slice()).expect("CTS 1");
-    assert_eq!(cts0.player_id, TEST_ATHLETE_ID);
-    assert_eq!(cts1.player_id, TEST_ATHLETE_ID);
+    // Captured payload is the framed wire (length prefix + header +
+    // ciphertext + tag), matching what the transport actually wrote.
+    assert_eq!(outbound[0].payload, hello_wire);
+    assert_eq!(outbound[1].payload, steady_wire);
 }
 
 // --- STEP-12.12 Phase 1a: TCP wire-byte capture + tracing ----------
