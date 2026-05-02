@@ -72,7 +72,7 @@ Phased work (this step):
       `login.ok` / `tcp_servers` / `refresh.ok`; `relay.supervisor.
 logged_in` / `refreshed` / `refresh_failed` / `relogin_attempt` /
       `relogin_ok` / `login_failed`.
-- [ ] **4b** — Session and supervisor implementation: emit the
+- [x] **4b** — Session and supervisor implementation: emit the
       events from the single-shot helpers and the supervisor refresh
       loop.
 - [ ] **5a** — Auth / HTTP tests (`zwift-api`): every request and

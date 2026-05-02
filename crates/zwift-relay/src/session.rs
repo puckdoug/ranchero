@@ -147,6 +147,13 @@ pub async fn login(
     };
     let body = req.encode_to_vec();
 
+    let athlete_id = auth.athlete_id().await.unwrap_or(0);
+    tracing::info!(
+        target: "ranchero::relay",
+        athlete_id,
+        "relay.session.login.started",
+    );
+
     let resp = auth.post(LOGIN_PATH, PROTOBUF_CONTENT_TYPE, body).await?;
     let status = resp.status();
     let bytes = resp.bytes().await?;
@@ -172,6 +179,25 @@ pub async fn login(
         .filter(|n| n.lb_realm.unwrap_or(0) == 0 && n.lb_course.unwrap_or(0) == 0)
         .filter_map(|n| Some(TcpServer { ip: n.ip? }))
         .collect();
+
+    let servers_joined = tcp_servers
+        .iter()
+        .map(|s| s.ip.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    tracing::debug!(
+        target: "ranchero::relay",
+        servers = %servers_joined,
+        "relay.session.tcp_servers",
+    );
+    tracing::info!(
+        target: "ranchero::relay",
+        relay_id,
+        tcp_server_count = tcp_servers.len(),
+        server_time_ms = server_time_ms.unwrap_or(0),
+        expiration_min,
+        "relay.session.login.ok",
+    );
 
     if !config.post_login_settle.is_zero() {
         // sauce4zwift `zwift.mjs:1651`:
@@ -217,6 +243,12 @@ pub async fn refresh(
         });
     }
     let parsed = RelaySessionRefreshResponse::decode(bytes.as_ref())?;
+    tracing::info!(
+        target: "ranchero::relay",
+        relay_id,
+        new_expiration_min = parsed.expiration,
+        "relay.session.refresh.ok",
+    );
     Ok(parsed.expiration)
 }
 
@@ -267,6 +299,11 @@ impl RelaySessionSupervisor {
                 let arc = inner_for_task.current.read().await.clone();
                 (*arc).clone()
             };
+            tracing::info!(
+                target: "ranchero::relay",
+                relay_id = snapshot.relay_id,
+                "relay.supervisor.logged_in",
+            );
             let _ = inner_for_task
                 .events_tx
                 .send(SessionEvent::LoggedIn(snapshot));
@@ -315,6 +352,12 @@ async fn refresh_loop(inner: Arc<SupervisorInner>) {
         let scheduled =
             Duration::from_secs_f64(remaining.as_secs_f64() * inner.config.refresh_fraction);
         let delay = scheduled.max(inner.config.min_refresh_interval);
+        tracing::info!(
+            target: "ranchero::relay",
+            scheduled_delay_ms = delay.as_millis() as u64,
+            relay_id = session_arc.relay_id,
+            "relay.supervisor.refresh.fire",
+        );
         tokio::time::sleep(delay).await;
 
         match refresh(&inner.auth, &inner.config, session_arc.relay_id).await {
@@ -327,6 +370,14 @@ async fn refresh_loop(inner: Arc<SupervisorInner>) {
                 };
                 let relay_id = next.relay_id;
                 *inner.current.write().await = Arc::new(next);
+                tracing::info!(
+                    target: "ranchero::relay",
+                    relay_id,
+                    new_expires_in_s = new_expires_at
+                        .saturating_duration_since(Instant::now())
+                        .as_secs(),
+                    "relay.supervisor.refreshed",
+                );
                 let _ = inner.events_tx.send(SessionEvent::Refreshed {
                     relay_id,
                     new_expires_at,
@@ -335,7 +386,12 @@ async fn refresh_loop(inner: Arc<SupervisorInner>) {
                 continue;
             }
             Err(e) => {
-                tracing::warn!(error = %e, "relay session refresh failed; falling back to re-login");
+                tracing::warn!(
+                    target: "ranchero::relay",
+                    relay_id = session_arc.relay_id,
+                    error = %e,
+                    "relay.supervisor.refresh_failed",
+                );
                 let _ = inner
                     .events_tx
                     .send(SessionEvent::RefreshFailed(e.to_string()));
@@ -345,16 +401,48 @@ async fn refresh_loop(inner: Arc<SupervisorInner>) {
         // Refresh failed — fall back to a full re-login, with
         // exponential backoff on consecutive failures.
         loop {
+            // `attempt` is the number of consecutive failures so far;
+            // the upcoming attempt's display number is `attempt + 1`,
+            // and the backoff already paid before this attempt is
+            // derived from the previous failure (zero on the first try).
+            let attempt_no = attempt + 1;
+            let backoff_ms = if attempt == 0 {
+                0
+            } else {
+                let shift = attempt.min(10);
+                (inner.config.min_refresh_interval * (1u32 << shift)).as_millis() as u64
+            };
+            tracing::info!(
+                target: "ranchero::relay",
+                attempt = attempt_no,
+                backoff_ms,
+                "relay.supervisor.relogin_attempt",
+            );
+
             match login(&inner.auth, &inner.config).await {
                 Ok(new_session) => {
                     *inner.current.write().await = Arc::new(new_session.clone());
+                    tracing::info!(
+                        target: "ranchero::relay",
+                        attempt = attempt_no,
+                        relay_id = new_session.relay_id,
+                        "relay.supervisor.relogin_ok",
+                    );
                     let _ = inner.events_tx.send(SessionEvent::LoggedIn(new_session));
                     attempt = 0;
                     break;
                 }
                 Err(e) => {
                     attempt += 1;
-                    tracing::error!(attempt, error = %e, "relay session re-login failed");
+                    let shift = attempt.min(10);
+                    let backoff = inner.config.min_refresh_interval * (1u32 << shift);
+                    tracing::warn!(
+                        target: "ranchero::relay",
+                        attempt,
+                        error = %e,
+                        backoff_next_ms = backoff.as_millis() as u64,
+                        "relay.supervisor.login_failed",
+                    );
                     let _ = inner.events_tx.send(SessionEvent::LoginFailed {
                         attempt,
                         error: e.to_string(),
@@ -362,8 +450,6 @@ async fn refresh_loop(inner: Arc<SupervisorInner>) {
                     // Exponential backoff capped to keep the supervisor
                     // responsive after long outages. Cap exponent at 10
                     // to avoid runaway sleeps.
-                    let shift = attempt.min(10);
-                    let backoff = inner.config.min_refresh_interval * (1u32 << shift);
                     tokio::time::sleep(backoff).await;
                 }
             }
