@@ -67,7 +67,7 @@ Phased work (this step):
 - [x] **3b** — Capture writer diagnostics implementation: emit the
       three tracing events from the writer task and the producer-side
       drop path.
-- [ ] **4a** — Session and supervisor tests
+- [x] **4a** — Session and supervisor tests
       (`zwift-relay::session`): `relay.session.login.started` /
       `login.ok` / `tcp_servers` / `refresh.ok`; `relay.supervisor.
 logged_in` / `refreshed` / `refresh_failed` / `relogin_attempt` /

@@ -629,3 +629,364 @@ fn relay_session_is_clone_for_supervisor_snapshots() {
     fn assert_clone<T: Clone>() {}
     assert_clone::<RelaySession>();
 }
+
+// --- STEP-12.12 Phase 4a: session and supervisor tracing -----------
+//
+// These tests pin the contract for Phase 4b: every single-shot
+// session helper and every supervisor state transition must emit a
+// `relay.session.*` or `relay.supervisor.*` tracing event so an
+// operator can reconstruct the auth/session timeline from the daemon
+// log alone. Today the helpers are silent on success and only the
+// supervisor's `tracing::warn!` for refresh failure leaks any signal.
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn session_login_emits_started_and_ok_events() {
+    let server = MockServer::start().await;
+    let auth = authed(&server, "ATOK").await;
+    let resp = login_response(
+        Some(0xDEAD_BEEF),
+        Some(10),
+        vec![tcp_addr("10.0.0.1", 3025, 0, 0)],
+    );
+    Mock::given(method("POST"))
+        .and(path(LOGIN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(resp.encode_to_vec()))
+        .mount(&server)
+        .await;
+
+    login(&auth, &relay_config_for(&server)).await.expect("login");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.session.login.started",
+        ),
+        "STEP-12.12 Phase 4a: relay.session.login.started must fire at info \
+         before the LOGIN_PATH POST; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.session.login.ok"),
+        "STEP-12.12 Phase 4a: relay.session.login.ok must fire at info on \
+         successful decode; not found in tracing log",
+    );
+    for field in ["athlete_id="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 4a: relay.session.login.started must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+    for field in [
+        "relay_id=",
+        "tcp_server_count=",
+        "server_time_ms=",
+        "expiration_min=",
+    ] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 4a: relay.session.login.ok must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn session_login_emits_tcp_servers_at_debug() {
+    let server = MockServer::start().await;
+    let auth = authed(&server, "ATOK").await;
+    let resp = login_response(
+        Some(7),
+        Some(10),
+        vec![
+            tcp_addr("10.0.0.1", 3025, 0, 0),
+            tcp_addr("10.0.0.2", 3025, 0, 0),
+        ],
+    );
+    Mock::given(method("POST"))
+        .and(path(LOGIN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(resp.encode_to_vec()))
+        .mount(&server)
+        .await;
+
+    login(&auth, &relay_config_for(&server)).await.expect("login");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.session.tcp_servers"),
+        "STEP-12.12 Phase 4a: relay.session.tcp_servers must fire at debug \
+         after the TCP server filter runs; not found in tracing log",
+    );
+    // The server list is comma-joined; both IPs must appear in the
+    // captured output.
+    for ip in ["10.0.0.1", "10.0.0.2"] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", ip),
+            "STEP-12.12 Phase 4a: relay.session.tcp_servers must include IP {ip:?} \
+             in its servers field — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn session_refresh_emits_ok_event() {
+    let server = MockServer::start().await;
+    let auth = authed(&server, "ATOK").await;
+    let resp = RelaySessionRefreshResponse {
+        relay_session_id: 42,
+        expiration: 30,
+    };
+    Mock::given(method("POST"))
+        .and(path(SESSION_REFRESH_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(resp.encode_to_vec()))
+        .mount(&server)
+        .await;
+
+    refresh(&auth, &relay_config_for(&server), 42)
+        .await
+        .expect("refresh");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.session.refresh.ok"),
+        "STEP-12.12 Phase 4a: relay.session.refresh.ok must fire at info on \
+         successful refresh decode; not found in tracing log",
+    );
+    for field in ["relay_id=", "new_expiration_min="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 4a: relay.session.refresh.ok must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn supervisor_loggedin_event_emits_supervisor_logged_in_trace() {
+    let server = MockServer::start().await;
+    let auth = authed(&server, "ATOK").await;
+    mount_login(&server, 11, 10, "1.1.1.1").await;
+
+    let supervisor = RelaySessionSupervisor::start(auth, fast_relay_config_for(&server))
+        .await
+        .expect("supervisor start");
+    let mut events = supervisor.events();
+    let _ = drain_until(
+        &mut events,
+        |e| matches!(e, SessionEvent::LoggedIn(_)),
+        Duration::from_secs(1),
+    )
+    .await;
+    supervisor.shutdown();
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.supervisor.logged_in"),
+        "STEP-12.12 Phase 4a: relay.supervisor.logged_in must fire at info when \
+         the supervisor broadcasts its initial LoggedIn event; not found in \
+         tracing log",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn supervisor_refresh_fire_emits_scheduled_delay_event() {
+    let server = MockServer::start().await;
+    let auth = authed(&server, "ATOK").await;
+    mount_login(&server, 11, 1, "1.1.1.1").await;
+
+    let resp = RelaySessionRefreshResponse {
+        relay_session_id: 11,
+        expiration: 1,
+    };
+    Mock::given(method("POST"))
+        .and(path(SESSION_REFRESH_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(resp.encode_to_vec()))
+        .mount(&server)
+        .await;
+
+    let supervisor = RelaySessionSupervisor::start(auth, fast_relay_config_for(&server))
+        .await
+        .expect("supervisor start");
+    let mut events = supervisor.events();
+    let _ = drain_until(
+        &mut events,
+        |e| matches!(e, SessionEvent::Refreshed { .. }),
+        Duration::from_secs(10),
+    )
+    .await;
+    supervisor.shutdown();
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.supervisor.refresh.fire",
+        ),
+        "STEP-12.12 Phase 4a: relay.supervisor.refresh.fire must fire at info \
+         after the refresh delay is computed; not found in tracing log",
+    );
+    for field in ["scheduled_delay_ms=", "relay_id="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 4a: relay.supervisor.refresh.fire must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn supervisor_refresh_failure_path_emits_refresh_failed_and_relogin_attempt() {
+    let server = MockServer::start().await;
+    let auth = authed(&server, "ATOK").await;
+    mount_login(&server, 11, 1, "1.1.1.1").await;
+
+    Mock::given(method("POST"))
+        .and(path(SESSION_REFRESH_PATH))
+        .respond_with(ResponseTemplate::new(500).set_body_string("nope"))
+        .mount(&server)
+        .await;
+
+    let supervisor = RelaySessionSupervisor::start(auth, fast_relay_config_for(&server))
+        .await
+        .expect("supervisor start");
+    let mut events = supervisor.events();
+    let _ = drain_until(
+        &mut events,
+        |e| matches!(e, SessionEvent::RefreshFailed(_)),
+        Duration::from_secs(10),
+    )
+    .await;
+    let _ = drain_until(
+        &mut events,
+        |e| matches!(e, SessionEvent::LoggedIn(_)),
+        Duration::from_secs(10),
+    )
+    .await;
+    supervisor.shutdown();
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.supervisor.refresh_failed",
+        ),
+        "STEP-12.12 Phase 4a: relay.supervisor.refresh_failed must fire at warn \
+         when the refresh HTTP call returns an error; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.supervisor.relogin_attempt",
+        ),
+        "STEP-12.12 Phase 4a: relay.supervisor.relogin_attempt must fire at \
+         info before each fallback re-login attempt; not found in tracing log",
+    );
+    for field in ["attempt=", "backoff_ms="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 4a: relay.supervisor.relogin_attempt must carry \
+             field {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn supervisor_relogin_success_emits_relogin_ok() {
+    let server = MockServer::start().await;
+    let auth = authed(&server, "ATOK").await;
+    mount_login(&server, 11, 1, "1.1.1.1").await;
+
+    Mock::given(method("POST"))
+        .and(path(SESSION_REFRESH_PATH))
+        .respond_with(ResponseTemplate::new(500).set_body_string("nope"))
+        .mount(&server)
+        .await;
+
+    let supervisor = RelaySessionSupervisor::start(auth, fast_relay_config_for(&server))
+        .await
+        .expect("supervisor start");
+    let mut events = supervisor.events();
+    // Wait for the second LoggedIn event (the post-failure re-login).
+    let mut logged_in_count = 0;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while logged_in_count < 2 {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(remaining, events.recv()).await {
+            Ok(Ok(SessionEvent::LoggedIn(_))) => logged_in_count += 1,
+            Ok(Ok(_)) => continue,
+            Ok(Err(_)) => panic!("event channel closed before second LoggedIn"),
+            Err(_) => panic!("timed out waiting for second LoggedIn"),
+        }
+    }
+    supervisor.shutdown();
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.supervisor.relogin_ok",
+        ),
+        "STEP-12.12 Phase 4a: relay.supervisor.relogin_ok must fire at info \
+         when a fallback re-login attempt succeeds; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "attempt="),
+        "STEP-12.12 Phase 4a: relay.supervisor.relogin_ok must carry field \
+         attempt= — not present in any captured log line",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn supervisor_persistent_login_failure_emits_login_failed_warn() {
+    let server = MockServer::start().await;
+    let auth = authed(&server, "ATOK").await;
+
+    // First login (during start()) succeeds; subsequent logins fail.
+    let initial_resp =
+        login_response(Some(11), Some(1), vec![tcp_addr("1.1.1.1", 3025, 0, 0)]);
+    Mock::given(method("POST"))
+        .and(path(LOGIN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(initial_resp.encode_to_vec()))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(LOGIN_PATH))
+        .respond_with(ResponseTemplate::new(500).set_body_string("nope"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(SESSION_REFRESH_PATH))
+        .respond_with(ResponseTemplate::new(500).set_body_string("nope"))
+        .mount(&server)
+        .await;
+
+    let supervisor = RelaySessionSupervisor::start(auth, fast_relay_config_for(&server))
+        .await
+        .expect("supervisor start");
+    let mut events = supervisor.events();
+    let _ = drain_until(
+        &mut events,
+        |e| matches!(e, SessionEvent::LoginFailed { attempt: 2, .. }),
+        Duration::from_secs(10),
+    )
+    .await;
+    supervisor.shutdown();
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.supervisor.login_failed",
+        ),
+        "STEP-12.12 Phase 4a: relay.supervisor.login_failed must fire at warn \
+         per failed re-login attempt; not found in tracing log",
+    );
+    for field in ["attempt=", "error=", "backoff_next_ms="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 4a: relay.supervisor.login_failed must carry \
+             field {field:?} — not present in any captured log line",
+        );
+    }
+}
