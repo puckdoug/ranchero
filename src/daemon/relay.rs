@@ -672,21 +672,56 @@ impl RelayRuntime {
         };
         let auth = Arc::new(zwift_api::ZwiftAuth::new(auth_config));
         let session_config = zwift_relay::RelaySessionConfig::default();
-        Self::start_with_deps(
+        let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
+
+        // Pre-open the capture file before auth so the file is created
+        // regardless of whether the session succeeds (STEP-12.5 §B).
+        let preopen_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
+            match capture_path {
+                Some(ref path) => {
+                    let writer = zwift_relay::capture::CaptureWriter::open(path)
+                        .await
+                        .map_err(RelayRuntimeError::CaptureIo)?;
+                    tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
+                    Some(Arc::new(writer))
+                }
+                None => None,
+            };
+
+        match Self::start_all_inner(
             cfg,
-            capture_path,
+            None,
+            preopen_writer.clone(),
             DefaultAuthLogin::new(auth.clone()),
-            DefaultSessionLogin::new(auth, session_config),
+            DefaultSessionSupervisorFactory::new(auth, session_config),
             DefaultTcpTransportFactory,
+            DefaultUdpTransportFactory,
+            game_events_tx,
         )
         .await
+        {
+            Ok(this) => Ok(this),
+            Err(e) => {
+                if let Some(writer) = preopen_writer {
+                    let dropped_count = writer.dropped_count();
+                    let _ = writer.flush_and_close().await;
+                    tracing::info!(
+                        target: "ranchero::relay",
+                        dropped_count,
+                        "relay.capture.closed",
+                    );
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Production entry point used by the daemon when a capture file was
-    /// pre-opened by `validate_startup`. Passes the writer directly to
-    /// `start_inner`, bypassing the path-based open that runs post-fork.
-    /// Emits `relay.capture.opened` and, on the error path, flushes the
-    /// writer and emits `relay.capture.closed` before propagating.
+    /// pre-opened by `validate_startup`. Routes through `start_all_inner`
+    /// with all production factories, emitting the full lifecycle event
+    /// sequence. Emits `relay.capture.opened` on success and, on the error
+    /// path, flushes the writer and emits `relay.capture.closed` before
+    /// propagating.
     pub async fn start_with_writer(
         cfg: &ResolvedConfig,
         capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
@@ -705,12 +740,14 @@ impl RelayRuntime {
             tracing::info!(target: "ranchero::relay", "relay.capture.opened");
         }
 
-        match Self::start_inner(
+        match Self::start_all_inner(
             cfg,
+            None,
             capture_writer.clone(),
             DefaultAuthLogin::new(auth.clone()),
-            DefaultSessionLogin::new(auth, session_config),
+            DefaultSessionSupervisorFactory::new(auth, session_config),
             DefaultTcpTransportFactory,
+            DefaultUdpTransportFactory,
             game_events_tx,
         )
         .await
@@ -1046,6 +1083,7 @@ impl RelayRuntime {
                 true,
             )
             .await?;
+        tracing::info!(target: "ranchero::relay", "relay.tcp.hello.sent");
 
         // 9. Connect and establish the UDP channel. (Defect 4)
         let udp_server = &session.tcp_servers[0];
@@ -1637,10 +1675,7 @@ impl SessionSupervisorFactory for DefaultSessionSupervisorFactory {
     }
 }
 
-/// Production [`UdpTransportFactory`]. In the red state this panics
-/// with `unimplemented!` — it is never called because `start_all_inner`
-/// does not yet connect UDP (Defect 4). The real call lands with
-/// Defect 4 green state.
+/// Production [`UdpTransportFactory`] used by `start_all_inner`.
 pub struct DefaultUdpTransportFactory;
 
 impl UdpTransportFactory for DefaultUdpTransportFactory {
@@ -1648,13 +1683,9 @@ impl UdpTransportFactory for DefaultUdpTransportFactory {
 
     fn connect(
         &self,
-        _addr: std::net::SocketAddr,
+        addr: std::net::SocketAddr,
     ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
-        async move {
-            Err(std::io::Error::other(
-                "Defect 4: UDP connection not yet implemented",
-            ))
-        }
+        async move { zwift_relay::TokioUdpTransport::connect(addr).await }
     }
 }
 
