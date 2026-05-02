@@ -368,3 +368,182 @@ async fn preemptive_refresh_fires_at_half_expires_in() {
         "preemptive refresh at expires_in/2 should have rotated the access token"
     );
 }
+
+// ==========================================================================
+// Item 2 (STEP-12.10) — eager profile fetch, athlete identity, typed errors
+//
+// Red state: ZwiftAuth has no athlete_id() method, login() does not call
+// GET /api/profiles/me, and the four typed AuthFailed variants do not exist.
+// All five tests below fail to compile until the green-state implementation
+// lands.
+// ==========================================================================
+
+// T2-A
+#[tokio::test]
+async fn login_eager_fetches_profile_and_caches_id() {
+    // login() must call GET /api/profiles/me exactly once and cache the
+    // result so that a subsequent athlete_id() call returns the profile id
+    // without any further I/O.  The .expect(1) on the profile mock enforces
+    // the single-call contract; wiremock panics on drop if the count is wrong.
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": 12345,
+            "firstName": "Test",
+            "lastName": "Rider",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("monitor@example.com", "secret")
+        .await
+        .expect("login with profile fetch must succeed");
+
+    // athlete_id() must read from the cache; the profile mock's .expect(1)
+    // above verifies it was not re-fetched here.
+    let id = auth
+        .athlete_id()
+        .await
+        .expect("athlete_id must be available after a successful login");
+
+    assert_eq!(id, 12345, "athlete_id must match the id field from the profile response");
+}
+
+// T2-B
+#[tokio::test]
+async fn get_profile_me_401_returns_unauthorized() {
+    // When GET /api/profiles/me returns 401, login() must fail with
+    // Error::AuthFailedUnauthorized.
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("Unauthorized"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    let err = auth
+        .login("monitor@example.com", "secret")
+        .await
+        .expect_err("login must fail when profile endpoint returns 401");
+
+    assert!(
+        matches!(err, Error::AuthFailedUnauthorized(_)),
+        "expected AuthFailedUnauthorized, got {err:?}",
+    );
+}
+
+// T2-C
+#[tokio::test]
+async fn get_profile_me_403_returns_forbidden() {
+    // When GET /api/profiles/me returns 403, login() must fail with
+    // Error::AuthFailedForbidden.
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(403).set_body_string("Forbidden"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    let err = auth
+        .login("monitor@example.com", "secret")
+        .await
+        .expect_err("login must fail when profile endpoint returns 403");
+
+    assert!(
+        matches!(err, Error::AuthFailedForbidden(_)),
+        "expected AuthFailedForbidden, got {err:?}",
+    );
+}
+
+// T2-D
+#[tokio::test]
+async fn get_profile_me_200_with_malformed_body_returns_bad_schema() {
+    // When GET /api/profiles/me returns 200 but the body has no "id" field,
+    // login() must fail with Error::AuthFailedBadSchema.
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    let err = auth
+        .login("monitor@example.com", "secret")
+        .await
+        .expect_err("login must fail when profile body has no id field");
+
+    assert!(
+        matches!(err, Error::AuthFailedBadSchema(_)),
+        "expected AuthFailedBadSchema, got {err:?}",
+    );
+}
+
+// T2-E
+#[tokio::test]
+async fn get_profile_me_5xx_returns_unknown() {
+    // When GET /api/profiles/me returns a 5xx status, login() must fail
+    // with Error::AuthFailedUnknown.
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("Service Unavailable"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    let err = auth
+        .login("monitor@example.com", "secret")
+        .await
+        .expect_err("login must fail when profile endpoint returns 503");
+
+    assert!(
+        matches!(err, Error::AuthFailedUnknown(_)),
+        "expected AuthFailedUnknown, got {err:?}",
+    );
+}

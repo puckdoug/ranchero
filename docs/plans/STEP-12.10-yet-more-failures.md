@@ -160,30 +160,30 @@ those before starting any item if the rationale is unclear.
 
 #### Red-state tests (write first, watch fail)
 
-- [ ] **T2-A** `login_eager_fetches_profile_and_caches_id`. Wiremock
+- [x] **T2-A** `login_eager_fetches_profile_and_caches_id`. Wiremock
   serves `200 + token` on the Keycloak endpoint and `200 + {"id":
   12345, ...}` on `GET /api/profiles/me`. After
   `ZwiftAuth::login(...).await?`, `auth.athlete_id().await?` returns
   `12345` without further I/O (use a `.expect(1)` on the wiremock
-  profile mock to assert the call count).
-- [ ] **T2-B** `get_profile_me_401_returns_unauthorized`. Wiremock
-  returns 401; assert the error matches
-  `Error::AuthFailedUnauthorized(_)`. Fails to compile until the
-  variant exists.
-- [ ] **T2-C** `get_profile_me_403_returns_forbidden`. Same as T2-B
-  with 403 → `AuthFailedForbidden`.
-- [ ] **T2-D** `get_profile_me_200_with_malformed_body_returns_bad_schema`.
-  Body is `{}` (no `id` field) → `AuthFailedBadSchema`.
-- [ ] **T2-E** `get_profile_me_5xx_returns_unknown`. 503 →
-  `AuthFailedUnknown`.
-- [ ] **T2-F** `relay_login_log_carries_real_athlete_id`. End-to-end
-  assertion through the relay-runtime test surface that the
-  `relay.login.ok` log line carries the wired athlete id (e.g. read it
-  off the captured tracing events). Fails today (`athlete_id=0`).
-- [ ] **T2-G** Structural / build-time: removing the
-  `AuthLogin::athlete_id` default produces compile errors for every
-  stub that does not override it. List the failing stubs before
-  fixing — this is your guide to the test-stub update step.
+  profile mock to assert the call count). Fails to compile: no
+  `athlete_id()` method on `ZwiftAuth`.
+- [x] **T2-B** `get_profile_me_401_returns_unauthorized`. Login with
+  token OK + profile 401; assert `login()` returns
+  `Error::AuthFailedUnauthorized(_)`. Fails to compile: variant does
+  not exist.
+- [x] **T2-C** `get_profile_me_403_returns_forbidden`. Same pattern,
+  403 → `AuthFailedForbidden`. Fails to compile.
+- [x] **T2-D** `get_profile_me_200_with_malformed_body_returns_bad_schema`.
+  Token OK + profile 200 with body `{}`; login must return
+  `AuthFailedBadSchema`. Fails to compile.
+- [x] **T2-E** `get_profile_me_5xx_returns_unknown`. Token OK + profile
+  503; login must return `AuthFailedUnknown`. Fails to compile.
+- [x] **T2-F** Covered by the existing
+  `relay_runtime_logs_monitor_athlete_id_after_login` test in
+  `tests/relay_runtime.rs`. That test is currently green: `start_all_inner`
+  already calls `auth.athlete_id()` and logs the value. The relay side
+  requires no new test; the remaining work is entirely in `zwift-api`.
+
 
 #### Green-state implementation
 
@@ -205,17 +205,20 @@ those before starting any item if the rationale is unclear.
   `get_profile_me` and stores the result in the cache. If
   `get_profile_me` fails, the whole `login` returns the error (do not
   half-succeed).
-- [ ] **G2-6** Remove the default impl on `AuthLogin::athlete_id` in
-  `src/daemon/relay.rs:97-101`. The trait method becomes:
+- [ ] **G2-6** Enumerate every `impl AuthLogin` in the workspace
+  (`grep -rn "impl AuthLogin"`). Confirm the list matches the stubs
+  named in the relay.rs and relay_runtime.rs test sections — this is
+  the guide for G2-8.
+- [ ] **G2-7** Remove the default impl on `AuthLogin::athlete_id` in
+  `src/daemon/relay.rs`. The trait method becomes:
   ```rust
   fn athlete_id(&self)
       -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send;
   ```
-- [ ] **G2-7** `DefaultAuthLogin::athlete_id` delegates to
-  `self.auth.athlete_id().await`.
-- [ ] **G2-8** Update every test stub flagged by T2-G with an explicit
-  `athlete_id` override returning a deterministic non-zero id (e.g.
-  `12345`).
+- [ ] **G2-8** `DefaultAuthLogin::athlete_id` delegates to
+  `self.auth.athlete_id().await`. Add an explicit `athlete_id` override
+  to every stub flagged by G2-6, returning a deterministic non-zero id
+  (e.g. `12345`) so stubs remain distinct from the production zero-bug.
 - [ ] **G2-9** `cargo test` clean across all crates.
 
 #### Done when
