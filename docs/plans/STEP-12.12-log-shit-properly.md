@@ -64,7 +64,7 @@ Phased work (this step):
       (`zwift-relay::capture`): `relay.capture.record.dropped` (warn) on
       channel saturation; `relay.capture.writer.flushed` (debug) per
       flush; `relay.capture.writer.closed` (info) with totals.
-- [ ] **3b** — Capture writer diagnostics implementation: emit the
+- [x] **3b** — Capture writer diagnostics implementation: emit the
       three tracing events from the writer task and the producer-side
       drop path.
 - [ ] **4a** — Session and supervisor tests

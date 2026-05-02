@@ -331,11 +331,16 @@ impl CaptureWriter {
     fn send_msg(&self, msg: WriterMsg) {
         let guard = self.sender.lock().expect("capture sender mutex");
         if let Some(sender) = guard.as_ref() {
-            if sender.try_send(msg).is_err() {
+            if let Err(err) = sender.try_send(msg) {
                 // Either Full (slow disk) or Closed (writer task
                 // died). Either way, count it as dropped —
                 // capture must never backpressure the hot path.
-                self.dropped_count.fetch_add(1, Ordering::Relaxed);
+                let total_dropped = self.dropped_count.fetch_add(1, Ordering::Relaxed) + 1;
+                let dropped = match err {
+                    mpsc::error::TrySendError::Full(m) => m,
+                    mpsc::error::TrySendError::Closed(m) => m,
+                };
+                emit_record_dropped(&dropped, total_dropped);
             }
         } else {
             // After flush_and_close: drop silently. Counting these
@@ -383,15 +388,92 @@ async fn writer_task(
     mut file: tokio::fs::File,
     mut rx: mpsc::Receiver<WriterMsg>,
 ) -> std::io::Result<()> {
+    let mut total_records: u64 = 0;
+    let mut total_bytes: u64 = 0;
+    let mut batch_records: u64 = 0;
+    let mut batch_bytes: u64 = 0;
+
     while let Some(msg) = rx.recv().await {
-        match msg {
-            WriterMsg::Frame(record) => write_frame_record(&mut file, &record).await?,
-            WriterMsg::Manifest(manifest) => write_manifest_record(&mut file, &manifest).await?,
+        let written = write_msg(&mut file, msg).await?;
+        total_records += 1;
+        total_bytes += written;
+        batch_records += 1;
+        batch_bytes += written;
+
+        // A flush boundary is "the writer caught up with the producer".
+        // Under steady-state UDP load (~1 Hz outbound) this fires per
+        // record; under saturation it fires once at the tail of each
+        // burst. Either way, emit one batch event per flush to disk.
+        if rx.is_empty() {
+            file.flush().await?;
+            tracing::debug!(
+                target: "ranchero::relay",
+                records_in_batch = batch_records,
+                bytes_written = batch_bytes,
+                "relay.capture.writer.flushed",
+            );
+            batch_records = 0;
+            batch_bytes = 0;
         }
     }
+
     file.flush().await?;
     file.sync_all().await?;
+    if batch_records > 0 {
+        tracing::debug!(
+            target: "ranchero::relay",
+            records_in_batch = batch_records,
+            bytes_written = batch_bytes,
+            "relay.capture.writer.flushed",
+        );
+    }
+    tracing::info!(
+        target: "ranchero::relay",
+        total_records,
+        total_bytes,
+        "relay.capture.writer.closed",
+    );
     Ok(())
+}
+
+async fn write_msg(file: &mut tokio::fs::File, msg: WriterMsg) -> std::io::Result<u64> {
+    let written = match msg {
+        WriterMsg::Frame(record) => {
+            let n = (RECORD_HEADER_LEN + record.payload.len()) as u64;
+            write_frame_record(file, &record).await?;
+            n
+        }
+        WriterMsg::Manifest(manifest) => {
+            write_manifest_record(file, &manifest).await?;
+            (RECORD_HEADER_LEN + MANIFEST_PAYLOAD_LEN) as u64
+        }
+    };
+    Ok(written)
+}
+
+fn emit_record_dropped(msg: &WriterMsg, total_dropped: u64) {
+    match msg {
+        WriterMsg::Frame(rec) => {
+            tracing::warn!(
+                target: "ranchero::relay",
+                direction = ?rec.direction,
+                transport = ?rec.transport,
+                payload_size = rec.payload.len(),
+                total_dropped,
+                "relay.capture.record.dropped",
+            );
+        }
+        WriterMsg::Manifest(_) => {
+            tracing::warn!(
+                target: "ranchero::relay",
+                direction = "n/a",
+                transport = "manifest",
+                payload_size = MANIFEST_PAYLOAD_LEN,
+                total_dropped,
+                "relay.capture.record.dropped",
+            );
+        }
+    }
 }
 
 async fn write_frame_record(
