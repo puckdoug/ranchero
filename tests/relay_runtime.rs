@@ -1524,6 +1524,46 @@ struct ScriptedTcpFactory {
 }
 
 impl ScriptedTcpFactory {
+    /// Build a factory that delivers one `ServerToClient` containing a
+    /// `udp_config_vod_1` with the given pools. Each pool entry is
+    /// `(lb_course, ip)` — `lb_realm` defaults to 0 and the port is
+    /// always omitted so the daemon must fall back to `UDP_PORT_SECURE`.
+    fn pushing_udp_config_vod(pools: &[(i32, &str)]) -> Self {
+        let relay_addresses_vod = pools
+            .iter()
+            .map(|(lb_course, ip)| zwift_proto::RelayAddressesVod {
+                lb_realm: Some(0),
+                lb_course: Some(*lb_course),
+                relay_addresses: vec![zwift_proto::RelayAddress {
+                    lb_realm: Some(0),
+                    lb_course: Some(*lb_course),
+                    ip: Some(ip.to_string()),
+                    port: None, // daemon must hardcode 3024 (§C5)
+                    ra_f5: None,
+                    ra_f6: None,
+                }],
+                rav_f4: None,
+            })
+            .collect();
+        let stc = zwift_proto::ServerToClient {
+            udp_config_vod_1: Some(zwift_proto::UdpConfigVod {
+                relay_addresses_vod,
+                port: None,
+                ucv_f3: None,
+                ucv_f4: None,
+                ucv_f5: None,
+                ucv_f6: None,
+            }),
+            ..Default::default()
+        };
+        let frame = build_inbound_servertoclient_frame(&stc, 0, 0);
+        Self {
+            transport: StdMutex::new(Some(ScriptedTcpTransport {
+                pending: StdMutex::new(Some(frame)),
+            })),
+        }
+    }
+
     /// Build a factory whose TCP channel will deliver one
     /// `ServerToClient` containing a flat `UdpConfig` with a single
     /// `RelayAddress` pointing at `(ip, port)`.
@@ -1741,5 +1781,111 @@ fn tcp_and_udp_conn_id_counters_are_independent() {
         "STEP-12.14 §N2: TCP counter must NOT advance from intervening \
          UDP allocations; sauce uses two separate static counters per \
          NetChannel subclass.",
+    );
+}
+
+// ==========================================================================
+// STEP-12.14 Phase 3a — UDP pool selection (C1)
+//
+// Sauce keeps `_udpServerPools` as a `Map<courseId, pool>` and always
+// uses `_udpServerPools.get(0).servers[0].ip` for the initial UDP target
+// (the generic load-balancer pool at lb_course=0). Our current code calls
+// `extract_udp_servers` which flattens ALL pools into one list and picks
+// the first arbitrary entry — so if lb_course=42 appears first in the
+// `udp_config_vod_1` list, we'd connect to a per-course server that
+// rejects athletes who aren't on that course. Both tests are red until
+// Phase 3b refactors `extract_udp_servers` → `extract_udp_pools` and
+// uses the lb_course=0 pool for the initial connect.
+// ==========================================================================
+
+#[tokio::test]
+async fn udp_target_picked_from_lb_course_zero_pool_not_per_course_pool() {
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+
+    // Push a udp_config_vod_1 with TWO pools in this order:
+    //   lb_course=42, ip="10.0.0.42"  ← per-course pool, listed FIRST
+    //   lb_course=0,  ip="10.0.0.1"   ← generic load-balancer pool
+    //
+    // The daemon must pick 10.0.0.1 (lb_course=0), not 10.0.0.42
+    // (lb_course=42, which is first in the flat list).
+    let tcp_factory = ScriptedTcpFactory::pushing_udp_config_vod(&[
+        (42, "10.0.0.42"),
+        (0,  "10.0.0.1"),
+    ]);
+    let (udp_factory, captured) = AddrCapturingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        udp_factory,
+    )
+    .await
+    .expect("start");
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let target = captured
+        .lock()
+        .unwrap()
+        .expect("udp_factory.connect() must be called");
+    assert_eq!(
+        target.ip().to_string(),
+        "10.0.0.1",
+        "STEP-12.14 §C1: UDP target must come from the lb_course=0 \
+         (generic load-balancer) pool (`_udpServerPools.get(0).servers[0]`). \
+         The per-course pool at lb_course=42 appeared first in the list but \
+         must not be picked. Got {target}",
+    );
+    assert_ne!(
+        target.ip().to_string(),
+        "10.0.0.42",
+        "STEP-12.14 §C1: daemon must not silently pick the per-course pool \
+         (lb_course=42) when a generic pool (lb_course=0) is also present",
+    );
+}
+
+#[tokio::test]
+async fn udp_setup_errors_when_no_lb_course_zero_pool_present() {
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+
+    // Push a udp_config_vod_1 with ONLY a per-course pool. Without a
+    // lb_course=0 generic pool, the daemon must surface a typed error
+    // rather than silently picking the per-course server.
+    let tcp_factory = ScriptedTcpFactory::pushing_udp_config_vod(&[
+        (42, "10.0.0.42"),
+    ]);
+    let (udp_factory, connected_flag) = AddrCapturingUdpFactory::new();
+
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        udp_factory,
+    )
+    .await;
+
+    let err = match result {
+        Ok(_) => panic!(
+            "STEP-12.14 §C1: when no lb_course=0 pool is present the daemon \
+             must return a typed error rather than picking an arbitrary \
+             per-course server; got Ok",
+        ),
+        Err(e) => e,
+    };
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.to_lowercase().contains("udp") || err_msg.to_lowercase().contains("pool"),
+        "STEP-12.14 §C1: error when no generic pool present must mention \
+         UDP or pool; got {err_msg:?}",
+    );
+    assert!(
+        connected_flag.lock().unwrap().is_none(),
+        "STEP-12.14 §C1: udp_factory.connect() must NOT be called when \
+         only per-course pools are present — daemon should error first",
     );
 }

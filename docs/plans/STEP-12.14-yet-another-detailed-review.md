@@ -71,7 +71,7 @@ unblocks the next point in the live-trace failure chain):
   `DEFAULT_USER_AGENT`; append `; version=2.0` to
   `PROTOBUF_CONTENT_TYPE`; set `Accept` headers in `login`,
   `do_refresh`, and `post`.
-- [ ] **3a** — Tests for Phase 3 (UDP pool selection): daemon
+- [x] **3a** — Tests for Phase 3 (UDP pool selection): daemon
   picks UDP target from the `lb_course=0` pool when both generic
   and per-course pools are present; errors with a typed variant
   if no generic pool is in the push.
