@@ -593,3 +593,507 @@ async fn get_profile_me_5xx_returns_unknown() {
         "expected AuthFailedUnknown, got {err:?}",
     );
 }
+
+// --- STEP-12.12 Phase 5a: HTTP capture sink + auth tracing ---------
+//
+// Pinning the contract for Phase 5b: every request and response body
+// issued by `ZwiftAuth` must reach an injected `CaptureSink` so the
+// `--capture` file can replay the auth/HTTP timeline, and every
+// successful or failed exchange must emit a `relay.auth.*` tracing
+// event so an operator looking at the daemon log can tell what
+// happened without resorting to `tcpdump`. None of these events or
+// the sink injection point exist today; every test below fails red.
+
+use std::sync::{Arc, Mutex};
+
+use zwift_api::{CaptureDirection, CaptureSink, CaptureTransport};
+
+#[derive(Default)]
+struct RecordingSink {
+    records: Mutex<Vec<(CaptureDirection, CaptureTransport, Vec<u8>)>>,
+}
+
+impl RecordingSink {
+    fn snapshot(&self) -> Vec<(CaptureDirection, CaptureTransport, Vec<u8>)> {
+        self.records.lock().expect("sink mutex").clone()
+    }
+}
+
+impl CaptureSink for RecordingSink {
+    fn record(&self, direction: CaptureDirection, transport: CaptureTransport, payload: &[u8]) {
+        self.records
+            .lock()
+            .expect("sink mutex")
+            .push((direction, transport, payload.to_vec()));
+    }
+}
+
+/// Builds a `ZwiftAuth` against `server` with a fresh `RecordingSink`
+/// already attached. Use this for tests that want to capture every
+/// HTTP exchange a single call makes (login, refresh, etc).
+fn auth_with_sink(server: &MockServer) -> (ZwiftAuth, Arc<RecordingSink>) {
+    let auth = ZwiftAuth::new(config_for(server));
+    let sink = Arc::new(RecordingSink::default());
+    auth.set_capture_sink(sink.clone() as Arc<dyn CaptureSink>);
+    (auth, sink)
+}
+
+/// Builds a `ZwiftAuth` that has already logged in (so `tokens` /
+/// `profile` are populated), then attaches a fresh `RecordingSink`
+/// AFTER login so the only captures come from operations the test
+/// drives explicitly.
+async fn authed_with_sink_after_login(
+    server: &MockServer,
+) -> (ZwiftAuth, Arc<RecordingSink>) {
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(server)
+        .await;
+    let auth = ZwiftAuth::new(config_for(server));
+    auth.login("alice", "hunter2").await.expect("login");
+    let sink = Arc::new(RecordingSink::default());
+    auth.set_capture_sink(sink.clone() as Arc<dyn CaptureSink>);
+    (auth, sink)
+}
+
+#[tokio::test]
+async fn login_request_body_appears_in_capture_as_http_outbound() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    let (auth, sink) = auth_with_sink(&server);
+    auth.login("alice", "hunter2").await.expect("login");
+
+    // The token endpoint is form-encoded; assert at least one outbound
+    // HTTP capture contains the form-encoded password-grant fields.
+    let outbound: Vec<Vec<u8>> = sink
+        .snapshot()
+        .into_iter()
+        .filter(|(d, t, _)| {
+            *d == CaptureDirection::Outbound && *t == CaptureTransport::Http
+        })
+        .map(|(_, _, p)| p)
+        .collect();
+    let token_request = outbound
+        .iter()
+        .find(|body| {
+            let s = String::from_utf8_lossy(body);
+            s.contains("grant_type=password") && s.contains("username=alice")
+        })
+        .expect(
+            "STEP-12.12 Phase 5a: the token POST's form body must appear as an \
+             outbound Http capture record",
+        );
+    let token_body_str = String::from_utf8_lossy(token_request);
+    assert!(
+        token_body_str.contains("password=hunter2"),
+        "captured token request body must include the credentials verbatim; \
+         got {token_body_str:?}",
+    );
+}
+
+#[tokio::test]
+async fn login_response_body_appears_in_capture_as_http_inbound() {
+    let server = MockServer::start().await;
+    let token_resp = token_body("ATOK_RESP", "RTOK_RESP", 600);
+    let token_resp_bytes = serde_json::to_vec(&token_resp).expect("serialize token body");
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_resp.clone()))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 99})))
+        .mount(&server)
+        .await;
+
+    let (auth, sink) = auth_with_sink(&server);
+    auth.login("alice", "hunter2").await.expect("login");
+
+    let inbound: Vec<Vec<u8>> = sink
+        .snapshot()
+        .into_iter()
+        .filter(|(d, t, _)| {
+            *d == CaptureDirection::Inbound && *t == CaptureTransport::Http
+        })
+        .map(|(_, _, p)| p)
+        .collect();
+    assert!(
+        inbound.iter().any(|body| body == &token_resp_bytes),
+        "STEP-12.12 Phase 5a: the token endpoint's response body must appear \
+         verbatim as an inbound Http capture record",
+    );
+}
+
+#[tokio::test]
+async fn profile_fetch_request_and_response_appear_in_capture() {
+    let server = MockServer::start().await;
+    let (auth, sink) = authed_with_sink_after_login(&server).await;
+    let profile_body = json!({"id": 1});
+    let profile_bytes = serde_json::to_vec(&profile_body).expect("serialize");
+    // The mock used during login was a generic 200; mount a fresh,
+    // recognizable response for the explicit get_profile_me call.
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(profile_bytes.clone()))
+        .mount(&server)
+        .await;
+
+    auth.get_profile_me().await.expect("profile fetch");
+
+    let records = sink.snapshot();
+    let outbound = records
+        .iter()
+        .find(|(d, t, _)| {
+            *d == CaptureDirection::Outbound && *t == CaptureTransport::Http
+        })
+        .expect(
+            "STEP-12.12 Phase 5a: get_profile_me must produce one outbound \
+             Http capture record (empty body for the GET)",
+        );
+    assert!(
+        outbound.2.is_empty(),
+        "GET request bodies are empty; captured payload should match",
+    );
+    let inbound = records
+        .iter()
+        .find(|(d, t, p)| {
+            *d == CaptureDirection::Inbound && *t == CaptureTransport::Http && p == &profile_bytes
+        })
+        .expect(
+            "STEP-12.12 Phase 5a: get_profile_me must produce one inbound \
+             Http capture record holding the response body verbatim",
+        );
+    let _ = inbound;
+}
+
+#[tokio::test]
+async fn authenticated_post_and_get_paths_record_request_and_response() {
+    let server = MockServer::start().await;
+    let (auth, sink) = authed_with_sink_after_login(&server).await;
+
+    // POST returns one specific body; GET returns another. We look for
+    // both in the captured records to prove each path records its own
+    // request + response pair.
+    let post_resp = b"post-resp-bytes";
+    let get_resp = b"get-resp-bytes";
+    Mock::given(method("POST"))
+        .and(path("/api/echo"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(post_resp.to_vec()))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/something"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(get_resp.to_vec()))
+        .mount(&server)
+        .await;
+
+    auth.post(
+        "/api/echo",
+        "application/octet-stream",
+        b"client-body".to_vec(),
+    )
+    .await
+    .expect("post");
+    auth.fetch("/api/something").await.expect("fetch");
+
+    let records = sink.snapshot();
+
+    assert!(
+        records.iter().any(|(d, t, p)| {
+            *d == CaptureDirection::Outbound
+                && *t == CaptureTransport::Http
+                && p.as_slice() == b"client-body"
+        }),
+        "STEP-12.12 Phase 5a: auth.post must record its request body as \
+         an outbound Http capture; got {records:?}",
+    );
+    assert!(
+        records.iter().any(|(d, t, p)| {
+            *d == CaptureDirection::Inbound
+                && *t == CaptureTransport::Http
+                && p.as_slice() == post_resp
+        }),
+        "STEP-12.12 Phase 5a: auth.post must record its response body as \
+         an inbound Http capture",
+    );
+    assert!(
+        records.iter().any(|(d, t, p)| {
+            *d == CaptureDirection::Inbound
+                && *t == CaptureTransport::Http
+                && p.as_slice() == get_resp
+        }),
+        "STEP-12.12 Phase 5a: auth.fetch must record its response body as \
+         an inbound Http capture",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn auth_emits_token_requested_and_granted_events() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.auth.token.requested",
+        ),
+        "STEP-12.12 Phase 5a: relay.auth.token.requested must fire at info \
+         before the token POST; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.auth.token.granted",
+        ),
+        "STEP-12.12 Phase 5a: relay.auth.token.granted must fire at info on \
+         a successful token decode; not found in tracing log",
+    );
+    for field in ["username=", "grant_type="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 5a: relay.auth.token.requested must carry \
+             {field:?} — not present in any captured log line",
+        );
+    }
+    for field in ["expires_in_s=", "refresh_expires_in_s="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 5a: relay.auth.token.granted must carry \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn auth_emits_profile_ok_on_success_and_profile_failed_on_error() {
+    // Success scenario: 200 from /api/profiles/me must produce
+    // `relay.auth.profile.ok` at debug.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+    drop(auth);
+    drop(server);
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.auth.profile.ok"),
+        "STEP-12.12 Phase 5a: relay.auth.profile.ok must fire at debug on \
+         a 200 from /api/profiles/me; not found in tracing log",
+    );
+
+    // Failure scenario: 401 must produce `relay.auth.profile.failed` at
+    // warn carrying the status. We need the token endpoint to succeed
+    // first so login() reaches get_profile_me().
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("expired"))
+        .mount(&server)
+        .await;
+    let auth = ZwiftAuth::new(config_for(&server));
+    let _ = auth.login("alice", "hunter2").await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.auth.profile.failed",
+        ),
+        "STEP-12.12 Phase 5a: relay.auth.profile.failed must fire at warn \
+         on a non-200 from /api/profiles/me; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "status="),
+        "STEP-12.12 Phase 5a: relay.auth.profile.failed must carry status= \
+         in its fields",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn auth_emits_http_request_and_response_at_debug() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/echo"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/get-it"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("ok"))
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+    auth.post("/api/echo", "application/octet-stream", b"x".to_vec())
+        .await
+        .expect("post");
+    auth.fetch("/api/get-it").await.expect("fetch");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.auth.http.request"),
+        "STEP-12.12 Phase 5a: relay.auth.http.request must fire at debug \
+         for both auth.post and auth.fetch; not found",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.auth.http.response"),
+        "STEP-12.12 Phase 5a: relay.auth.http.response must fire at debug \
+         for both auth.post and auth.fetch; not found",
+    );
+    for field in ["method=", "urn=", "status="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 5a: relay.auth.http.request/response must \
+             carry field {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn auth_emits_http_retry_event_on_401_path() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .and(body_string_contains("grant_type=password"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK1", "RTOK1", 600)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK2", "RTOK2", 600)))
+        .mount(&server)
+        .await;
+    // First profile call (during login) succeeds with ATOK1.
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .and(header("authorization", "Bearer ATOK1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    // Subsequent call with ATOK1 → 401 (forces refresh + retry).
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .and(header("authorization", "Bearer ATOK1"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("expired"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .and(header("authorization", "Bearer ATOK2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+    let _ = auth.fetch("/api/profiles/me").await.expect("retry");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.auth.http.retry"),
+        "STEP-12.12 Phase 5a: relay.auth.http.retry must fire at info on \
+         the inline 401-refresh-and-retry path; not found in tracing log",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn auth_emits_refresh_completed_event() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .and(body_string_contains("grant_type=password"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .and(body_string_contains("grant_type=refresh_token"))
+        .respond_with(ResponseTemplate::new(200)
+            .set_body_json(token_body("ATOK2", "RTOK2", 1200)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+    auth.refresh().await.expect("refresh");
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.auth.refresh.completed",
+        ),
+        "STEP-12.12 Phase 5a: relay.auth.refresh.completed must fire at info \
+         after a successful refresh; not found in tracing log",
+    );
+    for field in ["expires_in_s=", "next_refresh_in_s="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 5a: relay.auth.refresh.completed must carry \
+             field {field:?} — not present in any captured log line",
+        );
+    }
+}

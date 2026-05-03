@@ -16,4 +16,5 @@ tracing = "0.1"
 [dev-dependencies]
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "time", "macros", "rt", "rt-multi-thread", "test-util"] }
+tracing-test = { version = "0.2", features = ["no-env-filter"] }
 wiremock = "0.6"

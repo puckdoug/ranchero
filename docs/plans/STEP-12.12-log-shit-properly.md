@@ -75,7 +75,7 @@ logged_in` / `refreshed` / `refresh_failed` / `relogin_attempt` /
 - [x] **4b** — Session and supervisor implementation: emit the
       events from the single-shot helpers and the supervisor refresh
       loop.
-- [ ] **5a** — Auth / HTTP tests (`zwift-api`): every request and
+- [x] **5a** — Auth / HTTP tests (`zwift-api`): every request and
       response body appears in the capture as a `TransportKind::Http`
       record; `relay.auth.token.requested` / `token.granted` /
       `profile.ok` / `profile.failed` / `http.request` / `http.response`
