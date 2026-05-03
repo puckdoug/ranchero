@@ -24,7 +24,7 @@ that makes them pass.
 - [x] **1b** — Implementation for D1: delete the obsolete
   `relay.capture.closed` emission from `recv_loop`'s shutdown
   branch.
-- [ ] **2a** — Tests for D2: `start_with_all_deps_and_writer` with
+- [x] **2a** — Tests for D2: `start_with_all_deps_and_writer` with
   a recording UDP factory + writer produces at least one outbound
   UDP capture record in the file.
 - [ ] **2b** — Implementation for D2: thread `capture_writer.clone()`

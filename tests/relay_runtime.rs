@@ -1280,6 +1280,71 @@ async fn heartbeat_tick_emits_debug_event_per_interval() {
     }
 }
 
+// ==========================================================================
+// STEP-12.13 D2 — capture writer is silently dropped on the UDP path.
+//
+// `start_all_inner` plumbs `capture_writer.clone()` into the
+// `TcpChannelConfig` literal but the `UdpChannelConfig` literal
+// inherits `capture: None` from `udp_factory.channel_config()`. Live
+// runs against Zwift produce zero UDP records in `output.cap` even
+// though the per-hello tracing fires twenty times. This test fails
+// red until 2b adds the missing field to the UdpChannelConfig
+// literal.
+//
+// `RecordingUdpFactory::channel_config()` returns `max_hellos: 0`,
+// which makes the UDP hello loop a no-op — no UDP outbound bytes
+// flow during establish. The 1 Hz heartbeat scheduler is the only
+// UDP-outbound path that fires under this stub setup, so the test
+// waits past one heartbeat interval before shutting down.
+#[tokio::test]
+async fn start_all_inner_writes_udp_outbound_to_capture_file() {
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+        .await
+        .expect("open writer");
+    let writer = Arc::new(writer);
+
+    let (udp_factory, _connected, _udp_written) = RecordingUdpFactory::new();
+    let runtime = RelayRuntime::start_with_all_deps_and_writer(
+        &cfg,
+        Arc::clone(&writer),
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("start");
+
+    // The heartbeat scheduler ticks at 1 Hz, with the first tick
+    // landing one interval after start. Wait past that first tick
+    // so the heartbeat path has produced at least one UDP send.
+    tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+    runtime.shutdown();
+    let _ = runtime.join().await;
+    drop(writer);
+
+    let mut reader = zwift_relay::capture::CaptureReader::open(path.path())
+        .expect("reader");
+    let mut udp_outbound = 0usize;
+    while let Some(item) = reader.next_item() {
+        if let Ok(zwift_relay::capture::CaptureItem::Frame(rec)) = item
+            && rec.direction == zwift_relay::capture::Direction::Outbound
+            && rec.transport == zwift_relay::capture::TransportKind::Udp
+        {
+            udp_outbound += 1;
+        }
+    }
+    assert!(
+        udp_outbound >= 1,
+        "STEP-12.13 D2: start_all_inner must thread the capture writer \
+         into UdpChannelConfig so at least one UDP outbound record \
+         (the 1 Hz heartbeat send_player_state call) reaches the file. \
+         Got {udp_outbound} UDP outbound records.",
+    );
+}
+
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn heartbeat_send_failure_emits_warn() {
