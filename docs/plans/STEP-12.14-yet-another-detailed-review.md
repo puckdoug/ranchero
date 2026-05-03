@@ -60,7 +60,7 @@ unblocks the next point in the live-trace failure chain):
   `pick_initial_udp_target`; read `stc.stc_f5` instead of
   `stc.seqno`; fix the `player_count` trace; split
   `CONN_ID_COUNTER` into TCP and UDP statics.
-- [ ] **2a** — Tests for Phase 2 (HTTP impersonation):
+- [x] **2a** — Tests for Phase 2 (HTTP impersonation):
   `Platform: OSX` on every authenticated request; full
   `User-Agent: CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0`;
   `Content-Type: application/x-protobuf-lite; version=2.0` on

@@ -1097,3 +1097,230 @@ async fn auth_emits_refresh_completed_event() {
         );
     }
 }
+
+// ==========================================================================
+// STEP-12.14 Phase 2a — HTTP impersonation headers (C6 + C7 + C8 + N3 + N4)
+//
+// Sauce4zwift sends specific headers on every authenticated request:
+//   Platform: OSX
+//   Source: Game Client
+//   User-Agent: CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0
+//   Content-Type: application/x-protobuf-lite; version=2.0  (for PB bodies)
+//   Accept: application/json                                 (on token endpoint)
+//   Accept: application/x-protobuf-lite                     (on PB endpoints)
+//
+// All five tests are red until 2b adds the missing headers.
+// ==========================================================================
+
+/// Helper: mount a minimal set of mocks and drive auth.login() once.
+/// Returns the full list of requests the server captured so tests can
+/// inspect headers without using `header()` matchers (which would cause
+/// the mock to not match and return 404, masking the real failure).
+async fn login_and_capture_requests(
+    server: &MockServer,
+    access: &str,
+) -> Vec<wiremock::Request> {
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body(access, "RTOK", 600)))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(server)
+        .await;
+    let auth = ZwiftAuth::new(config_for(server));
+    auth.login("alice", "hunter2").await.expect("login must succeed");
+    server.received_requests().await.expect("requests captured")
+}
+
+#[tokio::test]
+async fn every_authenticated_request_carries_platform_osx_header() {
+    let server = MockServer::start().await;
+    let requests = login_and_capture_requests(&server, "ATOK").await;
+
+    // Every request made during login (token POST + profile GET) must
+    // carry `Platform: OSX`. This mirrors sauce4zwift's default headers
+    // (`zwift.mjs:456-460`).
+    assert!(
+        !requests.is_empty(),
+        "at least one request must be captured",
+    );
+    for req in &requests {
+        let platform = req.headers.get("platform")
+            .or_else(|| req.headers.get("Platform"));
+        assert!(
+            platform.is_some(),
+            "STEP-12.14 §C6: every authenticated request must carry \
+             `Platform: OSX`; not present on {} {}", req.method, req.url,
+        );
+        let val = platform.unwrap().to_str().unwrap_or("");
+        assert_eq!(
+            val, "OSX",
+            "STEP-12.14 §C6: Platform header must be `OSX`; got {val:?} \
+             on {} {}", req.method, req.url,
+        );
+    }
+}
+
+#[tokio::test]
+async fn user_agent_matches_full_game_client_string() {
+    // Sauce uses `CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968
+    // game/1.54.0 curl/8.4.0` (`zwift.mjs:459`). We currently send
+    // the stub `CNL/4.2.0` (§C7).
+    let server = MockServer::start().await;
+    let requests = login_and_capture_requests(&server, "ATOK").await;
+
+    let expected_ua = "CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0";
+    for req in &requests {
+        let ua = req.headers
+            .get("user-agent")
+            .or_else(|| req.headers.get("User-Agent"))
+            .expect("User-Agent must be set")
+            .to_str()
+            .unwrap_or("");
+        assert_eq!(
+            ua, expected_ua,
+            "STEP-12.14 §C7: User-Agent must match the full Zwift game-client \
+             string; got {ua:?} on {} {}", req.method, req.url,
+        );
+    }
+}
+
+#[tokio::test]
+async fn protobuf_content_type_carries_version_parameter() {
+    // Sauce appends `; version=2.0` to the protobuf Content-Type
+    // (`zwift.mjs:445`). The constant `zwift_relay::PROTOBUF_CONTENT_TYPE`
+    // is what callers (e.g. `session::login`, `session::refresh`) pass
+    // to `auth.post`. 2b appends `; version=2.0` to that constant; until
+    // then this test fails because the captured Content-Type lacks the
+    // version parameter (§C8).
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/pb-echo"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"ok".to_vec()))
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+    // Callers (e.g. `zwift_relay::session::login`) pass the shared
+    // constant `PROTOBUF_CONTENT_TYPE = "application/x-protobuf-lite"`
+    // (no version suffix). 2b either appends `; version=2.0` inside
+    // `auth.post` when the content-type is protobuf-lite, OR updates
+    // the constant directly and callers inherit the change. Either way,
+    // the captured request must have the version parameter.
+    auth.post(
+        "/api/pb-echo",
+        "application/x-protobuf-lite",   // current constant value, no version
+        b"pb-body".to_vec(),
+    )
+    .await
+    .expect("post");
+
+    let all_requests = server.received_requests().await.expect("requests");
+    let pb_req = all_requests.iter()
+        .find(|r| r.url.path() == "/api/pb-echo")
+        .expect("pb-echo request captured");
+
+    let ct = pb_req.headers
+        .get("content-type")
+        .or_else(|| pb_req.headers.get("Content-Type"))
+        .expect("Content-Type must be set")
+        .to_str()
+        .unwrap_or("");
+    assert!(
+        ct.contains("; version=2.0"),
+        "STEP-12.14 §C8: `PROTOBUF_CONTENT_TYPE` must include `; version=2.0` \
+         (sauce `zwift.mjs:445`). Callers such as `session::login` and \
+         `session::refresh` pass this constant directly. Got {ct:?}",
+    );
+}
+
+#[tokio::test]
+async fn token_request_sets_accept_application_json() {
+    // Sauce passes `accept: 'json'` to the token endpoint fetch
+    // (`zwift.mjs:346`), which sets `Accept: application/json`.
+    // We currently send no Accept header (§N3).
+    let server = MockServer::start().await;
+    let requests = login_and_capture_requests(&server, "ATOK").await;
+
+    let token_requests: Vec<_> = requests.iter()
+        .filter(|r| r.url.path() == TOKEN_PATH)
+        .collect();
+    assert!(
+        !token_requests.is_empty(),
+        "token endpoint must be called during login",
+    );
+    for req in token_requests {
+        let accept = req.headers
+            .get("accept")
+            .or_else(|| req.headers.get("Accept"))
+            .map(|v| v.to_str().unwrap_or(""))
+            .unwrap_or("");
+        assert_eq!(
+            accept, "application/json",
+            "STEP-12.14 §N3: token requests must carry `Accept: \
+             application/json` (`zwift.mjs:346`). Got {accept:?}",
+        );
+    }
+}
+
+#[tokio::test]
+async fn protobuf_post_sets_accept_x_protobuf_lite() {
+    // Sauce's `fetchPB` sets `Accept: application/x-protobuf-lite`
+    // (`zwift.mjs:451`). Our `auth.post` sends no Accept header (§N4).
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/relay-echo"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"ok".to_vec()))
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+    auth.post(
+        "/api/relay-echo",
+        "application/x-protobuf-lite; version=2.0",
+        b"pb-body".to_vec(),
+    )
+    .await
+    .expect("post");
+
+    let all_requests = server.received_requests().await.expect("requests");
+    let pb_post = all_requests.iter()
+        .find(|r| r.url.path() == "/api/relay-echo")
+        .expect("relay-echo request captured");
+
+    let accept = pb_post.headers
+        .get("accept")
+        .or_else(|| pb_post.headers.get("Accept"))
+        .map(|v| v.to_str().unwrap_or(""))
+        .unwrap_or("");
+    assert_eq!(
+        accept, "application/x-protobuf-lite",
+        "STEP-12.14 §N4: protobuf POST must carry `Accept: \
+         application/x-protobuf-lite` (`zwift.mjs:451`). Got {accept:?}",
+    );
+}
