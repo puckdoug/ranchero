@@ -85,6 +85,10 @@ pub enum Error {
 
     #[error("HTTP {status}: {body}")]
     Status { status: u16, body: String },
+
+    /// 200 from a protobuf endpoint but the body cannot be decoded.
+    #[error("protobuf decode failed: {0}")]
+    ProtobufDecode(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -441,6 +445,120 @@ impl ZwiftAuth {
             .as_ref()
             .map(|p| p.id)
             .ok_or(Error::NotAuthenticated)
+    }
+
+    /// Fetch the current `PlayerState` for `athlete_id` from
+    /// `GET /relay/worlds/1/players/{id}` (protobuf-lite). Mirrors
+    /// sauce4zwift's `getPlayerState` (`zwift.mjs:613`); a 404
+    /// response — meaning the athlete is not currently in a game —
+    /// returns `Ok(None)` rather than an error so the daemon's
+    /// course-gate can branch cleanly.
+    pub async fn get_player_state(
+        &self,
+        athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>> {
+        use prost::Message as _;
+
+        let urn = format!("/relay/worlds/1/players/{athlete_id}");
+        let resp = self.fetch_pb(&urn).await?;
+        let status = resp.status();
+        if status.as_u16() == 404 {
+            return Ok(None);
+        }
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        let state = zwift_proto::PlayerState::decode(&bytes[..])
+            .map_err(|e| Error::ProtobufDecode(e.to_string()))?;
+        Ok(Some(state))
+    }
+
+    /// GET helper that mirrors [`Self::fetch`] but adds
+    /// `Accept: application/x-protobuf-lite` so the server returns
+    /// the protobuf-lite encoding sauce uses for `fetchPB` endpoints
+    /// (`zwift.mjs:447-451`).
+    async fn fetch_pb(&self, urn: &str) -> Result<HttpResponse> {
+        let url = format!("{}{}", self.inner.config.api_base, urn);
+        let bearer = self.bearer().await?;
+
+        self.inner.record_outbound(&[]);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            body_size = 0,
+            "relay.auth.http.request",
+        );
+        let resp = self
+            .inner
+            .http
+            .get(&url)
+            .bearer_auth(&bearer)
+            .header("Accept", "application/x-protobuf-lite")
+            .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform)
+            .header("User-Agent", &self.inner.config.user_agent)
+            .send()
+            .await?;
+        let status = resp.status();
+        let resp_bytes = resp.bytes().await?;
+        self.inner.record_inbound(&resp_bytes);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            status = status.as_u16(),
+            body_size = resp_bytes.len(),
+            retried = false,
+            "relay.auth.http.response",
+        );
+        if status != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(HttpResponse {
+                status,
+                body: resp_bytes.to_vec(),
+            });
+        }
+        tracing::info!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            "relay.auth.http.retry",
+        );
+        self.refresh().await?;
+        let bearer = self.bearer().await?;
+
+        self.inner.record_outbound(&[]);
+        let retry = self
+            .inner
+            .http
+            .get(&url)
+            .bearer_auth(&bearer)
+            .header("Accept", "application/x-protobuf-lite")
+            .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform)
+            .header("User-Agent", &self.inner.config.user_agent)
+            .send()
+            .await?;
+        let retry_status = retry.status();
+        let retry_bytes = retry.bytes().await?;
+        self.inner.record_inbound(&retry_bytes);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            status = retry_status.as_u16(),
+            body_size = retry_bytes.len(),
+            retried = true,
+            "relay.auth.http.response",
+        );
+        Ok(HttpResponse {
+            status: retry_status,
+            body: retry_bytes.to_vec(),
+        })
     }
 
     /// Use the current `refresh_token` to obtain a fresh `access_token`

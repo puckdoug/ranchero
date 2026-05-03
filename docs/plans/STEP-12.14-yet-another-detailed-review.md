@@ -86,7 +86,7 @@ unblocks the next point in the live-trace failure chain):
   (NOT the monitor's `auth.athlete_id()`); daemon suspends when
   the watched athlete has no `state.world` (course); daemon
   errors when `cfg.watched_athlete_id` is unset.
-- [ ] **4b** — Implementation for Phase 4: add
+- [x] **4b** — Implementation for Phase 4: add
   `ZwiftAuth::get_player_state` (HTTP GET
   `/relay/worlds/1/players/{id}` returning a parsed
   `PlayerState`); insert step 4.5 in `start_all_inner` to call

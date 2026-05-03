@@ -173,6 +173,21 @@ pub enum RelayRuntimeError {
     /// athletes who are not on that course. (STEP-12.14 §C1)
     #[error("udp_config push contains no lb_course=0 generic pool")]
     NoGenericPool,
+
+    /// `cfg.watched_athlete_id` was not set when the daemon tried to
+    /// start. Sauce gates UDP setup on `getPlayerState(selfAthleteId)`
+    /// and only proceeds when an athlete to observe is configured.
+    /// (STEP-12.14 §C2 / R1)
+    #[error("no watched athlete configured; set one via `ranchero configure`")]
+    NoWatchedAthlete,
+
+    /// `getPlayerState` for the watched athlete returned no
+    /// `state.world` (proto tag 35), which means the athlete is not
+    /// currently in a game. The daemon refuses to bring UDP up in
+    /// this state because the relay would have no course context to
+    /// route on. (STEP-12.14 §C2)
+    #[error("watched athlete is not in a game (no course); waiting to resume")]
+    WatchedAthleteNotInGame,
 }
 
 impl From<zwift_api::Error> for RelayRuntimeError {
@@ -205,6 +220,19 @@ pub trait AuthLogin: Send + Sync + 'static {
     fn athlete_id(
         &self,
     ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send;
+
+    /// Fetch the current `PlayerState` for `athlete_id` from the
+    /// `/relay/worlds/1/players/{id}` endpoint. Returns `Ok(None)`
+    /// when the athlete is not currently in a game (HTTP 404). Used
+    /// by the `start_all_inner` course-gate (STEP-12.14 §C2 / R1) to
+    /// learn the watched athlete's `state.world` (proto tag 35) before
+    /// the daemon brings UDP up.
+    fn get_player_state(
+        &self,
+        athlete_id: i64,
+    ) -> impl std::future::Future<
+        Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>,
+    > + Send;
 }
 
 /// Dependency-injection trait for the relay-session login step.
@@ -1129,6 +1157,47 @@ impl RelayRuntime {
             return Err(RelayRuntimeError::NoTcpServers);
         }
 
+        // 4.5. Course gate (STEP-12.14 §C2 / R1 / C9).
+        //
+        //     Sauce calls `getPlayerState(selfAthleteId)` before
+        //     establishing TCP / UDP and refuses to come up unless
+        //     the athlete is in a game (`state.world` populated).
+        //     Without this gate, UDP comes up against a server that
+        //     has no course context for the athlete and silently
+        //     drops every inbound packet.
+        //
+        //     R1: the call uses `cfg.watched_athlete_id` (the athlete
+        //     whose data the daemon is observing), NOT the monitor
+        //     account's `auth.athlete_id()`.
+        //
+        //     C9: the course lives in `state.world` (proto tag 35),
+        //     not the `f19` aux-bits field (L7).
+        let watched_id = cfg
+            .watched_athlete_id
+            .ok_or(RelayRuntimeError::NoWatchedAthlete)?;
+        let watched_id_i64 = watched_id as i64;
+        let watched_state = auth
+            .get_player_state(watched_id_i64)
+            .await
+            .map_err(RelayRuntimeError::Auth)?;
+        let course_id = match watched_state.as_ref().and_then(|s| s.world) {
+            Some(c) => c,
+            None => {
+                tracing::info!(
+                    target: "ranchero::relay",
+                    watched_athlete_id = watched_id,
+                    "relay.course_gate.suspended",
+                );
+                return Err(RelayRuntimeError::WatchedAthleteNotInGame);
+            }
+        };
+        tracing::info!(
+            target: "ranchero::relay",
+            watched_athlete_id = watched_id,
+            course_id,
+            "relay.course_gate.in_game",
+        );
+
         // Resolve the capture writer: prefer the preopen, fall back
         // to opening from the supplied path (None → no capture).
         let capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
@@ -1817,6 +1886,13 @@ impl AuthLogin for DefaultAuthLogin {
     async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
         self.auth.athlete_id().await
     }
+
+    async fn get_player_state(
+        &self,
+        athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
+        self.auth.get_player_state(athlete_id).await
+    }
 }
 
 /// Production [`SessionLogin`] that delegates to
@@ -2182,6 +2258,24 @@ mod tests {
             &self,
         ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send {
             async { Ok(12345i64) }
+        }
+
+        fn get_player_state(
+            &self,
+            _athlete_id: i64,
+        ) -> impl std::future::Future<
+            Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>,
+        > + Send {
+            // The unit-test StubAuth is paired with tests that exercise
+            // the supervisor / TCP / UDP wiring rather than the course
+            // gate, so a default `Some(state.world = Some(1))` keeps the
+            // course-gate happy without a per-test override.
+            async {
+                Ok(Some(zwift_proto::PlayerState {
+                    world: Some(1),
+                    ..Default::default()
+                }))
+            }
         }
     }
 

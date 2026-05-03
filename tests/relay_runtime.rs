@@ -43,7 +43,12 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
             api_base:  "http://127.0.0.1:1".into(),
         },
         relay_enabled: true,
-        watched_athlete_id: None,
+        // STEP-12.14 §C2 — `start_all_inner`'s course gate refuses
+        // to come up without a watched athlete. These tests exercise
+        // wiring downstream of the gate, so the helper sets a default
+        // ID; tests that exercise the gate itself live in
+        // `tests/course_gate.rs` and build their own `ResolvedConfig`.
+        watched_athlete_id: Some(54321),
     }
 }
 
@@ -133,6 +138,19 @@ impl AuthLogin for RecordingAuth {
     async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
         Ok(12345)
     }
+
+    async fn get_player_state(
+        &self,
+        _athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
+        // STEP-12.14 §C2: keep the course-gate happy by claiming the
+        // watched athlete is in a game. Tests using this stub exercise
+        // the auth-login wiring rather than the course gate.
+        Ok(Some(zwift_proto::PlayerState {
+            world: Some(1),
+            ..Default::default()
+        }))
+    }
 }
 
 /// Returns a fixed athlete ID from `athlete_id()` for Defect 12 tests.
@@ -148,6 +166,16 @@ impl AuthLogin for KnownIdAuth {
     async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
         Ok(self.id)
     }
+
+    async fn get_player_state(
+        &self,
+        _athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
+        Ok(Some(zwift_proto::PlayerState {
+            world: Some(1),
+            ..Default::default()
+        }))
+    }
 }
 
 impl AuthLogin for StubAuth {
@@ -161,6 +189,16 @@ impl AuthLogin for StubAuth {
 
     async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
         Ok(12345)
+    }
+
+    async fn get_player_state(
+        &self,
+        _athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
+        Ok(Some(zwift_proto::PlayerState {
+            world: Some(1),
+            ..Default::default()
+        }))
     }
 }
 
