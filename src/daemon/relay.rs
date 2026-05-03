@@ -784,13 +784,11 @@ impl RelayRuntime {
             Ok(this) => Ok(this),
             Err(e) => {
                 if let Some(writer) = preopen_writer {
-                    let dropped_count = writer.dropped_count();
+                    // Drain the writer so the file is left readable.
+                    // The writer task emits `relay.capture.writer.closed`
+                    // (STEP-12.12 §3b) on its own as it shuts down — no
+                    // need for a duplicate daemon-side log line.
                     let _ = writer.flush_and_close().await;
-                    tracing::info!(
-                        target: "ranchero::relay",
-                        dropped_count,
-                        "relay.capture.closed",
-                    );
                 }
                 Err(e)
             }
@@ -801,8 +799,8 @@ impl RelayRuntime {
     /// pre-opened by `validate_startup`. Routes through `start_all_inner`
     /// with all production factories, emitting the full lifecycle event
     /// sequence. Emits `relay.capture.opened` on success and, on the error
-    /// path, flushes the writer and emits `relay.capture.closed` before
-    /// propagating.
+    /// path, flushes the writer (which causes the writer task itself to
+    /// emit `relay.capture.writer.closed`) before propagating.
     pub async fn start_with_writer(
         cfg: &ResolvedConfig,
         capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
@@ -836,13 +834,10 @@ impl RelayRuntime {
             Ok(this) => Ok(this),
             Err(e) => {
                 if let Some(writer) = capture_writer {
-                    let dropped_count = writer.dropped_count();
+                    // The writer task emits `relay.capture.writer.closed`
+                    // on its own when `flush_and_close` drains the queue
+                    // (STEP-12.12 §3b); no duplicate daemon-side line.
                     let _ = writer.flush_and_close().await;
-                    tracing::info!(
-                        target: "ranchero::relay",
-                        dropped_count,
-                        "relay.capture.closed",
-                    );
                 }
                 Err(e)
             }
@@ -914,8 +909,9 @@ impl RelayRuntime {
             };
         // If `start_inner` returns an error after the capture writer
         // was opened, flush and close it before propagating the
-        // error so the file is left in a readable state and a
-        // matching `relay.capture.closed` record is emitted.
+        // error so the file is left in a readable state. The writer
+        // task emits `relay.capture.writer.closed` on its own as
+        // part of its shutdown rollup (STEP-12.12 §3b).
         match Self::start_inner(
             cfg,
             capture_writer.clone(),
@@ -929,13 +925,10 @@ impl RelayRuntime {
             Ok(this) => Ok(this),
             Err(e) => {
                 if let Some(writer) = capture_writer {
-                    let dropped_count = writer.dropped_count();
+                    // The writer task emits `relay.capture.writer.closed`
+                    // on its own when `flush_and_close` drains the queue
+                    // (STEP-12.12 §3b); no duplicate daemon-side line.
                     let _ = writer.flush_and_close().await;
-                    tracing::info!(
-                        target: "ranchero::relay",
-                        dropped_count,
-                        "relay.capture.closed",
-                    );
                 }
                 Err(e)
             }
@@ -1844,14 +1837,14 @@ where
             _ = shutdown.notified() => {
                 tracing::info!(target: "ranchero::relay", "relay.tcp.shutdown");
                 channel.shutdown_and_wait().await;
-                if let Some(writer) = capture_writer.as_ref() {
-                    let dropped_count = writer.dropped_count();
-                    if let Err(e) = writer.flush_and_close().await {
-                        tracing::warn!(target: "ranchero::relay", error = %e, "capture flush failed");
-                        return Err(RelayRuntimeError::CaptureIo(e));
-                    }
-                    tracing::info!(target: "ranchero::relay", dropped_count, "relay.capture.closed");
+                if let Some(writer) = capture_writer.as_ref()
+                    && let Err(e) = writer.flush_and_close().await
+                {
+                    tracing::warn!(target: "ranchero::relay", error = %e, "capture flush failed");
+                    return Err(RelayRuntimeError::CaptureIo(e));
                 }
+                // The writer task emits `relay.capture.writer.closed`
+                // (STEP-12.12 §3b) with its own totals as it drains.
                 return Ok(());
             }
             event = events_rx.recv() => {

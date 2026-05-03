@@ -554,7 +554,7 @@ fn daemon_logs_relay_capture_opened_in_background() {
 /// The orchestrator must drive the capture writer through a clean
 /// open-then-close lifecycle. Today the orchestrator is never
 /// constructed, so neither `relay.capture.opened` nor
-/// `relay.capture.closed` appears in the log file.
+/// `relay.capture.writer.closed` appears in the log file.
 ///
 /// With the bogus credentials supplied by this test, the auth call
 /// is expected to fail. The capture writer is opened before auth
@@ -565,6 +565,12 @@ fn daemon_logs_relay_capture_opened_in_background() {
 /// (criterion #4 in STEP-12.5) additionally produces
 /// `relay.tcp.shutdown`, but that record requires real auth
 /// success and is out of scope for this test.
+///
+/// STEP-12.13 §1b: the daemon used to emit `relay.capture.closed
+/// dropped_count=…` in addition to the writer task's own rollup;
+/// that legacy line was deleted, so this test now asserts on the
+/// canonical `relay.capture.writer.closed` event from the writer
+/// task itself.
 #[test]
 fn daemon_drives_capture_open_close_lifecycle() {
     let h = DaemonHarness::new();
@@ -581,7 +587,7 @@ fn daemon_drives_capture_open_close_lifecycle() {
     // the orchestrator must close the capture writer before propagating
     // the error. The daemon then exits — no stop command is needed.
     assert!(
-        h.wait_for_log_match("relay.capture.closed", CAPTURE_APPEAR_TIMEOUT),
+        h.wait_for_log_match("relay.capture.writer.closed", CAPTURE_APPEAR_TIMEOUT),
         "orchestrator opened capture but never closed it"
     );
 
@@ -591,8 +597,8 @@ fn daemon_drives_capture_open_close_lifecycle() {
         "expected `relay.capture.opened` in log; got:\n{log}"
     );
     assert!(
-        log.contains("relay.capture.closed"),
-        "expected `relay.capture.closed` in log; got:\n{log}"
+        log.contains("relay.capture.writer.closed"),
+        "expected `relay.capture.writer.closed` in log; got:\n{log}"
     );
 }
 
@@ -748,8 +754,11 @@ fn workflow_stop_leaves_capture_file_readable() {
     // Wait for the capture writer to be flushed and closed. This
     // happens when auth fails and the error path in the orchestrator
     // runs cleanup. The daemon then exits — no stop command is needed.
+    // STEP-12.13 §1b: the canonical close-rollup is the writer task's
+    // own `relay.capture.writer.closed`, not the deleted daemon-side
+    // `relay.capture.closed` line.
     assert!(
-        h.wait_for_log_match("relay.capture.closed", CAPTURE_APPEAR_TIMEOUT),
+        h.wait_for_log_match("relay.capture.writer.closed", CAPTURE_APPEAR_TIMEOUT),
         "orchestrator never closed the capture writer"
     );
 

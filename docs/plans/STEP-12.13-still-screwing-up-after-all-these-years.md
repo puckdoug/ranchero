@@ -21,7 +21,7 @@ that makes them pass.
 - [x] **1a** — Tests for D1: `relay.capture.writer.closed` fires
   exactly once per shutdown; the bare `relay.capture.closed` event
   no longer appears in the daemon log.
-- [ ] **1b** — Implementation for D1: delete the obsolete
+- [x] **1b** — Implementation for D1: delete the obsolete
   `relay.capture.closed` emission from `recv_loop`'s shutdown
   branch.
 - [ ] **2a** — Tests for D2: `start_with_all_deps_and_writer` with
