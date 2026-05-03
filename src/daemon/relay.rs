@@ -13,10 +13,68 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+
+/// Build a [`zwift_relay::capture::SessionManifest`] from a live
+/// [`zwift_relay::RelaySession`] plus the channel `conn_id`. Called
+/// from `start_all_inner` and from the supervisor-event handler so a
+/// `--capture` reader can recover the AES key + IV state needed to
+/// decrypt the frames that follow.
+fn manifest_from_session(
+    session: &zwift_relay::RelaySession,
+    conn_id: u32,
+) -> zwift_relay::capture::SessionManifest {
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let remaining = session
+        .expires_at
+        .saturating_duration_since(tokio::time::Instant::now());
+    let expires_at_unix_ns = (now_unix + remaining).as_nanos() as u64;
+    zwift_relay::capture::SessionManifest {
+        aes_key: session.aes_key,
+        // DeviceType::Relay is 1; the IV's per-direction channel byte
+        // varies by transport so we leave channel_type as a sentinel
+        // 0 ("unspecified") and let the replay tool derive the right
+        // value from direction + transport on each frame.
+        device_type: 1,
+        channel_type: 0,
+        send_iv_seqno_tcp: 0,
+        recv_iv_seqno_tcp: 0,
+        send_iv_seqno_udp: 0,
+        recv_iv_seqno_udp: 0,
+        relay_id: session.relay_id,
+        conn_id,
+        expires_at_unix_ns,
+    }
+}
+
+/// Emit a `relay.state.change` info event and broadcast the matching
+/// `GameEvent::StateChange`. Tracks `prev_state` so the event carries
+/// both the previous and new discriminant names.
+fn emit_state_change(
+    game_events_tx: &tokio::sync::broadcast::Sender<GameEvent>,
+    prev_state: &mut Option<RuntimeState>,
+    new_state: RuntimeState,
+) {
+    let from = match prev_state.as_ref() {
+        Some(s) => format!("{s:?}"),
+        None => "None".to_string(),
+    };
+    let to = format!("{new_state:?}");
+    tracing::info!(
+        target: "ranchero::relay",
+        from = %from,
+        to = %to,
+        "relay.state.change",
+    );
+    let _ = game_events_tx.send(GameEvent::StateChange(new_state.clone()));
+    *prev_state = Some(new_state);
+}
 
 use crate::config::ResolvedConfig;
 
@@ -369,13 +427,36 @@ impl<T: HeartbeatSink> HeartbeatScheduler<T> {
     pub async fn run(&self) {
         let mut ticker = tokio::time::interval(self.interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let interval_ms = self.interval.as_millis() as u64;
         // The first tick fires immediately; advance past it so the
         // first heartbeat lands one interval after start, matching
         // the "1 Hz" expectation more naturally.
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            let _ = self.send_one().await;
+            match self.send_one().await {
+                Ok(()) => {
+                    tracing::debug!(
+                        target: "ranchero::relay",
+                        interval_ms,
+                        send_ok = true,
+                        "relay.heartbeat.tick",
+                    );
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        target: "ranchero::relay",
+                        interval_ms,
+                        send_ok = false,
+                        "relay.heartbeat.tick",
+                    );
+                    tracing::warn!(
+                        target: "ranchero::relay",
+                        error = %e,
+                        "relay.heartbeat.send_failed",
+                    );
+                }
+            }
         }
     }
 }
@@ -1038,19 +1119,35 @@ impl RelayRuntime {
             watchdog_timeout: zwift_relay::CHANNEL_TIMEOUT,
             capture: capture_writer.clone(),
         };
+        // Stash the canonical conn_id + AES key for the per-session
+        // manifest; the supervisor-event handler reuses both when a
+        // refresh / re-login lands. The TCP `conn_id` is u16 on the
+        // wire but the capture-format manifest field is u32, so widen
+        // once here and reuse the widened value.
+        let session_conn_id: u32 = tcp_config.conn_id.into();
+        let session_aes_key = session.aes_key;
+
+        // Write the per-session manifest before any frame records so a
+        // `--capture` reader sees `Manifest -> Frame -> Frame -> …`
+        // (STEP-12.12 §6b).
+        if let Some(writer) = capture_writer.as_ref() {
+            writer.record_session_manifest(manifest_from_session(&session, session_conn_id));
+        }
+
         let (channel, mut events_rx) =
             zwift_relay::TcpChannel::establish(transport, &session, tcp_config.clone())
                 .await
                 .map_err(RelayRuntimeError::TcpChannel)?;
 
-        let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::Authenticating));
-        let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::SessionLoggedIn));
+        let mut prev_state: Option<RuntimeState> = None;
+        emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::Authenticating);
+        emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::SessionLoggedIn);
 
         let established_deadline = std::time::Duration::from_secs(5);
         match tokio::time::timeout(established_deadline, events_rx.recv()).await {
             Ok(Ok(zwift_relay::TcpChannelEvent::Established)) => {
                 tracing::info!(target: "ranchero::relay", addr = %addr, "relay.tcp.established");
-                let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::TcpEstablished));
+                emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::TcpEstablished);
             }
             Ok(Ok(other)) => {
                 return Err(RelayRuntimeError::TcpChannel(
@@ -1115,7 +1212,7 @@ impl RelayRuntime {
             latency_ms = udp_latency_ms,
             "relay.udp.established",
         );
-        let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::UdpEstablished));
+        emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::UdpEstablished);
 
         // 10. Spawn the 1 Hz heartbeat scheduler. (Defect 5)
         let udp_channel = Arc::new(udp_channel);
@@ -1137,21 +1234,54 @@ impl RelayRuntime {
         // 11. Subscribe to session-supervisor events. (Defect 7)
         let supervisor_event_abort = {
             let mut rx = supervisor_events;
+            let writer_for_supervisor = capture_writer.clone();
             let handle = tokio::spawn(async move {
                 loop {
                     match rx.recv().await {
-                        Ok(zwift_relay::SessionEvent::LoggedIn(_)) => {
+                        Ok(zwift_relay::SessionEvent::LoggedIn(new_session)) => {
                             tracing::info!(
                                 target: "ranchero::relay",
                                 "relay.session.logged_in",
                             );
+                            // Re-login rotates the AES key; persist the
+                            // new manifest so the capture stays decryptable.
+                            if let Some(writer) = writer_for_supervisor.as_ref() {
+                                writer.record_session_manifest(
+                                    manifest_from_session(&new_session, session_conn_id),
+                                );
+                            }
                         }
-                        Ok(zwift_relay::SessionEvent::Refreshed { relay_id, .. }) => {
+                        Ok(zwift_relay::SessionEvent::Refreshed { relay_id, new_expires_at }) => {
                             tracing::info!(
                                 target: "ranchero::relay",
                                 relay_id,
                                 "relay.session.refreshed",
                             );
+                            // Refresh keeps the AES key but extends the
+                            // expiration; persist a fresh manifest so the
+                            // reader sees the current relay_id and ttl.
+                            if let Some(writer) = writer_for_supervisor.as_ref() {
+                                let now_unix = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap_or_default();
+                                let remaining = new_expires_at
+                                    .saturating_duration_since(tokio::time::Instant::now());
+                                writer.record_session_manifest(
+                                    zwift_relay::capture::SessionManifest {
+                                        aes_key: session_aes_key,
+                                        device_type: 1,
+                                        channel_type: 0,
+                                        send_iv_seqno_tcp: 0,
+                                        recv_iv_seqno_tcp: 0,
+                                        send_iv_seqno_udp: 0,
+                                        recv_iv_seqno_udp: 0,
+                                        relay_id,
+                                        conn_id: session_conn_id,
+                                        expires_at_unix_ns: (now_unix + remaining)
+                                            .as_nanos() as u64,
+                                    },
+                                );
+                            }
                         }
                         Ok(zwift_relay::SessionEvent::RefreshFailed(error)) => {
                             tracing::warn!(
@@ -1397,6 +1527,14 @@ impl RelayRuntime {
     #[cfg(test)]
     pub fn inject_udp_event(&self, event: zwift_relay::ChannelEvent) {
         let _ = self.udp_events_tx.send(event);
+    }
+
+    /// Inject a synthetic TCP event into the recv-loop's broadcast
+    /// stream. Used by integration tests to exercise the
+    /// `TcpChannelEvent::Inbound` arm without driving a real TCP
+    /// channel through the kernel.
+    pub fn inject_tcp_event(&self, event: zwift_relay::TcpChannelEvent) {
+        let _ = self.events_tx.send(event);
     }
 
     /// Apply a `udpConfigVOD`-style pool update and recompute the
@@ -1722,11 +1860,21 @@ where
                         // Already logged at start.
                     }
                     Ok(zwift_relay::TcpChannelEvent::Inbound(stc)) => {
+                        let has_state_change = !stc.states.is_empty();
+                        let has_world_info = !stc.updates.is_empty();
+                        let message_kind = match (has_state_change, has_world_info) {
+                            (true, true) => "PlayerStatesAndUpdates",
+                            (true, false) => "PlayerStates",
+                            (false, true) => "WorldUpdates",
+                            (false, false) => "Empty",
+                        };
                         tracing::debug!(
                             target: "ranchero::relay",
-                            seqno = ?stc.seqno,
-                            world_time = ?stc.world_time,
-                            "relay.tcp.inbound",
+                            message_kind,
+                            seqno = stc.seqno.unwrap_or(0),
+                            has_state_change,
+                            has_world_info,
+                            "relay.tcp.message.recv",
                         );
                         for state in &stc.states {
                             if let Some(athlete_id) = state.id {
@@ -1766,7 +1914,9 @@ where
                         tracing::info!(target: "ranchero::relay", latency_ms, "relay.udp.established");
                     }
                     Ok(zwift_relay::ChannelEvent::Inbound(_stc)) => {
-                        tracing::debug!(target: "ranchero::relay", "relay.udp.inbound");
+                        // The per-message UDP recv tracing is owned by
+                        // `zwift_relay::udp::recv_loop` (`relay.udp.message.recv`).
+                        // The orchestrator-side branch is intentionally silent.
                     }
                     Ok(zwift_relay::ChannelEvent::Timeout) => {
                         tracing::info!(target: "ranchero::relay", "relay.udp.timeout");
@@ -2219,8 +2369,9 @@ mod tests {
         let _ = runtime.join().await;
 
         assert!(
-            logs_contain("relay.tcp.inbound"),
-            "expected a `relay.tcp.inbound` record after an Inbound event",
+            logs_contain("relay.tcp.message.recv"),
+            "expected a `relay.tcp.message.recv` record after an Inbound event \
+             (renamed from `relay.tcp.inbound` in STEP-12.12 §6b)",
         );
     }
 
@@ -2431,7 +2582,15 @@ mod tests {
 
     #[tokio::test]
     #[tracing_test::traced_test]
-    async fn udp_channel_subscriber_logs_inbound_at_debug() {
+    async fn udp_channel_subscriber_does_not_double_log_inbound() {
+        // STEP-12.12 §6b: the bare daemon-side `relay.udp.inbound` log
+        // line was removed because per-datagram UDP tracing is owned
+        // by `zwift_relay::udp::recv_loop` (which emits
+        // `relay.udp.message.recv` with decoded fields). When the
+        // daemon's broadcast channel forwards a synthetic
+        // `ChannelEvent::Inbound`, no orchestrator-side log line
+        // should appear — test guards against the duplicate landing
+        // back via a future cleanup that re-introduces it.
         let counter = CallCounter::new();
         let cfg = make_config(Some("rider@example.com"), Some("secret"));
         let auth = StubAuth::ok(counter.clone());
@@ -2450,8 +2609,10 @@ mod tests {
         let _ = runtime.join().await;
 
         assert!(
-            logs_contain("relay.udp.inbound"),
-            "expected a `relay.udp.inbound` record after a UDP Inbound event",
+            !logs_contain("relay.udp.inbound"),
+            "the bare daemon-side `relay.udp.inbound` line was deliberately \
+             removed in STEP-12.12 §6b; per-datagram UDP tracing now lives in \
+             `zwift_relay::udp::recv_loop` as `relay.udp.message.recv`",
         );
     }
 

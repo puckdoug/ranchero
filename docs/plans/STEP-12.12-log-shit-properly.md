@@ -90,7 +90,7 @@ logged_in` / `refreshed` / `refresh_failed` / `relogin_attempt` /
       `relay.tcp.message.recv`; `relay.state.change` info event on every
       `RuntimeState` transition; `relay.heartbeat.tick` debug events;
       `relay.heartbeat.send_failed` warn on tick failure.
-- [ ] **6b** — Daemon integration implementation: call
+- [x] **6b** — Daemon integration implementation: call
       `record_session_manifest` from `start_all_inner` and the
       supervisor-event handler; add the `Inbound` arm to `recv_loop`;
       add state-change tracing alongside every `GameEvent::StateChange`
