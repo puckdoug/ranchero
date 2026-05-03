@@ -37,11 +37,13 @@ that makes them pass.
   non-`cfg(test)` test seam, since `tests/` integration tests
   cannot reach `cfg(test)` items in the binary crate. Tracked
   inline; not a blocker for 3b.)
-- [ ] **3b** — Implementation for D3: introduce a small "wait for
+- [x] **3b** — Implementation for D3: introduce a small "wait for
   UDP server" step in `start_all_inner` that subscribes to the
-  TCP stream, applies the first `UdpConfigVod` (or `UdpConfig`) to
-  the pool router, and resolves the UDP target from there. Replace
-  the `&session.tcp_servers[0]` read.
+  TCP stream and resolves the UDP target from the first
+  `UdpConfigVod` / `UdpConfig` push. Replace the
+  `&session.tcp_servers[0]` read. Pool-router population from
+  mid-session pushes (plan step 6) and per-watched-athlete
+  routing (plan step 4) are deferred to a follow-up.
 
 ## Defect 1 — Duplicate capture-close events on shutdown
 

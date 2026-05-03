@@ -53,6 +53,39 @@ fn manifest_from_session(
     }
 }
 
+/// Pick the initial UDP target from a `udp_config` push. Returns the
+/// first entry whose `ip` is set and whose `(ip, port)` parses as a
+/// valid `SocketAddr`. Falls back to [`zwift_relay::UDP_PORT_SECURE`]
+/// when the entry has no port.
+///
+/// STEP-12.13 §D3: this is intentionally a "first valid" pick rather
+/// than a pool-router lookup. The watched-athlete state is empty at
+/// initial-connect time (no `ServerToClient.states` have arrived
+/// yet), so per-realm/per-course routing has nothing to discriminate
+/// on. Mid-session pool updates and routing live in a follow-up
+/// step.
+fn pick_initial_udp_target(
+    addrs: &[zwift_proto::RelayAddress],
+) -> Option<std::net::SocketAddr> {
+    for a in addrs {
+        let ip = match a.ip.as_deref() {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        let port: u16 = match a.port {
+            Some(p) if p > 0 => match u16::try_from(p) {
+                Ok(p) => p,
+                Err(_) => continue,
+            },
+            _ => zwift_relay::UDP_PORT_SECURE,
+        };
+        if let Ok(addr) = format!("{ip}:{port}").parse() {
+            return Some(addr);
+        }
+    }
+    None
+}
+
 /// Emit a `relay.state.change` info event and broadcast the matching
 /// `GameEvent::StateChange`. Tracks `prev_state` so the event carries
 /// both the previous and new discriminant names.
@@ -124,6 +157,9 @@ pub enum RelayRuntimeError {
 
     #[error("TCP channel did not emit Established within {0:?}")]
     EstablishedTimeout(std::time::Duration),
+
+    #[error("no udp_config received from TCP stream within {0:?}")]
+    NoUdpConfig(std::time::Duration),
 }
 
 impl From<zwift_api::Error> for RelayRuntimeError {
@@ -1175,13 +1211,54 @@ impl RelayRuntime {
             .await?;
         tracing::info!(target: "ranchero::relay", "relay.tcp.hello.sent");
 
-        // 9. Connect and establish the UDP channel. (Defect 4)
-        let udp_server = &session.tcp_servers[0];
-        let udp_addr_str =
-            format!("{}:{}", udp_server.ip, zwift_relay::UDP_PORT_SECURE);
-        let udp_addr: std::net::SocketAddr = udp_addr_str
-            .parse()
-            .map_err(|_| RelayRuntimeError::BadTcpAddress(udp_addr_str))?;
+        // 8.5. Wait for the first ServerToClient carrying a udp_config /
+        //      udp_config_vod*. Zwift announces UDP servers separately
+        //      from TCP servers — `session.tcp_servers` is for TCP only,
+        //      and the UDP target arrives over the TCP stream after the
+        //      hello. See docs/plans/STEP-12.13-still-screwing-up-after-
+        //      all-these-years.md §D3 for the full rationale.
+        let udp_config_deadline = std::time::Duration::from_secs(5);
+        let udp_addr = {
+            let mut picked: Option<std::net::SocketAddr> = None;
+            let deadline = tokio::time::Instant::now() + udp_config_deadline;
+            while picked.is_none() {
+                let remaining = deadline
+                    .saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
+                }
+                match tokio::time::timeout(remaining, events_rx.recv()).await {
+                    Ok(Ok(zwift_relay::TcpChannelEvent::Inbound(stc))) => {
+                        if let Some(addrs) = zwift_relay::extract_udp_servers(&stc) {
+                            tracing::info!(
+                                target: "ranchero::relay",
+                                count = addrs.len(),
+                                "relay.udp.config_received",
+                            );
+                            picked = pick_initial_udp_target(&addrs);
+                            if picked.is_none() {
+                                tracing::warn!(
+                                    target: "ranchero::relay",
+                                    "relay.udp.config_no_valid_target",
+                                );
+                            }
+                        }
+                    }
+                    Ok(Ok(_)) => continue,
+                    Ok(Err(_)) | Err(_) => {
+                        return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
+                    }
+                }
+            }
+            picked.expect("loop only exits when picked is Some")
+        };
+
+        // 9. Connect and establish the UDP channel.
+        tracing::info!(
+            target: "ranchero::relay",
+            addr = %udp_addr,
+            "relay.udp.connecting",
+        );
         let udp_transport = udp_factory
             .connect(udp_addr)
             .await

@@ -47,6 +47,67 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
     }
 }
 
+// --- helpers for synthesizing inbound TCP frames -----------------
+//
+// The two helpers below are used by both the stub TCP factories
+// (`StubTcpFactory`, `RecordingTcpFactory`) and by the per-test
+// `ScriptedTcpFactory` further down. Lifted up here so the factory
+// definitions can call them without forward-reference juggling.
+
+use prost::Message as _;
+
+/// Build the framed wire bytes of a `ServerToClient` inbound packet
+/// suitable for injection through a stub-transport `read_chunk`
+/// return. The header pins `conn_id` and `seqno` so the channel's
+/// recv-side IV state matches the encryption side regardless of the
+/// random `next_conn_id()` the daemon picked. AES key matches the
+/// fixture session (`[0u8; 16]`).
+fn build_inbound_servertoclient_frame(
+    stc: &zwift_proto::ServerToClient,
+    conn_id: u16,
+    iv_seqno: u32,
+) -> Vec<u8> {
+    let proto_bytes = stc.encode_to_vec();
+    let header = zwift_relay::Header {
+        flags: zwift_relay::HeaderFlags::CONN_ID | zwift_relay::HeaderFlags::SEQNO,
+        relay_id: None,
+        conn_id: Some(conn_id),
+        seqno: Some(iv_seqno),
+    };
+    let header_bytes = header.encode();
+    let iv = zwift_relay::RelayIv {
+        device: zwift_relay::DeviceType::Relay,
+        channel: zwift_relay::ChannelType::TcpServer,
+        conn_id,
+        seqno: iv_seqno,
+    };
+    let cipher = zwift_relay::encrypt(&[0u8; 16], &iv.to_bytes(), &header_bytes, &proto_bytes);
+    zwift_relay::frame_tcp(&header_bytes, &cipher)
+}
+
+/// Default `ServerToClient` udp_config push delivered by the stub
+/// TCP transports (`NoopTcpTransport`, `RecordingTcpTransport`) so
+/// STEP-12.13 §D3's wait-for-udp_config step in `start_all_inner`
+/// resolves. Points the daemon at `127.0.0.1:3024`, which matches
+/// what the previous `tcp_servers[0]`-based code would have used.
+fn default_udp_config_push() -> Vec<u8> {
+    let stc = zwift_proto::ServerToClient {
+        udp_config: Some(zwift_proto::UdpConfig {
+            relay_addresses: vec![zwift_proto::RelayAddress {
+                lb_realm: Some(0),
+                lb_course: Some(0),
+                ip: Some("127.0.0.1".to_string()),
+                port: Some(3024),
+                ra_f5: None,
+                ra_f6: None,
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    build_inbound_servertoclient_frame(&stc, 0, 0)
+}
+
 // --- local stub DI types ------------------------------------------
 
 struct StubAuth;
@@ -132,10 +193,25 @@ impl SessionLogin for StubSession {
 }
 
 /// A no-op TCP transport that lets the channel come up without
-/// going through the kernel. `write_all` records bytes for
-/// inspection but otherwise does nothing; `read_chunk` blocks
-/// until the test drops the runtime.
-struct NoopTcpTransport;
+/// going through the kernel. `write_all` is a no-op; `read_chunk`
+/// drains an optional pre-baked frame then blocks forever.
+///
+/// STEP-12.13 §D3: `start_all_inner` now waits for a `udp_config`
+/// push from the TCP `ServerToClient` stream before bringing UDP
+/// up. The default `StubTcpFactory::new()` factory primes the
+/// transport with a synthetic push pointing UDP at `127.0.0.1:3024`
+/// so existing tests continue to reach UDP-established without
+/// modification. Tests that need no-push semantics (e.g. the D3
+/// "wait for udp_config" test) use [`StubTcpFactory::silent`].
+struct NoopTcpTransport {
+    pending: StdMutex<Option<Vec<u8>>>,
+}
+
+impl NoopTcpTransport {
+    fn with_pending(frame: Option<Vec<u8>>) -> Self {
+        Self { pending: StdMutex::new(frame) }
+    }
+}
 
 impl zwift_relay::TcpTransport for NoopTcpTransport {
     async fn write_all(&self, _bytes: &[u8]) -> std::io::Result<()> {
@@ -143,6 +219,9 @@ impl zwift_relay::TcpTransport for NoopTcpTransport {
     }
 
     async fn read_chunk(&self) -> std::io::Result<Vec<u8>> {
+        if let Some(frame) = self.pending.lock().unwrap().take() {
+            return Ok(frame);
+        }
         std::future::pending::<()>().await;
         unreachable!()
     }
@@ -155,7 +234,20 @@ struct StubTcpFactory {
 impl StubTcpFactory {
     fn new() -> Self {
         Self {
-            transport: StdMutex::new(Some(NoopTcpTransport)),
+            transport: StdMutex::new(Some(NoopTcpTransport::with_pending(Some(
+                default_udp_config_push(),
+            )))),
+        }
+    }
+
+    /// Variant whose transport never pushes anything — `read_chunk`
+    /// blocks forever from the first call. Used by D3's
+    /// `start_all_inner_waits_for_udp_config_before_udp_connect`
+    /// to verify the daemon doesn't silently fall back to
+    /// `tcp_servers[0]` when no udp_config arrives.
+    fn silent() -> Self {
+        Self {
+            transport: StdMutex::new(Some(NoopTcpTransport::with_pending(None))),
         }
     }
 }
@@ -212,7 +304,12 @@ async fn runtime_writes_capture_file_for_inbound_packets() {
         Arc::clone(&writer),
         StubAuth,
         StubSession::new(fixture_session()),
-        StubTcpFactory::new(),
+        // Silent variant — this test uses the older `start_with_deps`
+        // path (which does NOT go through `start_all_inner`'s STEP-12.13
+        // wait-for-udp_config step), so the default udp_config push
+        // would just be extra bytes in the capture file that bias the
+        // record count assertion below.
+        StubTcpFactory::silent(),
     )
     .await
     .expect("start_with_deps_and_writer must succeed");
@@ -424,9 +521,13 @@ impl UdpTransportFactory for RecordingUdpFactory {
 
 /// A recording TCP transport. Every `write_all` call appends the
 /// supplied bytes to a shared list so tests can verify outbound
-/// writes. `read_chunk` blocks forever.
+/// writes. `read_chunk` drains an optional pre-baked frame
+/// (defaults to a synthetic `udp_config` push so STEP-12.13 §D3's
+/// wait-for-udp_config step in `start_all_inner` resolves), then
+/// blocks forever.
 struct RecordingTcpTransport {
     written: Arc<StdMutex<Vec<Vec<u8>>>>,
+    pending: StdMutex<Option<Vec<u8>>>,
 }
 
 impl zwift_relay::TcpTransport for RecordingTcpTransport {
@@ -436,6 +537,9 @@ impl zwift_relay::TcpTransport for RecordingTcpTransport {
     }
 
     async fn read_chunk(&self) -> std::io::Result<Vec<u8>> {
+        if let Some(frame) = self.pending.lock().unwrap().take() {
+            return Ok(frame);
+        }
         std::future::pending::<()>().await;
         unreachable!()
     }
@@ -463,7 +567,12 @@ impl TcpTransportFactory for RecordingTcpFactory {
         _addr: std::net::SocketAddr,
     ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
         let written = Arc::clone(&self.written);
-        async move { Ok(RecordingTcpTransport { written }) }
+        async move {
+            Ok(RecordingTcpTransport {
+                written,
+                pending: StdMutex::new(Some(default_udp_config_push())),
+            })
+        }
     }
 }
 
@@ -827,7 +936,9 @@ impl TcpTransportFactory for AddrCapturingTcpFactory {
         addr: std::net::SocketAddr,
     ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
         *self.captured.lock().unwrap() = Some(addr);
-        async { Ok(NoopTcpTransport) }
+        async {
+            Ok(NoopTcpTransport::with_pending(Some(default_udp_config_push())))
+        }
     }
 }
 
@@ -1381,38 +1492,11 @@ async fn heartbeat_send_failure_emits_warn() {
 // covering "use the push" and "wait for the push (don't fall back)".
 // 3a.iii (per-watched-athlete pool selection) is deferred until
 // `observe_watched_player_state` has a non-cfg(test) seam.
+//
+// `build_inbound_servertoclient_frame` is defined near the top of this
+// file (used by both the default stub transports and the scripted
+// factory below).
 // ==========================================================================
-
-use prost::Message as _;
-
-/// Build the framed wire bytes of a ServerToClient inbound packet
-/// suitable for injection through a `ScriptedTcpTransport.read_chunk`
-/// return. The header pins `conn_id` and `seqno` so the channel's
-/// recv-side IV state matches the encryption side regardless of the
-/// random `next_conn_id()` the daemon picked. AES key matches the
-/// fixture session (`[0u8; 16]`).
-fn build_inbound_servertoclient_frame(
-    stc: &zwift_proto::ServerToClient,
-    conn_id: u16,
-    iv_seqno: u32,
-) -> Vec<u8> {
-    let proto_bytes = stc.encode_to_vec();
-    let header = zwift_relay::Header {
-        flags: zwift_relay::HeaderFlags::CONN_ID | zwift_relay::HeaderFlags::SEQNO,
-        relay_id: None,
-        conn_id: Some(conn_id),
-        seqno: Some(iv_seqno),
-    };
-    let header_bytes = header.encode();
-    let iv = zwift_relay::RelayIv {
-        device: zwift_relay::DeviceType::Relay,
-        channel: zwift_relay::ChannelType::TcpServer,
-        conn_id,
-        seqno: iv_seqno,
-    };
-    let cipher = zwift_relay::encrypt(&[0u8; 16], &iv.to_bytes(), &header_bytes, &proto_bytes);
-    zwift_relay::frame_tcp(&header_bytes, &cipher)
-}
 
 /// TCP transport whose first `read_chunk` returns a pre-baked frame
 /// (typically a `ServerToClient` carrying a `udp_config*`), then
@@ -1580,15 +1664,16 @@ async fn start_all_inner_waits_for_udp_config_before_udp_connect() {
     let cfg = make_config("monitor@example.com", "monitor-pass");
     let (udp_factory, captured) = AddrCapturingUdpFactory::new();
 
-    // Use the regular StubTcpFactory — its NoopTcpTransport blocks
-    // forever on read_chunk, so no ServerToClient ever arrives.
+    // Silent variant — the NoopTcpTransport never delivers any
+    // ServerToClient, so the daemon's wait-for-udp_config step
+    // never resolves.
     let task = tokio::spawn(async move {
         let _ = RelayRuntime::start_with_all_deps(
             &cfg,
             None,
             StubAuth,
             StubSupervisorFactory::new(fixture_session()),
-            StubTcpFactory::new(),
+            StubTcpFactory::silent(),
             udp_factory,
         )
         .await;

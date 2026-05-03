@@ -71,3 +71,52 @@ pub enum CodecError {
     #[error("plaintext envelope: bad version byte {got}")]
     BadVersion { got: u8 },
 }
+
+/// Extract the UDP relay-server list from a `ServerToClient` push,
+/// flattening across the three fields Zwift uses to announce them.
+///
+/// The TCP `ServerToClient` stream carries UDP server pools in three
+/// variants (proto field tags, in priority order):
+///
+/// 1. `udp_config_vod_1` — per-realm/per-course `RelayAddressesVod`
+///    pool list. Production Zwift uses this in the steady state.
+/// 2. `udp_config_vod_2` — same shape; second slot. Reserved /
+///    rarely populated.
+/// 3. `udp_config` — flat `RelayAddress` list (legacy / fallback).
+///
+/// Returns `Some(addrs)` when at least one variant is non-empty;
+/// `None` when the message carries no UDP server hints. The
+/// per-pool `(lb_realm, lb_course)` from `RelayAddressesVod` is
+/// dropped: each `RelayAddress` already carries its own
+/// `lb_realm` / `lb_course`, which is what the daemon's
+/// `UdpPoolRouter` keys on.
+pub fn extract_udp_servers(
+    stc: &zwift_proto::ServerToClient,
+) -> Option<Vec<zwift_proto::RelayAddress>> {
+    if let Some(vod) = &stc.udp_config_vod_1 {
+        let addrs: Vec<_> = vod
+            .relay_addresses_vod
+            .iter()
+            .flat_map(|p| p.relay_addresses.iter().cloned())
+            .collect();
+        if !addrs.is_empty() {
+            return Some(addrs);
+        }
+    }
+    if let Some(vod) = &stc.udp_config_vod_2 {
+        let addrs: Vec<_> = vod
+            .relay_addresses_vod
+            .iter()
+            .flat_map(|p| p.relay_addresses.iter().cloned())
+            .collect();
+        if !addrs.is_empty() {
+            return Some(addrs);
+        }
+    }
+    if let Some(cfg) = &stc.udp_config
+        && !cfg.relay_addresses.is_empty()
+    {
+        return Some(cfg.relay_addresses.clone());
+    }
+    None
+}
