@@ -83,7 +83,7 @@ logged_in` / `refreshed` / `refresh_failed` / `relogin_attempt` /
 - [x] **5b** — Auth / HTTP implementation: inject a capture-sink
       dependency into `ZwiftAuth`, route request and response bodies
       through it, emit the eight tracing events.
-- [ ] **6a** — Daemon integration tests (`ranchero::daemon::relay`):
+- [x] **6a** — Daemon integration tests (`ranchero::daemon::relay`):
       `start_all_inner` writes a session-manifest record after relay-
       session login; supervisor refresh / re-login writes a fresh
       manifest; `recv_loop` handles `TcpChannelEvent::Inbound` and emits

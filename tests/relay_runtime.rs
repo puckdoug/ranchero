@@ -1006,3 +1006,306 @@ async fn start_with_all_deps_and_writer_emits_full_lifecycle_event_sequence() {
          relay.heartbeat.started after UDP is ready; not found in tracing log",
     );
 }
+
+// ==========================================================================
+// STEP-12.12 Phase 6a — daemon-level wiring of capture, recv_loop, state,
+// and heartbeat tracing. Each test pins one strand of behaviour the
+// daemon must own (since none of the per-crate phases own it).
+// ==========================================================================
+
+use ranchero::daemon::relay::{HeartbeatScheduler, HeartbeatSink};
+use zwift_relay::WorldTimer;
+
+#[tokio::test]
+async fn start_all_inner_writes_session_manifest_after_session_login() {
+    // Drive the full DI pipeline with a capture writer attached. The
+    // first non-header item in the resulting file must be a Manifest
+    // record carrying the AES key and relay_id from the fixture
+    // session, proving start_all_inner calls record_session_manifest
+    // immediately after login.
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+        .await
+        .expect("open writer");
+    let writer = Arc::new(writer);
+
+    let session = fixture_session();
+    let expected_aes_key = session.aes_key;
+    let expected_relay_id = session.relay_id;
+
+    let runtime = RelayRuntime::start_with_all_deps_and_writer(
+        &cfg,
+        Arc::clone(&writer),
+        StubAuth,
+        StubSupervisorFactory::new(session),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps_and_writer must succeed");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+    drop(writer);
+
+    let mut reader = zwift_relay::capture::CaptureReader::open(path.path())
+        .expect("open reader");
+    let first_item = reader
+        .next_item()
+        .expect("at least one item")
+        .expect("decode ok");
+    match first_item {
+        zwift_relay::capture::CaptureItem::Manifest(m) => {
+            assert_eq!(
+                m.aes_key, expected_aes_key,
+                "STEP-12.12 Phase 6a: manifest must carry the live session AES key",
+            );
+            assert_eq!(
+                m.relay_id, expected_relay_id,
+                "STEP-12.12 Phase 6a: manifest must carry the live session relay_id",
+            );
+        }
+        other => panic!(
+            "STEP-12.12 Phase 6a: first capture item must be a Manifest record \
+             (start_all_inner must call record_session_manifest after login); \
+             got {other:?}",
+        ),
+    }
+}
+
+#[tokio::test]
+async fn supervisor_refresh_writes_fresh_manifest_when_key_rotates() {
+    // Drive the runtime with a capture writer and an injectable
+    // supervisor event channel. After the initial manifest is written,
+    // broadcast a Refreshed event with new key material; the
+    // supervisor-event subscriber must call record_session_manifest
+    // again, producing a second Manifest item in the file.
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+        .await
+        .expect("open writer");
+    let writer = Arc::new(writer);
+
+    let (supervisor_events_tx, _) = tokio::sync::broadcast::channel(16);
+    let factory = StubSupervisorFactory::with_events_tx(
+        fixture_session(),
+        supervisor_events_tx.clone(),
+    );
+
+    let runtime = RelayRuntime::start_with_all_deps_and_writer(
+        &cfg,
+        Arc::clone(&writer),
+        StubAuth,
+        factory,
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps_and_writer must succeed");
+
+    // Kick a supervisor refresh so the daemon emits a fresh manifest.
+    let _ = supervisor_events_tx.send(zwift_relay::SessionEvent::Refreshed {
+        relay_id: 999,
+        new_expires_at: tokio::time::Instant::now()
+            + std::time::Duration::from_secs(7200),
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+    drop(writer);
+
+    let reader = zwift_relay::capture::CaptureReader::open(path.path())
+        .expect("open reader");
+    let manifest_count = reader
+        .filter_map(|_| {
+            // Iterator::next yields only Frames; we need next_item.
+            None::<()>
+        })
+        .count();
+    let _ = manifest_count;
+    let mut reader = zwift_relay::capture::CaptureReader::open(path.path())
+        .expect("open reader (2)");
+    let mut manifest_count = 0;
+    while let Some(item) = reader.next_item() {
+        if matches!(item.expect("decode"), zwift_relay::capture::CaptureItem::Manifest(_)) {
+            manifest_count += 1;
+        }
+    }
+    assert!(
+        manifest_count >= 2,
+        "STEP-12.12 Phase 6a: a Refreshed supervisor event must trigger a \
+         fresh record_session_manifest call (expected >= 2 manifest records, \
+         got {manifest_count})",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn recv_loop_handles_tcp_inbound_and_emits_relay_tcp_message_recv() {
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+        .await
+        .expect("open writer");
+    let writer = Arc::new(writer);
+
+    let runtime = RelayRuntime::start_with_all_deps_and_writer(
+        &cfg,
+        Arc::clone(&writer),
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    let stc = zwift_proto::ServerToClient {
+        seqno: Some(7),
+        world_time: Some(1_700_000),
+        ..Default::default()
+    };
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.message.recv",
+        ),
+        "STEP-12.12 Phase 6a: recv_loop must emit relay.tcp.message.recv at \
+         debug for every Inbound event (replacing the bare relay.tcp.inbound \
+         log line); not found in tracing log",
+    );
+    for field in ["message_kind=", "seqno=", "has_state_change=", "has_world_info="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 6a: relay.tcp.message.recv must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn state_change_emissions_track_runtime_state_transitions() {
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.state.change"),
+        "STEP-12.12 Phase 6a: relay.state.change must fire at info per \
+         RuntimeState transition; not found in tracing log",
+    );
+    for field in ["from=", "to="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 6a: relay.state.change must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+// --- HeartbeatSink stubs for the per-tick / failure tracing tests ---
+
+struct CountingHeartbeatSink {
+    count: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl HeartbeatSink for CountingHeartbeatSink {
+    async fn send(&self, _payload: zwift_proto::ClientToServer) -> std::io::Result<()> {
+        self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+struct FailingHeartbeatSink;
+
+impl HeartbeatSink for FailingHeartbeatSink {
+    async fn send(&self, _payload: zwift_proto::ClientToServer) -> std::io::Result<()> {
+        Err(std::io::Error::other("simulated heartbeat failure"))
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn heartbeat_tick_emits_debug_event_per_interval() {
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let sink = CountingHeartbeatSink { count: Arc::clone(&count) };
+    let scheduler = Arc::new(
+        HeartbeatScheduler::new(sink, WorldTimer::new(), 12345)
+            .with_interval(std::time::Duration::from_millis(30)),
+    );
+    let s2 = Arc::clone(&scheduler);
+    let handle = tokio::spawn(async move {
+        s2.run().await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    handle.abort();
+    let _ = handle.await;
+
+    assert!(
+        count.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+        "test setup must produce at least 2 heartbeats",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.heartbeat.tick"),
+        "STEP-12.12 Phase 6a: relay.heartbeat.tick must fire at debug per \
+         scheduler tick; not found in tracing log",
+    );
+    for field in ["interval_ms=", "send_ok="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.12 Phase 6a: relay.heartbeat.tick must carry field \
+             {field:?} — not present in any captured log line",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn heartbeat_send_failure_emits_warn() {
+    let scheduler = Arc::new(
+        HeartbeatScheduler::new(FailingHeartbeatSink, WorldTimer::new(), 12345)
+            .with_interval(std::time::Duration::from_millis(30)),
+    );
+    let s2 = Arc::clone(&scheduler);
+    let handle = tokio::spawn(async move {
+        s2.run().await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    handle.abort();
+    let _ = handle.await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.heartbeat.send_failed",
+        ),
+        "STEP-12.12 Phase 6a: relay.heartbeat.send_failed must fire at warn \
+         when the sink returns an error; not found in tracing log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "error="),
+        "STEP-12.12 Phase 6a: relay.heartbeat.send_failed must carry \
+         the underlying error message in an error= field",
+    );
+}
