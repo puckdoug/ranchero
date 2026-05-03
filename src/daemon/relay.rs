@@ -1189,6 +1189,11 @@ impl RelayRuntime {
         let udp_config = zwift_relay::UdpChannelConfig {
             athlete_id,
             conn_id: next_conn_id(),
+            // STEP-12.13 §2b — without this the writer is `None` on
+            // the UDP path (the factory's default config has no
+            // capture tap) and every UDP send/recv silently bypasses
+            // the capture file even when `--capture` is set.
+            capture: capture_writer.clone(),
             ..udp_factory.channel_config()
         };
         let world_timer = zwift_relay::WorldTimer::new();

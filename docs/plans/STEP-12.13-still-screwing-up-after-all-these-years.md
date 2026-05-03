@@ -27,7 +27,7 @@ that makes them pass.
 - [x] **2a** — Tests for D2: `start_with_all_deps_and_writer` with
   a recording UDP factory + writer produces at least one outbound
   UDP capture record in the file.
-- [ ] **2b** — Implementation for D2: thread `capture_writer.clone()`
+- [x] **2b** — Implementation for D2: thread `capture_writer.clone()`
   into the `UdpChannelConfig` literal in `start_all_inner`.
 - [ ] **3a** — Tests for D3: the daemon waits for the first
   `udp_config` push on the TCP `ServerToClient` stream before
