@@ -10,24 +10,29 @@
 //! currently hardcodes 0, causing IV reuse on any reconnection within the
 //! same process, which breaks AES-GCM.
 
-use ranchero::daemon::relay::next_conn_id;
+use ranchero::daemon::relay::{next_tcp_conn_id, next_udp_conn_id};
 
 // D13-a: each call advances the counter, producing a unique value per channel.
+// (STEP-12.14 §N2: split into separate TCP and UDP counters; verified here
+// against both.)
 #[test]
 fn conn_id_counter_increments_on_successive_calls() {
-    let a = next_conn_id();
-    let b = next_conn_id();
+    let a = next_tcp_conn_id();
+    let b = next_tcp_conn_id();
     assert_ne!(
         a, b,
         "conn_id must be unique per channel to prevent AES-GCM IV reuse; \
          successive calls must return different values",
     );
+    let c = next_udp_conn_id();
+    let d = next_udp_conn_id();
+    assert_ne!(c, d, "UDP conn_id counter must also increment");
 }
 
 // D13-b: the returned value fits within 16 bits (reference: modulo 0xffff).
 #[test]
 fn conn_id_fits_within_u16() {
-    let id = next_conn_id();
+    let id = next_tcp_conn_id();
     assert!(
         id <= 0xffff,
         "conn_id must not exceed 0xffff (reference: modulo 0xffff); got {id}",

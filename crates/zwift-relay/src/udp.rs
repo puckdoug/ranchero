@@ -308,8 +308,13 @@ impl<T: UdpTransport> UdpChannel<T> {
                         )?;
                         let stc = zwift_proto::ServerToClient::decode(plaintext.as_slice())?;
 
-                        if let Some(ack) = stc.seqno {
-                            // ack is i32; client's app_seqno is u32.
+                        // STEP-12.14 §N10 — `stc_f5` (proto tag 5) is
+                        // sauce's `ackSeqno` — "UDP ack to our previously
+                        // sent seqno" (`zwift.mjs:1351: syncStamps.get(
+                        // packet.ackSeqno)`). Tag 4 (`stc.seqno`) is the
+                        // SERVER's own outgoing seqno; matching against it
+                        // would coincidentally converge at best.
+                        if let Some(ack) = stc.stc_f5 {
                             let ack_u32 = ack as u32;
                             if let Some(sent_at) = send_times.remove(&ack_u32) {
                                 let local_now = clock.now();
@@ -617,7 +622,10 @@ async fn recv_loop<T: UdpTransport>(
                                         tracing::debug!(
                                             target: "ranchero::relay",
                                             world_time = stc.world_time.unwrap_or(0),
-                                            player_count = stc.player_states.len(),
+                                            // STEP-12.14 §N11 — tag 8 (`states`) is
+                                            // sauce's `playerStates`; tag 28
+                                            // (`player_states`) is `blockPlayerStates`.
+                                            player_count = stc.states.len(),
                                             payload_size = plaintext.len(),
                                             "relay.udp.message.recv",
                                         );

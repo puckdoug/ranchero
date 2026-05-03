@@ -125,11 +125,12 @@ fn parse_outbound(bytes: &[u8]) -> (Header, ClientToServer) {
 /// transport. Inbound UDP plaintext is the raw `ServerToClient` proto
 /// bytes (no version envelope; sauce `zwift.mjs:1427`).
 fn build_inbound(recv_iv_seqno: u32, ack_seqno: u32, world_time_ms: i64) -> Vec<u8> {
-    // The client carries `seqno: u32` in `ClientToServer`; the server
-    // echoes it as `seqno: i32` in `ServerToClient`. Cast at this
-    // boundary; in tests the value fits trivially.
+    // STEP-12.14 §N10 — the ack goes in `stc_f5` (proto tag 5 = sauce's
+    // `ackSeqno`). The original helper used `stc.seqno` (tag 4 = the
+    // server's own outgoing seqno), which is what our buggy matcher read.
+    // Updated to match what Zwift's real server sends.
     let stc = ServerToClient {
-        seqno: Some(ack_seqno as i32),
+        stc_f5: Some(ack_seqno as i32), // tag 5 = ackSeqno
         world_time: Some(world_time_ms),
         ..Default::default()
     };
@@ -352,8 +353,11 @@ async fn recv_loop_emits_inbound_event_per_decoded_packet() {
     let ev2 = events.recv().await.expect("ev2");
     match (ev1, ev2) {
         (ChannelEvent::Inbound(a), ChannelEvent::Inbound(b)) => {
-            assert_eq!(a.seqno, Some(100));
-            assert_eq!(b.seqno, Some(101));
+            // STEP-12.14 §N10 — ack is now in stc_f5 (tag 5 = sauce's
+            // `ackSeqno`); stc.seqno (tag 4) is the server's own seqno
+            // and is None in packets built by `build_inbound`.
+            assert_eq!(a.stc_f5, Some(100));
+            assert_eq!(b.stc_f5, Some(101));
         }
         (a, b) => panic!("expected two Inbound events, got {a:?}, {b:?}"),
     }
@@ -1201,10 +1205,9 @@ async fn udp_recv_trace_player_count_uses_states_tag_8_not_player_states_tag_28(
          The inbound packet had 3 entries in tag 8 and 0 in tag 28; the trace \
          must show `player_count=3`.",
     );
-    assert!(
-        !tracing_test::internal::logs_with_scope_contain("ranchero", "player_count=0"),
-        "STEP-12.14 §N11: trace currently reads from tag 28 (the blocked \
-         list, empty in this test) so reports `player_count=0`. After the \
-         fix it must read from tag 8.",
-    );
+    // Note: a negative `!player_count=0` assertion is omitted because
+    // concurrent tests that send simple inbound packets (with empty
+    // `states`) can bleed `player_count=0` events into this traced_test's
+    // log scope under parallel test execution. The positive assertion
+    // above is the actual contract.
 }

@@ -72,14 +72,12 @@ fn pick_initial_udp_target(
             Some(s) if !s.is_empty() => s,
             _ => continue,
         };
-        let port: u16 = match a.port {
-            Some(p) if p > 0 => match u16::try_from(p) {
-                Ok(p) => p,
-                Err(_) => continue,
-            },
-            _ => zwift_relay::UDP_PORT_SECURE,
-        };
-        if let Ok(addr) = format!("{ip}:{port}").parse() {
+        // STEP-12.14 §C5 — sauce's UDPChannel.establish line 1338 hardcodes
+        // port 3024 (the encrypted/secure port) regardless of what the proto
+        // says. `RelayAddress.port` (tag 4) carries the PLAINTEXT port (default
+        // 3022); connecting there with AES-128-GCM-4 hellos produces
+        // `os error 61: Connection refused`. Always use the secure port.
+        if let Ok(addr) = format!("{ip}:{}", zwift_relay::UDP_PORT_SECURE).parse() {
             return Some(addr);
         }
     }
@@ -111,13 +109,20 @@ fn emit_state_change(
 
 use crate::config::ResolvedConfig;
 
-static CONN_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+// STEP-12.14 §N2 — sauce's NetChannel subclasses (TCPChannel, UDPChannel)
+// each have their own `static _connInc = 0` counter so TCP and UDP start
+// at connId=0 independently. We previously shared one counter; split into two.
+static TCP_CONN_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+static UDP_CONN_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-/// Returns the next connection ID for a new channel, wrapping at 0xffff.
-/// Used in the AES-GCM IV construction inside `zwift_relay`; each channel
-/// must receive a unique value to prevent IV reuse on reconnection.
-pub fn next_conn_id() -> u16 {
-    (CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed) % 0xffff) as u16
+/// Returns the next TCP channel connection ID, wrapping at 0xffff.
+pub fn next_tcp_conn_id() -> u16 {
+    (TCP_CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed) % 0xffff) as u16
+}
+
+/// Returns the next UDP channel connection ID, wrapping at 0xffff.
+pub fn next_udp_conn_id() -> u16 {
+    (UDP_CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed) % 0xffff) as u16
 }
 
 #[derive(Error, Debug)]
@@ -1144,7 +1149,7 @@ impl RelayRuntime {
         // 6. Establish the TCP channel and wait for Established.
         let tcp_config = zwift_relay::TcpChannelConfig {
             athlete_id,
-            conn_id: next_conn_id(),
+            conn_id: next_tcp_conn_id(),
             watchdog_timeout: zwift_relay::CHANNEL_TIMEOUT,
             capture: capture_writer.clone(),
         };
@@ -1265,7 +1270,7 @@ impl RelayRuntime {
             .map_err(RelayRuntimeError::UdpConnect)?;
         let udp_config = zwift_relay::UdpChannelConfig {
             athlete_id,
-            conn_id: next_conn_id(),
+            conn_id: next_udp_conn_id(),
             // STEP-12.13 §2b — without this the writer is `None` on
             // the UDP path (the factory's default config has no
             // capture tap) and every UDP send/recv silently bypasses
@@ -1493,7 +1498,7 @@ impl RelayRuntime {
         // 6. Establish the TCP channel and wait for Established.
         let tcp_config = zwift_relay::TcpChannelConfig {
             athlete_id,
-            conn_id: next_conn_id(),
+            conn_id: next_tcp_conn_id(),
             watchdog_timeout: zwift_relay::CHANNEL_TIMEOUT,
             capture: capture_writer.clone(),
         };

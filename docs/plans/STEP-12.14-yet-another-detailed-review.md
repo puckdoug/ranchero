@@ -56,7 +56,7 @@ unblocks the next point in the live-trace failure chain):
   `stc.stc_f5` (tag 5) and matches; UDP recv trace reports
   `player_count` from `stc.states` (tag 8); TCP and UDP `connId`
   counters are independent.
-- [ ] **1b** — Implementation for Phase 1: hardcode 3024 in
+- [x] **1b** — Implementation for Phase 1: hardcode 3024 in
   `pick_initial_udp_target`; read `stc.stc_f5` instead of
   `stc.seqno`; fix the `player_count` trace; split
   `CONN_ID_COUNTER` into TCP and UDP statics.
