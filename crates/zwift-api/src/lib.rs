@@ -109,6 +109,54 @@ pub struct Profile {
     pub id: i64,
 }
 
+/// Direction tag passed to a [`CaptureSink`] for each HTTP exchange.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureDirection {
+    Inbound,
+    Outbound,
+}
+
+/// Transport tag passed to a [`CaptureSink`]. `zwift-api` only
+/// produces `Http`, but the enum is left open so a future shared
+/// `CaptureSink` consumer can pattern-match on the same variants the
+/// daemon's wire-capture writer uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureTransport {
+    Http,
+}
+
+/// Sink that receives every HTTP request and response body issued by
+/// a [`ZwiftAuth`] instance. The daemon's adapter forwards these into
+/// the wire-capture file (`zwift_relay::capture::CaptureWriter`).
+///
+/// `zwift-relay` already depends on `zwift-api`, so the inverse
+/// dependency would be a cycle. The trait lives here and the daemon
+/// implements it for an adapter type.
+pub trait CaptureSink: Send + Sync + 'static {
+    fn record(&self, direction: CaptureDirection, transport: CaptureTransport, payload: &[u8]);
+}
+
+/// Owned HTTP response surface returned by [`ZwiftAuth::post`] and
+/// [`ZwiftAuth::fetch`]. The body is read inside the auth client so
+/// the [`CaptureSink`] can record it; callers consume the bytes via
+/// [`Self::bytes`] (kept async for source compatibility with the
+/// previous `reqwest::Response`-returning API).
+#[derive(Debug)]
+pub struct HttpResponse {
+    status: reqwest::StatusCode,
+    body: Vec<u8>,
+}
+
+impl HttpResponse {
+    pub fn status(&self) -> reqwest::StatusCode {
+        self.status
+    }
+
+    pub async fn bytes(self) -> Result<Vec<u8>> {
+        Ok(self.body)
+    }
+}
+
 /// Hosts and fixed-header configuration for a `ZwiftAuth`. Tests inject
 /// the wiremock URI here (with scheme); production constructs via
 /// `Config::default()`.
@@ -157,6 +205,24 @@ struct Inner {
     /// `std::sync::Mutex` is fine here: the critical section is just a
     /// `take`/`replace` and never crosses an `.await`.
     refresh_task: Mutex<Option<JoinHandle<()>>>,
+    /// Optional sink for raw HTTP request and response bytes, set by
+    /// the daemon at `start_all_inner` time so the wire-capture file
+    /// can replay HTTP exchanges. Default is `None` (no capture).
+    capture_sink: Mutex<Option<Arc<dyn CaptureSink>>>,
+}
+
+impl Inner {
+    fn record_outbound(&self, payload: &[u8]) {
+        if let Some(sink) = self.capture_sink.lock().expect("capture_sink mutex").as_ref() {
+            sink.record(CaptureDirection::Outbound, CaptureTransport::Http, payload);
+        }
+    }
+
+    fn record_inbound(&self, payload: &[u8]) {
+        if let Some(sink) = self.capture_sink.lock().expect("capture_sink mutex").as_ref() {
+            sink.record(CaptureDirection::Inbound, CaptureTransport::Http, payload);
+        }
+    }
 }
 
 impl ZwiftAuth {
@@ -180,8 +246,23 @@ impl ZwiftAuth {
                 tokens: RwLock::new(None),
                 profile: RwLock::new(None),
                 refresh_task: Mutex::new(None),
+                capture_sink: Mutex::new(None),
             }),
         }
+    }
+
+    /// Attach a [`CaptureSink`]. Subsequent HTTP exchanges (token
+    /// grant, refresh, profile fetch, [`Self::post`], [`Self::fetch`])
+    /// forward request bodies as outbound and response bodies as
+    /// inbound capture records. Calling again replaces the previous
+    /// sink; passing `None` disables capture (use [`Self::clear_capture_sink`]).
+    pub fn set_capture_sink(&self, sink: Arc<dyn CaptureSink>) {
+        *self.inner.capture_sink.lock().expect("capture_sink mutex") = Some(sink);
+    }
+
+    /// Detach any previously attached [`CaptureSink`].
+    pub fn clear_capture_sink(&self) {
+        *self.inner.capture_sink.lock().expect("capture_sink mutex") = None;
     }
 
     /// Perform the OAuth2 password grant against the Keycloak token
@@ -191,20 +272,35 @@ impl ZwiftAuth {
     /// state is committed.
     pub async fn login(&self, username: &str, password: &str) -> Result<()> {
         let url = format!("{}{}", self.inner.config.auth_base, TOKEN_PATH);
+
+        tracing::info!(
+            target: "ranchero::relay",
+            username,
+            grant_type = "password",
+            "relay.auth.token.requested",
+        );
+
+        let form_bytes = serde_urlencoded::to_string([
+            ("client_id", CLIENT_ID),
+            ("grant_type", "password"),
+            ("username", username),
+            ("password", password),
+        ])
+        .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?
+        .into_bytes();
+        self.inner.record_outbound(&form_bytes);
+
         let resp = self
             .inner
             .http
             .post(&url)
-            .form(&[
-                ("client_id", CLIENT_ID),
-                ("grant_type", "password"),
-                ("username", username),
-                ("password", password),
-            ])
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(form_bytes)
             .send()
             .await?;
         let status = resp.status();
         let bytes = resp.bytes().await?;
+        self.inner.record_inbound(&bytes);
         if !status.is_success() {
             let body = String::from_utf8_lossy(&bytes).to_string();
             return Err(match status.as_u16() {
@@ -216,6 +312,14 @@ impl ZwiftAuth {
         let tokens: Tokens = serde_json::from_slice(&bytes)
             .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?;
         let expires_in = tokens.expires_in;
+        let refresh_expires_in = tokens.refresh_expires_in;
+
+        tracing::info!(
+            target: "ranchero::relay",
+            expires_in_s = expires_in,
+            refresh_expires_in_s = refresh_expires_in,
+            "relay.auth.token.granted",
+        );
 
         // Store the token temporarily so get_profile_me can call bearer().
         *self.inner.tokens.write().await = Some(tokens);
@@ -243,6 +347,9 @@ impl ZwiftAuth {
     pub async fn get_profile_me(&self) -> Result<Profile> {
         let bearer = self.bearer().await?;
         let url = format!("{}/api/profiles/me", self.inner.config.api_base);
+        // GET requests have an empty body; record an empty payload so
+        // a downstream replay sees the exchange as request → response.
+        self.inner.record_outbound(&[]);
         let resp = self
             .inner
             .http
@@ -254,20 +361,62 @@ impl ZwiftAuth {
             .await?;
         let status = resp.status();
         let bytes = resp.bytes().await?;
+        self.inner.record_inbound(&bytes);
         match status.as_u16() {
-            200 => serde_json::from_slice::<Profile>(&bytes)
-                .map_err(|e| Error::AuthFailedBadSchema(e.to_string())),
-            401 => Err(Error::AuthFailedUnauthorized(
-                String::from_utf8_lossy(&bytes).into_owned(),
-            )),
-            403 => Err(Error::AuthFailedForbidden(
-                String::from_utf8_lossy(&bytes).into_owned(),
-            )),
-            _ => Err(Error::AuthFailedUnknown(format!(
-                "HTTP {}: {}",
-                status,
-                String::from_utf8_lossy(&bytes),
-            ))),
+            200 => match serde_json::from_slice::<Profile>(&bytes) {
+                Ok(profile) => {
+                    tracing::debug!(
+                        target: "ranchero::relay",
+                        athlete_id = profile.id,
+                        "relay.auth.profile.ok",
+                    );
+                    Ok(profile)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "ranchero::relay",
+                        status = 200,
+                        variant = "BadSchema",
+                        "relay.auth.profile.failed",
+                    );
+                    Err(Error::AuthFailedBadSchema(e.to_string()))
+                }
+            },
+            401 => {
+                tracing::warn!(
+                    target: "ranchero::relay",
+                    status = 401,
+                    variant = "Unauthorized",
+                    "relay.auth.profile.failed",
+                );
+                Err(Error::AuthFailedUnauthorized(
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                ))
+            }
+            403 => {
+                tracing::warn!(
+                    target: "ranchero::relay",
+                    status = 403,
+                    variant = "Forbidden",
+                    "relay.auth.profile.failed",
+                );
+                Err(Error::AuthFailedForbidden(
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                ))
+            }
+            other => {
+                tracing::warn!(
+                    target: "ranchero::relay",
+                    status = other,
+                    variant = "Unknown",
+                    "relay.auth.profile.failed",
+                );
+                Err(Error::AuthFailedUnknown(format!(
+                    "HTTP {}: {}",
+                    status,
+                    String::from_utf8_lossy(&bytes),
+                )))
+            }
         }
     }
 
@@ -324,9 +473,19 @@ impl ZwiftAuth {
         urn: &str,
         content_type: &str,
         body: Vec<u8>,
-    ) -> Result<reqwest::Response> {
+    ) -> Result<HttpResponse> {
         let url = format!("{}{}", self.inner.config.api_base, urn);
         let bearer = self.bearer().await?;
+
+        self.inner.record_outbound(&body);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "POST",
+            urn,
+            content_type,
+            body_size = body.len(),
+            "relay.auth.http.request",
+        );
         let resp = self
             .inner
             .http
@@ -338,12 +497,42 @@ impl ZwiftAuth {
             .body(body.clone())
             .send()
             .await?;
-        if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return Ok(resp);
+        let status = resp.status();
+        let resp_bytes = resp.bytes().await?;
+        self.inner.record_inbound(&resp_bytes);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "POST",
+            urn,
+            status = status.as_u16(),
+            body_size = resp_bytes.len(),
+            retried = false,
+            "relay.auth.http.response",
+        );
+        if status != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(HttpResponse {
+                status,
+                body: resp_bytes.to_vec(),
+            });
         }
-        drop(resp);
+        tracing::info!(
+            target: "ranchero::relay",
+            method = "POST",
+            urn,
+            "relay.auth.http.retry",
+        );
         self.refresh().await?;
         let bearer = self.bearer().await?;
+
+        self.inner.record_outbound(&body);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "POST",
+            urn,
+            content_type,
+            body_size = body.len(),
+            "relay.auth.http.request",
+        );
         let retry = self
             .inner
             .http
@@ -355,15 +544,39 @@ impl ZwiftAuth {
             .body(body)
             .send()
             .await?;
-        Ok(retry)
+        let retry_status = retry.status();
+        let retry_bytes = retry.bytes().await?;
+        self.inner.record_inbound(&retry_bytes);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "POST",
+            urn,
+            status = retry_status.as_u16(),
+            body_size = retry_bytes.len(),
+            retried = true,
+            "relay.auth.http.response",
+        );
+        Ok(HttpResponse {
+            status: retry_status,
+            body: retry_bytes.to_vec(),
+        })
     }
 
     /// Issue a GET against the API host with `Authorization: Bearer …`,
     /// `Source`, and `User-Agent` set. On a 401 response, transparently
     /// trigger a token refresh and retry the request once.
-    pub async fn fetch(&self, urn: &str) -> Result<reqwest::Response> {
+    pub async fn fetch(&self, urn: &str) -> Result<HttpResponse> {
         let url = format!("{}{}", self.inner.config.api_base, urn);
         let bearer = self.bearer().await?;
+
+        self.inner.record_outbound(&[]);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            body_size = 0,
+            "relay.auth.http.request",
+        );
         let resp = self
             .inner
             .http
@@ -373,14 +586,41 @@ impl ZwiftAuth {
             .header("User-Agent", &self.inner.config.user_agent)
             .send()
             .await?;
-        if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return Ok(resp);
+        let status = resp.status();
+        let resp_bytes = resp.bytes().await?;
+        self.inner.record_inbound(&resp_bytes);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            status = status.as_u16(),
+            body_size = resp_bytes.len(),
+            retried = false,
+            "relay.auth.http.response",
+        );
+        if status != reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(HttpResponse {
+                status,
+                body: resp_bytes.to_vec(),
+            });
         }
-        // Drop the 401 response (and its body) before refreshing so we
-        // don't tie up the connection during the token round-trip.
-        drop(resp);
+        tracing::info!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            "relay.auth.http.retry",
+        );
         self.refresh().await?;
         let bearer = self.bearer().await?;
+
+        self.inner.record_outbound(&[]);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            body_size = 0,
+            "relay.auth.http.request",
+        );
         let retry = self
             .inner
             .http
@@ -390,7 +630,22 @@ impl ZwiftAuth {
             .header("User-Agent", &self.inner.config.user_agent)
             .send()
             .await?;
-        Ok(retry)
+        let retry_status = retry.status();
+        let retry_bytes = retry.bytes().await?;
+        self.inner.record_inbound(&retry_bytes);
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "GET",
+            urn,
+            status = retry_status.as_u16(),
+            body_size = retry_bytes.len(),
+            retried = true,
+            "relay.auth.http.response",
+        );
+        Ok(HttpResponse {
+            status: retry_status,
+            body: retry_bytes.to_vec(),
+        })
     }
 }
 
@@ -425,18 +680,26 @@ impl Inner {
                 .clone()
         };
         let url = format!("{}{}", self.config.auth_base, TOKEN_PATH);
+
+        let form_bytes = serde_urlencoded::to_string([
+            ("client_id", CLIENT_ID),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token.as_str()),
+        ])
+        .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?
+        .into_bytes();
+        self.record_outbound(&form_bytes);
+
         let resp = self
             .http
             .post(&url)
-            .form(&[
-                ("client_id", CLIENT_ID),
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refresh_token.as_str()),
-            ])
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(form_bytes)
             .send()
             .await?;
         let status = resp.status();
         let bytes = resp.bytes().await?;
+        self.record_inbound(&bytes);
         if !status.is_success() {
             let body = String::from_utf8_lossy(&bytes).to_string();
             return Err(Error::RefreshFailed(body));
@@ -444,8 +707,15 @@ impl Inner {
         let tokens: Tokens = serde_json::from_slice(&bytes)
             .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?;
         let expires_in = tokens.expires_in;
+        let next_refresh_in = expires_in / 2;
         *self.tokens.write().await = Some(tokens);
-        Inner::schedule_refresh(self, Duration::from_secs(expires_in / 2));
+        Inner::schedule_refresh(self, Duration::from_secs(next_refresh_in));
+        tracing::info!(
+            target: "ranchero::relay",
+            expires_in_s = expires_in,
+            next_refresh_in_s = next_refresh_in,
+            "relay.auth.refresh.completed",
+        );
         Ok(())
     }
 }

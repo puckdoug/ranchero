@@ -80,7 +80,7 @@ logged_in` / `refreshed` / `refresh_failed` / `relogin_attempt` /
       record; `relay.auth.token.requested` / `token.granted` /
       `profile.ok` / `profile.failed` / `http.request` / `http.response`
       / `http.retry` / `refresh.completed` events with correct fields.
-- [ ] **5b** — Auth / HTTP implementation: inject a capture-sink
+- [x] **5b** — Auth / HTTP implementation: inject a capture-sink
       dependency into `ZwiftAuth`, route request and response bodies
       through it, emit the eight tracing events.
 - [ ] **6a** — Daemon integration tests (`ranchero::daemon::relay`):
