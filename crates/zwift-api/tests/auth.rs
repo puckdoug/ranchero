@@ -38,6 +38,7 @@ fn config_for(server: &MockServer) -> Config {
         api_base: base,
         source: DEFAULT_SOURCE.to_string(),
         user_agent: DEFAULT_USER_AGENT.to_string(),
+        platform: "OSX".to_string(),
     }
 }
 
@@ -149,7 +150,8 @@ async fn authed_post_includes_bearer_source_and_user_agent_headers() {
         .and(header("authorization", "Bearer ATOK"))
         .and(header("source", DEFAULT_SOURCE))
         .and(header("user-agent", DEFAULT_USER_AGENT))
-        .and(header("content-type", "application/x-protobuf-lite"))
+        // STEP-12.14 §C8 — auth.post now appends `; version=2.0`
+        .and(header("content-type", "application/x-protobuf-lite; version=2.0"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(b"server-reply".to_vec()))
         .expect(1)
         .mount(&server)

@@ -341,6 +341,7 @@ pub fn print_auth_check_to<W: std::io::Write>(
         api_base:   resolved.zwift_endpoints.api_base.clone(),
         source:     zwift_api::DEFAULT_SOURCE.to_string(),
         user_agent: zwift_api::DEFAULT_USER_AGENT.to_string(),
+        platform:   "OSX".to_string(),
     };
     // Construct ZwiftAuth purely to prove the wiring compiles and runs;
     // we never call .login() so no socket is opened.

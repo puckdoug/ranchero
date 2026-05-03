@@ -35,6 +35,7 @@ fn auth_config_for(server: &MockServer) -> AuthConfig {
         api_base: base,
         source: DEFAULT_SOURCE.to_string(),
         user_agent: DEFAULT_USER_AGENT.to_string(),
+        platform: "OSX".to_string(),
     }
 }
 
@@ -130,7 +131,7 @@ async fn login_posts_protobuf_login_request_with_correct_body() {
     let resp = login_response(Some(7), Some(10), vec![tcp_addr("1.1.1.1", 3025, 0, 0)]);
     Mock::given(method("POST"))
         .and(path(LOGIN_PATH))
-        .and(header("content-type", "application/x-protobuf-lite"))
+        .and(header("content-type", "application/x-protobuf-lite; version=2.0"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(resp.encode_to_vec()))
         .expect(1)
         .mount(&server)
@@ -327,7 +328,7 @@ async fn refresh_posts_relay_session_refresh_request_body() {
     };
     Mock::given(method("POST"))
         .and(path(SESSION_REFRESH_PATH))
-        .and(header("content-type", "application/x-protobuf-lite"))
+        .and(header("content-type", "application/x-protobuf-lite; version=2.0"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(resp.encode_to_vec()))
         .expect(1)
         .mount(&server)

@@ -66,7 +66,7 @@ unblocks the next point in the live-trace failure chain):
   `Content-Type: application/x-protobuf-lite; version=2.0` on
   protobuf POSTs; `Accept: application/json` on token requests;
   `Accept: application/x-protobuf-lite` on protobuf requests.
-- [ ] **2b** — Implementation for Phase 2: add `platform` to
+- [x] **2b** — Implementation for Phase 2: add `platform` to
   `Config`; thread `Platform` header into every send; replace
   `DEFAULT_USER_AGENT`; append `; version=2.0` to
   `PROTOBUF_CONTENT_TYPE`; set `Accept` headers in `login`,

@@ -791,6 +791,7 @@ impl RelayRuntime {
             api_base:   cfg.zwift_endpoints.api_base.clone(),
             source:     zwift_api::DEFAULT_SOURCE.to_string(),
             user_agent: zwift_api::DEFAULT_USER_AGENT.to_string(),
+            platform:   "OSX".to_string(),
         };
         let auth = Arc::new(zwift_api::ZwiftAuth::new(auth_config));
         let session_config = zwift_relay::RelaySessionConfig::default();
@@ -851,6 +852,7 @@ impl RelayRuntime {
             api_base:   cfg.zwift_endpoints.api_base.clone(),
             source:     zwift_api::DEFAULT_SOURCE.to_string(),
             user_agent: zwift_api::DEFAULT_USER_AGENT.to_string(),
+            platform:   "OSX".to_string(),
         };
         let auth = Arc::new(zwift_api::ZwiftAuth::new(auth_config));
         let session_config = zwift_relay::RelaySessionConfig::default();

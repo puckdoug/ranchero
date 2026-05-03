@@ -40,10 +40,11 @@ pub const DEFAULT_SOURCE: &str = "Game Client";
 
 /// Default `User-Agent` header sent on every authenticated REST call.
 ///
-/// Same rationale as [`DEFAULT_SOURCE`]: mimics a real Zwift game
-/// client. Override via [`Config::user_agent`] for honest
-/// self-identification when the API is known to tolerate it.
-pub const DEFAULT_USER_AGENT: &str = "CNL/4.2.0";
+/// Matches the full Zwift game-client string from sauce4zwift
+/// (`zwift.mjs:459`). STEP-12.14 §C7: Zwift's API is suspected to
+/// inspect the UA and degrade responses for unknown clients.
+pub const DEFAULT_USER_AGENT: &str =
+    "CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0";
 
 /// Path of the Keycloak token endpoint (used for both `password` and
 /// `refresh_token` grants).
@@ -170,6 +171,9 @@ pub struct Config {
     pub api_base: String,
     pub source: String,
     pub user_agent: String,
+    /// `Platform` header value. Sauce4zwift sends `"OSX"` on every
+    /// authenticated request (STEP-12.14 §C6). Default `"OSX"`.
+    pub platform: String,
 }
 
 impl Default for Config {
@@ -179,6 +183,7 @@ impl Default for Config {
             api_base: format!("https://{DEFAULT_API_HOST}"),
             source: DEFAULT_SOURCE.to_string(),
             user_agent: DEFAULT_USER_AGENT.to_string(),
+            platform: "OSX".to_string(),
         }
     }
 }
@@ -295,6 +300,10 @@ impl ZwiftAuth {
             .http
             .post(&url)
             .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json") // STEP-12.14 §N3 — zwift.mjs:346
+            .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform) // STEP-12.14 §C6
+            .header("User-Agent", &self.inner.config.user_agent)
             .body(form_bytes)
             .send()
             .await?;
@@ -356,6 +365,7 @@ impl ZwiftAuth {
             .get(&url)
             .bearer_auth(&bearer)
             .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform)
             .header("User-Agent", &self.inner.config.user_agent)
             .send()
             .await?;
@@ -477,6 +487,20 @@ impl ZwiftAuth {
         let url = format!("{}{}", self.inner.config.api_base, urn);
         let bearer = self.bearer().await?;
 
+        // STEP-12.14 §C8 — sauce appends `; version=2.0` to the
+        // protobuf content-type (`zwift.mjs:445`). Normalise here so
+        // callers that pass the bare constant get the correct wire value.
+        let ct_owned;
+        let content_type = if content_type == "application/x-protobuf-lite" {
+            ct_owned = "application/x-protobuf-lite; version=2.0";
+            ct_owned
+        } else {
+            content_type
+        };
+
+        // STEP-12.14 §N4 — sauce's fetchPB sets Accept: application/x-protobuf-lite
+        let is_protobuf = content_type.starts_with("application/x-protobuf-lite");
+
         self.inner.record_outbound(&body);
         tracing::debug!(
             target: "ranchero::relay",
@@ -486,14 +510,19 @@ impl ZwiftAuth {
             body_size = body.len(),
             "relay.auth.http.request",
         );
-        let resp = self
+        let mut builder = self
             .inner
             .http
             .post(&url)
             .bearer_auth(&bearer)
             .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform)
             .header("User-Agent", &self.inner.config.user_agent)
-            .header("Content-Type", content_type)
+            .header("Content-Type", content_type);
+        if is_protobuf {
+            builder = builder.header("Accept", "application/x-protobuf-lite");
+        }
+        let resp = builder
             .body(body.clone())
             .send()
             .await?;
@@ -533,17 +562,19 @@ impl ZwiftAuth {
             body_size = body.len(),
             "relay.auth.http.request",
         );
-        let retry = self
+        let mut retry_builder = self
             .inner
             .http
             .post(&url)
             .bearer_auth(&bearer)
             .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform)
             .header("User-Agent", &self.inner.config.user_agent)
-            .header("Content-Type", content_type)
-            .body(body)
-            .send()
-            .await?;
+            .header("Content-Type", content_type);
+        if is_protobuf {
+            retry_builder = retry_builder.header("Accept", "application/x-protobuf-lite");
+        }
+        let retry = retry_builder.body(body).send().await?;
         let retry_status = retry.status();
         let retry_bytes = retry.bytes().await?;
         self.inner.record_inbound(&retry_bytes);
@@ -583,6 +614,7 @@ impl ZwiftAuth {
             .get(&url)
             .bearer_auth(&bearer)
             .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform)
             .header("User-Agent", &self.inner.config.user_agent)
             .send()
             .await?;
@@ -627,6 +659,7 @@ impl ZwiftAuth {
             .get(&url)
             .bearer_auth(&bearer)
             .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform)
             .header("User-Agent", &self.inner.config.user_agent)
             .send()
             .await?;
@@ -694,6 +727,10 @@ impl Inner {
             .http
             .post(&url)
             .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Accept", "application/json") // STEP-12.14 §N3 — zwift.mjs:346
+            .header("Source", &self.config.source)
+            .header("Platform", &self.config.platform) // STEP-12.14 §C6
+            .header("User-Agent", &self.config.user_agent)
             .body(form_bytes)
             .send()
             .await?;
