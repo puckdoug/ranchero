@@ -80,7 +80,7 @@ unblocks the next point in the live-trace failure chain):
   `(lb_realm, lb_course)` discriminator; daemon's wait-for-
   udp_config branch picks from the generic pool; add
   `RelayRuntimeError::NoGenericPool`.
-- [ ] **4a** — Tests for Phase 4 (course gate via
+- [x] **4a** — Tests for Phase 4 (course gate via
   `getPlayerState`): `auth.get_player_state(id)` decodes the
   proto response; daemon calls it with `cfg.watched_athlete_id`
   (NOT the monitor's `auth.athlete_id()`); daemon suspends when

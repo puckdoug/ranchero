@@ -1326,3 +1326,106 @@ async fn protobuf_post_sets_accept_x_protobuf_lite() {
          application/x-protobuf-lite` (`zwift.mjs:451`). Got {accept:?}",
     );
 }
+
+// ==========================================================================
+// STEP-12.14 Phase 4a — `ZwiftAuth::get_player_state` (C2)
+//
+// Sauce calls `this.api.getPlayerState(this.selfAthleteId)` (where
+// `selfAthleteId` = the watched athlete) via HTTP GET
+// `/relay/worlds/1/players/{id}`, decoding the response as a
+// `PlayerState` protobuf. The daemon uses the response's `state.world`
+// (proto tag 35 = sauce's `courseId`) to determine whether the watched
+// athlete is in a game before bringing UDP up.
+//
+// Both tests fail to compile in red state because `ZwiftAuth::get_player_state`
+// does not exist yet. Phase 4b adds the method.
+// ==========================================================================
+
+#[tokio::test]
+async fn get_player_state_decodes_proto_response_from_relay_endpoint() {
+    use prost::Message as _;
+    use zwift_proto::PlayerState;
+
+    let server = MockServer::start().await;
+    // Token + profile mocks so login() succeeds.
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    // Mock the player-state endpoint with a known protobuf payload.
+    // `state.world` (tag 35) = sauce's `courseId`.
+    let known_state = PlayerState {
+        id: Some(42),
+        world: Some(7), // course 7 = Watopia
+        ..Default::default()
+    };
+    Mock::given(method("GET"))
+        .and(path("/relay/worlds/1/players/42"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(known_state.encode_to_vec()),
+        )
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+
+    let result = auth
+        .get_player_state(42)
+        .await
+        .expect("get_player_state must not error");
+
+    let state = result.expect("Some expected for a 200 response");
+    assert_eq!(
+        state.id,
+        Some(42),
+        "STEP-12.14 §C2: get_player_state must decode PlayerState.id",
+    );
+    assert_eq!(
+        state.world,
+        Some(7),
+        "STEP-12.14 §C2: get_player_state must decode `state.world` \
+         (proto tag 35 = sauce's `courseId`)",
+    );
+}
+
+#[tokio::test]
+async fn get_player_state_returns_none_on_404() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/relay/worlds/1/players/999"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+
+    let result = auth
+        .get_player_state(999)
+        .await
+        .expect("404 must not surface as Err");
+    assert!(
+        result.is_none(),
+        "STEP-12.14 §C2: get_player_state must return Ok(None) on 404; \
+         athlete not in a game is a normal condition, not an error",
+    );
+}
