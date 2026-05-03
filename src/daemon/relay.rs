@@ -165,6 +165,14 @@ pub enum RelayRuntimeError {
 
     #[error("no udp_config received from TCP stream within {0:?}")]
     NoUdpConfig(std::time::Duration),
+
+    /// A `udp_config_vod*` push arrived but contained no generic
+    /// load-balancer pool (`lb_course=0`). Sauce always uses
+    /// `_udpServerPools.get(0)` for the initial UDP connect; without
+    /// it we would silently pick a per-course pool that may reject
+    /// athletes who are not on that course. (STEP-12.14 §C1)
+    #[error("udp_config push contains no lb_course=0 generic pool")]
+    NoGenericPool,
 }
 
 impl From<zwift_api::Error> for RelayRuntimeError {
@@ -1236,18 +1244,42 @@ impl RelayRuntime {
                 }
                 match tokio::time::timeout(remaining, events_rx.recv()).await {
                     Ok(Ok(zwift_relay::TcpChannelEvent::Inbound(stc))) => {
-                        if let Some(addrs) = zwift_relay::extract_udp_servers(&stc) {
-                            tracing::info!(
-                                target: "ranchero::relay",
-                                count = addrs.len(),
-                                "relay.udp.config_received",
-                            );
-                            picked = pick_initial_udp_target(&addrs);
-                            if picked.is_none() {
-                                tracing::warn!(
-                                    target: "ranchero::relay",
-                                    "relay.udp.config_no_valid_target",
-                                );
+                        if let Some(pools) = zwift_relay::extract_udp_pools(&stc) {
+                            // STEP-12.14 §C1 — sauce uses
+                            // `_udpServerPools.get(0).servers[0].ip`
+                            // for the initial connect: the generic
+                            // load-balancer pool at lb_course=0. Per-course
+                            // pools would reject athletes not on that course.
+                            let generic = pools.iter()
+                                .find(|p| p.lb_course == 0 && p.lb_realm == 0);
+                            match generic {
+                                Some(pool) => {
+                                    tracing::info!(
+                                        target: "ranchero::relay",
+                                        pool_count = pools.len(),
+                                        server_count = pool.addresses.len(),
+                                        "relay.udp.config_received",
+                                    );
+                                    picked = pick_initial_udp_target(&pool.addresses);
+                                    if picked.is_none() {
+                                        tracing::warn!(
+                                            target: "ranchero::relay",
+                                            "relay.udp.config_no_valid_target",
+                                        );
+                                    }
+                                }
+                                None => {
+                                    // All pools are per-course; error so the
+                                    // operator sees a clear message rather
+                                    // than a connection refused from a
+                                    // per-course server.
+                                    tracing::warn!(
+                                        target: "ranchero::relay",
+                                        pool_count = pools.len(),
+                                        "relay.udp.config_no_generic_pool",
+                                    );
+                                    return Err(RelayRuntimeError::NoGenericPool);
+                                }
                             }
                         }
                     }

@@ -72,51 +72,76 @@ pub enum CodecError {
     BadVersion { got: u8 },
 }
 
-/// Extract the UDP relay-server list from a `ServerToClient` push,
-/// flattening across the three fields Zwift uses to announce them.
+/// A pool entry returned by [`extract_udp_pools`], preserving the
+/// `(lb_realm, lb_course)` discriminator that sauce uses to key
+/// `_udpServerPools` (`zwift.mjs:2156`).
+pub struct UdpPoolEntry {
+    pub lb_realm: i32,
+    pub lb_course: i32,
+    pub addresses: Vec<zwift_proto::RelayAddress>,
+}
+
+/// Extract the UDP relay-server pools from a `ServerToClient` push,
+/// preserving the per-pool `(lb_realm, lb_course)` discriminator.
 ///
-/// The TCP `ServerToClient` stream carries UDP server pools in three
-/// variants (proto field tags, in priority order):
+/// Sauce keys its `_udpServerPools` map by `x.courseId` (= `lb_course`).
+/// The initial UDP target is always `_udpServerPools.get(0).servers[0]`
+/// — the **generic load-balancer pool at `lb_course=0`**. Per-course
+/// pools (lb_course ≠ 0) are for direct-server routing after the daemon
+/// knows the watched athlete's current course.
 ///
-/// 1. `udp_config_vod_1` — per-realm/per-course `RelayAddressesVod`
-///    pool list. Production Zwift uses this in the steady state.
-/// 2. `udp_config_vod_2` — same shape; second slot. Reserved /
-///    rarely populated.
-/// 3. `udp_config` — flat `RelayAddress` list (legacy / fallback).
+/// Priority order mirrors sauce:
+/// 1. `udp_config_vod_1` — production Zwift.
+/// 2. `udp_config_vod_2` — second slot (rare).
+/// 3. Flat `udp_config` — treated as a single `lb_course=0` pool.
 ///
-/// Returns `Some(addrs)` when at least one variant is non-empty;
-/// `None` when the message carries no UDP server hints. The
-/// per-pool `(lb_realm, lb_course)` from `RelayAddressesVod` is
-/// dropped: each `RelayAddress` already carries its own
-/// `lb_realm` / `lb_course`, which is what the daemon's
-/// `UdpPoolRouter` keys on.
-pub fn extract_udp_servers(
+/// Returns `None` when the message carries no UDP server hints.
+pub fn extract_udp_pools(
     stc: &zwift_proto::ServerToClient,
-) -> Option<Vec<zwift_proto::RelayAddress>> {
-    if let Some(vod) = &stc.udp_config_vod_1 {
-        let addrs: Vec<_> = vod
-            .relay_addresses_vod
+) -> Option<Vec<UdpPoolEntry>> {
+    let pools_from_vod = |vod: &zwift_proto::UdpConfigVod| -> Vec<UdpPoolEntry> {
+        vod.relay_addresses_vod
             .iter()
-            .flat_map(|p| p.relay_addresses.iter().cloned())
-            .collect();
-        if !addrs.is_empty() {
-            return Some(addrs);
+            .filter(|p| !p.relay_addresses.is_empty())
+            .map(|p| UdpPoolEntry {
+                lb_realm: p.lb_realm.unwrap_or(0),
+                lb_course: p.lb_course.unwrap_or(0),
+                addresses: p.relay_addresses.clone(),
+            })
+            .collect()
+    };
+
+    if let Some(vod) = &stc.udp_config_vod_1 {
+        let pools = pools_from_vod(vod);
+        if !pools.is_empty() {
+            return Some(pools);
         }
     }
     if let Some(vod) = &stc.udp_config_vod_2 {
-        let addrs: Vec<_> = vod
-            .relay_addresses_vod
-            .iter()
-            .flat_map(|p| p.relay_addresses.iter().cloned())
-            .collect();
-        if !addrs.is_empty() {
-            return Some(addrs);
+        let pools = pools_from_vod(vod);
+        if !pools.is_empty() {
+            return Some(pools);
         }
     }
     if let Some(cfg) = &stc.udp_config
         && !cfg.relay_addresses.is_empty()
     {
-        return Some(cfg.relay_addresses.clone());
+        // Flat UdpConfig has no per-pool course info; treat as generic.
+        return Some(vec![UdpPoolEntry {
+            lb_realm: 0,
+            lb_course: 0,
+            addresses: cfg.relay_addresses.clone(),
+        }]);
     }
     None
+}
+
+/// Deprecated flat extractor kept for callers that don't need pool
+/// discrimination. Prefer [`extract_udp_pools`] for new code.
+pub fn extract_udp_servers(
+    stc: &zwift_proto::ServerToClient,
+) -> Option<Vec<zwift_proto::RelayAddress>> {
+    extract_udp_pools(stc).map(|pools| {
+        pools.into_iter().flat_map(|p| p.addresses).collect()
+    })
 }

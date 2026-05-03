@@ -75,7 +75,7 @@ unblocks the next point in the live-trace failure chain):
   picks UDP target from the `lb_course=0` pool when both generic
   and per-course pools are present; errors with a typed variant
   if no generic pool is in the push.
-- [ ] **3b** — Implementation for Phase 3: refactor
+- [x] **3b** — Implementation for Phase 3: refactor
   `extract_udp_servers` → `extract_udp_pools` preserving the
   `(lb_realm, lb_course)` discriminator; daemon's wait-for-
   udp_config branch picks from the generic pool; add
