@@ -18,7 +18,7 @@ Each defect follows the STEP-12.12 pattern: an `Na` test pair
 (failing assertions, written first) and an `Nb` implementation pair
 that makes them pass.
 
-- [ ] **1a** — Tests for D1: `relay.capture.writer.closed` fires
+- [x] **1a** — Tests for D1: `relay.capture.writer.closed` fires
   exactly once per shutdown; the bare `relay.capture.closed` event
   no longer appears in the daemon log.
 - [ ] **1b** — Implementation for D1: delete the obsolete

@@ -2616,6 +2616,59 @@ mod tests {
         );
     }
 
+    // STEP-12.13 D1 — recv_loop's shutdown branch still emits the
+    // legacy `relay.capture.closed dropped_count=…` line alongside the
+    // new `relay.capture.writer.closed total_records=… total_bytes=…`
+    // rollup that STEP-12.12 §3b added. Both fire on every clean
+    // shutdown; the legacy line is now noise. This test fails red
+    // until 1b deletes the legacy emission.
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn shutdown_emits_writer_closed_exactly_once_and_no_legacy_closed() {
+        let path = tempfile::NamedTempFile::new().expect("tempfile");
+        let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+            .await
+            .expect("open writer");
+        let writer = Arc::new(writer);
+
+        let counter = CallCounter::new();
+        let cfg = make_config(Some("rider@example.com"), Some("secret"));
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps_and_writer(
+            &cfg,
+            Arc::clone(&writer),
+            auth,
+            session,
+            tcp,
+        )
+        .await
+        .expect("start_with_deps_and_writer must succeed");
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+        drop(writer);
+
+        // Both events end with a distinctive field signature, so a
+        // substring check is enough to discriminate without parsing.
+        assert!(
+            logs_contain("relay.capture.writer.closed"),
+            "STEP-12.13 D1: relay.capture.writer.closed must still fire \
+             on shutdown — it is the canonical rollup event from \
+             STEP-12.12 §3b",
+        );
+        assert!(
+            !logs_contain("relay.capture.closed dropped_count="),
+            "STEP-12.13 D1: the legacy daemon-side `relay.capture.closed \
+             dropped_count=…` log line must be removed from recv_loop's \
+             shutdown branch — it duplicates the writer-task rollup. \
+             Per-drop visibility now comes from \
+             relay.capture.record.dropped warns at drop time.",
+        );
+    }
+
     #[tokio::test]
     async fn udp_shutdown_drains_capture_writer() {
         let path = tempfile::NamedTempFile::new().expect("tempfile");
