@@ -29,11 +29,14 @@ that makes them pass.
   UDP capture record in the file.
 - [x] **2b** — Implementation for D2: thread `capture_writer.clone()`
   into the `UdpChannelConfig` literal in `start_all_inner`.
-- [ ] **3a** — Tests for D3: the daemon waits for the first
+- [x] **3a** — Tests for D3: the daemon waits for the first
   `udp_config` push on the TCP `ServerToClient` stream before
   bringing UDP up; the chosen UDP target comes from that push, not
-  from `session.tcp_servers[0]`; the pool-router selects the UDP
-  target for the watched athlete.
+  from `session.tcp_servers[0]`. (3a.iii — per-watched-athlete pool
+  selection — deferred until `observe_watched_player_state` has a
+  non-`cfg(test)` test seam, since `tests/` integration tests
+  cannot reach `cfg(test)` items in the binary crate. Tracked
+  inline; not a blocker for 3b.)
 - [ ] **3b** — Implementation for D3: introduce a small "wait for
   UDP server" step in `start_all_inner` that subscribes to the
   TCP stream, applies the first `UdpConfigVod` (or `UdpConfig`) to

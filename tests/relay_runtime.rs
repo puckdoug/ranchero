@@ -1374,3 +1374,240 @@ async fn heartbeat_send_failure_emits_warn() {
          the underlying error message in an error= field",
     );
 }
+
+// ==========================================================================
+// STEP-12.13 D3 — UDP target must come from the first udp_config push on
+// the TCP stream, not from `session.tcp_servers[0]`. Two failing tests
+// covering "use the push" and "wait for the push (don't fall back)".
+// 3a.iii (per-watched-athlete pool selection) is deferred until
+// `observe_watched_player_state` has a non-cfg(test) seam.
+// ==========================================================================
+
+use prost::Message as _;
+
+/// Build the framed wire bytes of a ServerToClient inbound packet
+/// suitable for injection through a `ScriptedTcpTransport.read_chunk`
+/// return. The header pins `conn_id` and `seqno` so the channel's
+/// recv-side IV state matches the encryption side regardless of the
+/// random `next_conn_id()` the daemon picked. AES key matches the
+/// fixture session (`[0u8; 16]`).
+fn build_inbound_servertoclient_frame(
+    stc: &zwift_proto::ServerToClient,
+    conn_id: u16,
+    iv_seqno: u32,
+) -> Vec<u8> {
+    let proto_bytes = stc.encode_to_vec();
+    let header = zwift_relay::Header {
+        flags: zwift_relay::HeaderFlags::CONN_ID | zwift_relay::HeaderFlags::SEQNO,
+        relay_id: None,
+        conn_id: Some(conn_id),
+        seqno: Some(iv_seqno),
+    };
+    let header_bytes = header.encode();
+    let iv = zwift_relay::RelayIv {
+        device: zwift_relay::DeviceType::Relay,
+        channel: zwift_relay::ChannelType::TcpServer,
+        conn_id,
+        seqno: iv_seqno,
+    };
+    let cipher = zwift_relay::encrypt(&[0u8; 16], &iv.to_bytes(), &header_bytes, &proto_bytes);
+    zwift_relay::frame_tcp(&header_bytes, &cipher)
+}
+
+/// TCP transport whose first `read_chunk` returns a pre-baked frame
+/// (typically a `ServerToClient` carrying a `udp_config*`), then
+/// blocks forever. `write_all` is a no-op.
+struct ScriptedTcpTransport {
+    pending: StdMutex<Option<Vec<u8>>>,
+}
+
+impl zwift_relay::TcpTransport for ScriptedTcpTransport {
+    async fn write_all(&self, _bytes: &[u8]) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    async fn read_chunk(&self) -> std::io::Result<Vec<u8>> {
+        if let Some(frame) = self.pending.lock().unwrap().take() {
+            return Ok(frame);
+        }
+        std::future::pending::<()>().await;
+        unreachable!()
+    }
+}
+
+struct ScriptedTcpFactory {
+    transport: StdMutex<Option<ScriptedTcpTransport>>,
+}
+
+impl ScriptedTcpFactory {
+    /// Build a factory whose TCP channel will deliver one
+    /// `ServerToClient` containing a flat `UdpConfig` with a single
+    /// `RelayAddress` pointing at `(ip, port)`.
+    fn pushing_udp_config(ip: &str, port: i32) -> Self {
+        let stc = zwift_proto::ServerToClient {
+            udp_config: Some(zwift_proto::UdpConfig {
+                relay_addresses: vec![zwift_proto::RelayAddress {
+                    lb_realm: Some(0),
+                    lb_course: Some(0),
+                    ip: Some(ip.to_string()),
+                    port: Some(port),
+                    ra_f5: None,
+                    ra_f6: None,
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // conn_id=0, seqno=0 line up with the channel's initial
+        // recv_iv state on the very first inbound frame.
+        let frame = build_inbound_servertoclient_frame(&stc, 0, 0);
+        Self {
+            transport: StdMutex::new(Some(ScriptedTcpTransport {
+                pending: StdMutex::new(Some(frame)),
+            })),
+        }
+    }
+}
+
+impl TcpTransportFactory for ScriptedTcpFactory {
+    type Transport = ScriptedTcpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        let transport = self.transport.lock().unwrap().take();
+        async move {
+            transport.ok_or_else(|| {
+                std::io::Error::other("ScriptedTcpFactory::connect called twice")
+            })
+        }
+    }
+}
+
+/// UDP factory that records the `SocketAddr` passed to `connect()`
+/// and vends a `NoopUdpTransport` (so the channel comes up but never
+/// actually sends). Tests read `connected_to` to check what UDP
+/// target the daemon picked.
+struct AddrCapturingUdpFactory {
+    captured: Arc<StdMutex<Option<std::net::SocketAddr>>>,
+}
+
+impl AddrCapturingUdpFactory {
+    fn new() -> (Self, Arc<StdMutex<Option<std::net::SocketAddr>>>) {
+        let captured = Arc::new(StdMutex::new(None));
+        (
+            Self { captured: Arc::clone(&captured) },
+            captured,
+        )
+    }
+}
+
+impl UdpTransportFactory for AddrCapturingUdpFactory {
+    type Transport = NoopUdpTransport;
+
+    fn connect(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        *self.captured.lock().unwrap() = Some(addr);
+        async { Ok(NoopUdpTransport) }
+    }
+
+    fn channel_config(&self) -> zwift_relay::UdpChannelConfig {
+        zwift_relay::UdpChannelConfig { max_hellos: 0, ..Default::default() }
+    }
+}
+
+/// 3a.i — UDP target must come from the first `udp_config` push on
+/// the TCP stream, not from `session.tcp_servers[0]`. Today the
+/// daemon connects UDP to whatever `tcp_servers[0]` says, which is
+/// why the live trace got `Connection refused` — the UDP server
+/// pool is announced separately from the TCP server pool.
+#[tokio::test]
+async fn udp_target_taken_from_first_udp_config_push_not_tcp_servers() {
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+    let mut session = fixture_session();
+    session.tcp_servers = vec![zwift_relay::TcpServer { ip: "10.99.99.99".into() }];
+    let pushed_udp_ip = "10.55.55.55";
+    let pushed_udp_port: i32 = 3023;
+
+    let tcp_factory = ScriptedTcpFactory::pushing_udp_config(pushed_udp_ip, pushed_udp_port);
+    let (udp_factory, captured) = AddrCapturingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(session),
+        tcp_factory,
+        udp_factory,
+    )
+    .await
+    .expect("start");
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let target = captured
+        .lock()
+        .unwrap()
+        .expect(
+            "STEP-12.13 D3: udp_factory.connect() must be called once \
+             start_all_inner sees the first udp_config push",
+        );
+    assert_eq!(
+        target.ip().to_string(),
+        pushed_udp_ip,
+        "STEP-12.13 D3: UDP target must come from the udp_config push, \
+         not from session.tcp_servers; expected {pushed_udp_ip}, got {target}",
+    );
+    assert_ne!(
+        target.ip().to_string(),
+        "10.99.99.99",
+        "STEP-12.13 D3: UDP must not silently fall back to tcp_servers[0] \
+         when a udp_config push is available on the TCP stream",
+    );
+}
+
+/// 3a.ii — without a `udp_config` push from the TCP stream, the
+/// daemon must NOT silently fall back to `tcp_servers[0]`. Today it
+/// does (the very bug D3 fixes), so `connect()` is called within
+/// milliseconds of TCP-Established. Post-fix: no `connect()` call
+/// within the wait window because the daemon is parked waiting for
+/// the push.
+#[tokio::test]
+async fn start_all_inner_waits_for_udp_config_before_udp_connect() {
+    let cfg = make_config("monitor@example.com", "monitor-pass");
+    let (udp_factory, captured) = AddrCapturingUdpFactory::new();
+
+    // Use the regular StubTcpFactory — its NoopTcpTransport blocks
+    // forever on read_chunk, so no ServerToClient ever arrives.
+    let task = tokio::spawn(async move {
+        let _ = RelayRuntime::start_with_all_deps(
+            &cfg,
+            None,
+            StubAuth,
+            StubSupervisorFactory::new(fixture_session()),
+            StubTcpFactory::new(),
+            udp_factory,
+        )
+        .await;
+    });
+
+    // Pre-fix the daemon connects UDP almost immediately after the
+    // TCP-Established event (within a few ms). 500 ms is well past
+    // any reasonable spin-up time, so a None reading here is strong
+    // evidence the daemon is correctly parked waiting for the push.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let observed = *captured.lock().unwrap();
+    task.abort();
+    let _ = task.await;
+
+    assert!(
+        observed.is_none(),
+        "STEP-12.13 D3: udp_factory.connect() must not be called before \
+         the daemon receives a udp_config push from the TCP stream; \
+         silently falling back to tcp_servers[0] is the bug being fixed. \
+         Observed connect() target: {observed:?}",
+    );
+}
