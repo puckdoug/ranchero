@@ -50,7 +50,7 @@ checklist text reproduced under the same pair numbers.
 **Critical-block fix order** (phases 1–8 must land in order — each
 unblocks the next point in the live-trace failure chain):
 
-- [ ] **1a** — Tests for Phase 1 (UDP target port + ack matcher +
+- [x] **1a** — Tests for Phase 1 (UDP target port + ack matcher +
   connId counters): `pick_initial_udp_target` uses port 3024 even
   when `RelayAddress.port = 3022`; hello-ack matcher reads
   `stc.stc_f5` (tag 5) and matches; UDP recv trace reports

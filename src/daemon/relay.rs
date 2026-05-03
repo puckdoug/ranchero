@@ -2744,6 +2744,35 @@ mod tests {
         );
     }
 
+    // STEP-12.14 §C5 / §1a — `pick_initial_udp_target` must hardcode
+    // the secure UDP port (3024) and ignore whatever the proto says
+    // in `RelayAddress.port` (which Zwift sets to 3022, the
+    // *plaintext* port). Sauce4zwift's `UDPChannel.establish` line
+    // 1338 hardcodes `socket.connect(3024, ip)`. Sending our
+    // AES-128-GCM-encrypted hellos to the plaintext port surfaces as
+    // `os error 61: Connection refused` (the symptom in the live
+    // trace dated 2026-05-03).
+    #[test]
+    fn pick_initial_udp_target_uses_secure_port_when_proto_says_plaintext() {
+        let addrs = vec![zwift_proto::RelayAddress {
+            ip: Some("10.0.0.1".to_string()),
+            port: Some(3022), // plaintext port — sauce ignores; zoffline-side comment says default 3022
+            lb_realm: Some(0),
+            lb_course: Some(0),
+            ra_f5: None,
+            ra_f6: None,
+        }];
+        let target = pick_initial_udp_target(&addrs).expect("address parses");
+        assert_eq!(
+            target.port(),
+            zwift_relay::UDP_PORT_SECURE,
+            "STEP-12.14 §C5: daemon must hardcode UDP port 3024; the \
+             proto's `port` field carries the plaintext port (3022) which \
+             would refuse our encrypted hellos. Got {target}",
+        );
+        assert_eq!(target.ip().to_string(), "10.0.0.1");
+    }
+
     #[tokio::test]
     async fn udp_shutdown_drains_capture_writer() {
         let path = tempfile::NamedTempFile::new().expect("tempfile");

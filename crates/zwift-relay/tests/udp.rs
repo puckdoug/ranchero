@@ -1036,3 +1036,175 @@ async fn udp_steady_state_recv_emits_relay_udp_message_recv_with_fields() {
          relay.udp.message.recv; found the old event name in tracing log",
     );
 }
+
+// --- STEP-12.14 §N10 / §N11 — Phase 1a tests ---------------------------
+//
+// N10: the hello-ack matcher must read the ack-seqno from
+// `ServerToClient.stc_f5` (proto tag 5 = sauce's `ackSeqno` —
+// "UDP ack to our previously sent seqno"). We currently read
+// `stc.seqno` (tag 4), which is the SERVER's own outgoing seqno
+// and has no relationship to our outgoing hello seqnos. Sync
+// "converges" today only by coincidence (when the server's seqno
+// happens to match a value we sent); against live Zwift, sync
+// would never converge.
+//
+// N11: the `relay.udp.message.recv` debug event currently reports
+// `player_count = stc.player_states.len()` — but `stc.player_states`
+// is zoffline's name for tag 28 (= sauce's `blockPlayerStates`,
+// the BLOCKED list). The actual player states are at tag 8
+// (`stc.states`), which the daemon correctly uses elsewhere.
+
+/// Build an inbound packet that carries the ack-seqno in `stc_f5`
+/// (proto tag 5 = sauce's `ackSeqno`), leaving `stc.seqno` (tag 4
+/// = the server's own outgoing seqno) at `None`. This mirrors what
+/// Zwift's real UDP server does — sauce's hello-ack matcher
+/// (`zwift.mjs:1351`) reads `packet.ackSeqno`, not `packet.seqno`.
+fn build_inbound_ack_at_tag_5(
+    recv_iv_seqno: u32,
+    ack_seqno: u32,
+    world_time_ms: i64,
+) -> Vec<u8> {
+    let stc = ServerToClient {
+        seqno: None,                      // tag 4 — server's own seqno (unused)
+        stc_f5: Some(ack_seqno as i32),   // tag 5 — sauce's `ackSeqno`
+        world_time: Some(world_time_ms),
+        ..Default::default()
+    };
+    let proto_bytes = stc.encode_to_vec();
+    let header = Header {
+        flags: HeaderFlags::SEQNO,
+        relay_id: None,
+        conn_id: None,
+        seqno: Some(recv_iv_seqno),
+    };
+    let header_bytes = header.encode();
+    let iv = RelayIv {
+        device: DeviceType::Relay,
+        channel: ChannelType::UdpServer,
+        conn_id: TEST_CONN_ID,
+        seqno: recv_iv_seqno,
+    };
+    let cipher = encrypt(&TEST_AES_KEY, &iv.to_bytes(), &header_bytes, &proto_bytes);
+    let mut wire = Vec::with_capacity(header_bytes.len() + cipher.len());
+    wire.extend_from_slice(&header_bytes);
+    wire.extend_from_slice(&cipher);
+    wire
+}
+
+#[tokio::test]
+async fn udp_hello_ack_matcher_reads_ackseqno_at_proto_tag_5_not_tag_4() {
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let config = test_config();
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    // Drive 6 hello/ack pairs (MIN_SYNC_SAMPLES=5; need >5 = 6+ to
+    // converge). Each ack puts the matched seqno in `stc_f5` (tag 5)
+    // and leaves `stc.seqno` (tag 4) None — exactly what sauce's
+    // matcher reads.
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("client outgoing seqno");
+        let reply = build_inbound_ack_at_tag_5(i, ack, 1_000_000 + i64::from(i) * 100);
+        handle.inbound_sender.send(reply).expect("reply");
+    }
+
+    let result = task.await.expect("task join");
+    if let Err(e) = result {
+        panic!(
+            "STEP-12.14 §N10: UDP hello sync must converge when the server \
+             echoes the ack-seqno in `stc.stc_f5` (proto tag 5 = sauce's \
+             `ackSeqno`). Today the matcher reads `stc.seqno` (tag 4 = the \
+             server's own outgoing seqno) and ignores tag 5, so sync never \
+             finds a sample. Got error: {e}",
+        );
+    }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn udp_recv_trace_player_count_uses_states_tag_8_not_player_states_tag_28() {
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let config = test_config();
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    // Drive convergence first.
+    for i in 0..6u32 {
+        let hello = handle.outbound_receiver.recv().await.expect("hello");
+        let (_h, cts) = parse_outbound(&hello);
+        let ack = cts.seqno.expect("seqno");
+        handle
+            .inbound_sender
+            .send(build_inbound(i, ack, 1_000_000 + i64::from(i) * 100))
+            .expect("reply");
+    }
+    let (channel, mut events) = task.await.expect("task").expect("converged");
+    let _ = events.recv().await.expect("Established");
+
+    // Build a steady-state inbound packet with `states` (tag 8 =
+    // sauce's `playerStates`) populated to 3 entries and
+    // `player_states` (zoffline's misleading name for tag 28 =
+    // sauce's `blockPlayerStates`) left empty. The `relay.udp.message.recv`
+    // trace must report `player_count=3`, NOT `player_count=0`.
+    let stc = ServerToClient {
+        states: vec![
+            PlayerState { id: Some(101), ..Default::default() },
+            PlayerState { id: Some(102), ..Default::default() },
+            PlayerState { id: Some(103), ..Default::default() },
+        ],
+        player_states: vec![], // tag 28, deliberately empty
+        seqno: None,
+        stc_f5: Some(100),
+        world_time: Some(2_000_000),
+        ..Default::default()
+    };
+    let proto_bytes = stc.encode_to_vec();
+    let header = Header {
+        flags: HeaderFlags::SEQNO,
+        relay_id: None,
+        conn_id: None,
+        seqno: Some(6),
+    };
+    let header_bytes = header.encode();
+    let iv = RelayIv {
+        device: DeviceType::Relay,
+        channel: ChannelType::UdpServer,
+        conn_id: TEST_CONN_ID,
+        seqno: 6,
+    };
+    let cipher = encrypt(&TEST_AES_KEY, &iv.to_bytes(), &header_bytes, &proto_bytes);
+    let mut wire = Vec::with_capacity(header_bytes.len() + cipher.len());
+    wire.extend_from_slice(&header_bytes);
+    wire.extend_from_slice(&cipher);
+    handle.inbound_sender.send(wire).expect("inbound");
+
+    let _ = tokio::time::timeout(Duration::from_millis(500), events.recv())
+        .await
+        .expect("event within budget")
+        .expect("event");
+
+    channel.shutdown_and_wait().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "player_count=3"),
+        "STEP-12.14 §N11: relay.udp.message.recv must report \
+         `player_count = stc.states.len()` (tag 8 = sauce's `playerStates`), \
+         not `stc.player_states.len()` (tag 28 = sauce's `blockPlayerStates`). \
+         The inbound packet had 3 entries in tag 8 and 0 in tag 28; the trace \
+         must show `player_count=3`.",
+    );
+    assert!(
+        !tracing_test::internal::logs_with_scope_contain("ranchero", "player_count=0"),
+        "STEP-12.14 §N11: trace currently reads from tag 28 (the blocked \
+         list, empty in this test) so reports `player_count=0`. After the \
+         fix it must read from tag 8.",
+    );
+}

@@ -1696,3 +1696,50 @@ async fn start_all_inner_waits_for_udp_config_before_udp_connect() {
          Observed connect() target: {observed:?}",
     );
 }
+
+// ==========================================================================
+// STEP-12.14 §N2 / §1a — TCP and UDP `connId` counters must be independent.
+// Sauce's NetChannel subclasses (`TCPChannel`, `UDPChannel`) each have their
+// own `static _connInc = 0` so a fresh process gets TCP `connId=0` AND UDP
+// `connId=0` (same value, different counters). We currently share a single
+// counter, so TCP and UDP get different values. This test fails to compile
+// in red state because `next_tcp_conn_id` and `next_udp_conn_id` don't
+// exist yet — the fix is to split `next_conn_id` into the two functions.
+// ==========================================================================
+
+#[test]
+fn tcp_and_udp_conn_id_counters_are_independent() {
+    use ranchero::daemon::relay::{next_tcp_conn_id, next_udp_conn_id};
+
+    let tcp_first = next_tcp_conn_id();
+    let udp_first = next_udp_conn_id();
+    let tcp_second = next_tcp_conn_id();
+    let udp_second = next_udp_conn_id();
+
+    assert_eq!(
+        tcp_second.wrapping_sub(tcp_first),
+        1,
+        "TCP counter must increment monotonically",
+    );
+    assert_eq!(
+        udp_second.wrapping_sub(udp_first),
+        1,
+        "UDP counter must increment monotonically",
+    );
+
+    // The crucial assertion: a UDP allocation must NOT advance the TCP
+    // counter and vice-versa. After two intervening UDP allocations,
+    // the next TCP allocation must still be exactly one step past the
+    // previous TCP allocation.
+    let tcp_third = next_tcp_conn_id();
+    let _udp_third = next_udp_conn_id();
+    let _udp_fourth = next_udp_conn_id();
+    let tcp_fourth = next_tcp_conn_id();
+    assert_eq!(
+        tcp_fourth.wrapping_sub(tcp_third),
+        1,
+        "STEP-12.14 §N2: TCP counter must NOT advance from intervening \
+         UDP allocations; sauce uses two separate static counters per \
+         NetChannel subclass.",
+    );
+}
