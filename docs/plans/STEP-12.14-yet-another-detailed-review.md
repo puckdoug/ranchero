@@ -135,7 +135,7 @@ AtomicI64` to `RuntimeInner`; populate from `recv_loop`'s
 **Post-critical batches** (independent of each other; can land in
 any order after Phase 8):
 
-- [ ] **Aa** — Tests for Batch A (live pool routing &
+- [x] **Aa** — Tests for Batch A (live pool routing &
       multi-channel UDP): mid-session `udp_config_vod_*` pushes
       update `inner.pool_router`; pool router swaps emit
       `GameEvent::PoolSwap`; UDP channel swap runs grace shutdown

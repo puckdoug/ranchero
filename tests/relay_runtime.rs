@@ -16,7 +16,7 @@ use ranchero::config::{
     EditingMode, RedactedString, ResolvedConfig, ZwiftEndpoints,
 };
 use ranchero::daemon::relay::{
-    AuthLogin, DefaultUdpTransportFactory, RelayRuntime, SessionLogin,
+    AuthLogin, DefaultUdpTransportFactory, GameEvent, RelayRuntime, SessionLogin,
     SessionSupervisorFactory, SessionSupervisorHandle, TcpTransportFactory,
     UdpTransportFactory,
 };
@@ -2332,5 +2332,259 @@ async fn tcp_hello_carries_larg_wa_time_field_in_trace() {
         "STEP-12.14 §M2: relay.tcp.hello.sent must carry a larg_wa_time= field \
          so operators can verify the reconnect timestamp is correctly populated; \
          not found in log",
+    );
+}
+
+// ==========================================================================
+// STEP-12.14 Batch A §Aa — Live pool routing integration tests.
+//
+// Tests cover recv_loop storing udp_config_vod pools in inner.pool_router
+// and calling recompute_udp_selection after each update.
+//
+// All four tests are red until Batch Ab:
+//   1. recv_loop Inbound arm calls extract_udp_pools(&stc) and stores each
+//      pool via inner.pool_router.lock().apply_pool_update(pool), emitting
+//      relay.udp.pool_router.updated with lb_realm and lb_course fields.
+//   2. recompute_udp_selection moves from #[cfg(test)] to production code
+//      and is called from the recv_loop after each pool update; a
+//      GameEvent::PoolSwap is broadcast when the selected server changes.
+//   3. On a server change, the old UdpChannel is scheduled for a 60-second
+//      grace shutdown; relay.udp.channel.grace_shutdown is emitted when the
+//      grace task is spawned.
+// ==========================================================================
+
+/// Build a `ServerToClient` carrying a single `udp_config_vod_1` pool entry.
+/// Used by Batch A integration tests to inject mid-session pool pushes into
+/// the recv-loop without going through the startup wait path.
+fn build_pool_push_stc(lb_realm: i32, lb_course: i32, ip: &str) -> zwift_proto::ServerToClient {
+    zwift_proto::ServerToClient {
+        udp_config_vod_1: Some(zwift_proto::UdpConfigVod {
+            relay_addresses_vod: vec![zwift_proto::RelayAddressesVod {
+                lb_realm: Some(lb_realm),
+                lb_course: Some(lb_course),
+                relay_addresses: vec![zwift_proto::RelayAddress {
+                    ip: Some(ip.to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// A mid-session `udp_config_vod_1` push must cause the recv-loop to store
+/// the inbound pool in `inner.pool_router` and emit a
+/// `relay.udp.pool_router.updated` debug trace event carrying the pool's
+/// `lb_realm` and `lb_course` fields. (Batch A §Aa)
+///
+/// Red state: the recv-loop's Inbound arm ignores `stc.udp_config_vod_1`
+/// entirely; no pool is stored and no trace event fires.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn recv_loop_inbound_updates_pool_router_from_udp_config_push() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    // Inject a pool for (realm=1, course=5) — distinct from the generic
+    // lb_course=0 pool, so any match must come from the Inbound arm.
+    let stc = build_pool_push_stc(1, 5, "10.0.0.1");
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.udp.pool_router.updated",
+        ),
+        "Batch A §Aa: recv_loop must call extract_udp_pools on inbound STC \
+         and store each pool via pool_router.apply_pool_update, emitting \
+         relay.udp.pool_router.updated; not found in trace log",
+    );
+}
+
+/// After a mid-session pool push, the recv-loop must call
+/// `recompute_udp_selection`. When the computed server differs from the
+/// current selection, a `GameEvent::PoolSwap` must be broadcast.
+/// (Batch A §Aa)
+///
+/// The watched athlete starts at `(realm=0, course=0, x=0, y=0)`. Injecting
+/// a pool for `(realm=0, course=0)` with one server should trigger a swap
+/// from `None` to that server immediately.
+///
+/// Red state: the recv-loop does not call `recompute_udp_selection` after
+/// storing a pool; no `GameEvent::PoolSwap` is emitted.
+#[tokio::test]
+async fn pool_router_swap_emits_pool_swap_game_event() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    let mut events_rx = runtime.events();
+
+    // Pool for (realm=0, course=0): matches the watched athlete's initial
+    // state, so recompute_udp_selection should pick this server and emit
+    // PoolSwap { from: None, to: <addr> }.
+    let stc = build_pool_push_stc(0, 0, "10.0.0.2");
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let mut found_swap = false;
+    while let Ok(e) = events_rx.try_recv() {
+        if matches!(e, GameEvent::PoolSwap { .. }) {
+            found_swap = true;
+        }
+    }
+    assert!(
+        found_swap,
+        "Batch A §Aa: recv_loop must call recompute_udp_selection after a \
+         pool update; when the new server differs from the current selection, \
+         GameEvent::PoolSwap must be broadcast; none received",
+    );
+}
+
+/// When a pool swap changes the active UDP server, the old channel must be
+/// scheduled for a 60-second grace shutdown, and the runtime must emit
+/// `relay.udp.channel.grace_shutdown` when the grace task is spawned.
+/// (Batch A §Aa / Ab §L6)
+///
+/// Red state: channel swapping is not yet implemented; no grace-shutdown
+/// event fires and the assertion fails.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn udp_channel_swap_runs_grace_shutdown_on_old_channel() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (udp_factory, _connected, _written) = RecordingUdpFactory::new();
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("start");
+
+    // First push: establishes 10.0.0.1 as the selected UDP server.
+    let stc_a = build_pool_push_stc(0, 0, "10.0.0.1");
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc_a)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Second push for the same (realm=0, course=0) with a different IP:
+    // triggers a swap and should schedule the old channel for grace shutdown.
+    let stc_b = build_pool_push_stc(0, 0, "10.0.0.3");
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc_b)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.udp.channel.grace_shutdown",
+        ),
+        "Batch A §Aa: when a pool swap changes the active UDP server, the \
+         old channel must be scheduled for grace shutdown and \
+         relay.udp.channel.grace_shutdown must be emitted at that point; \
+         not found in log",
+    );
+}
+
+/// A `udp_config_vod_1` push may carry pools keyed by non-zero `lb_realm`
+/// (portal realm). Each pool must be stored independently in the router
+/// under its own `(lb_realm, lb_course)` key, and the trace event must
+/// carry the `lb_realm` value so operators can identify portal-realm entries.
+/// (Batch A §Aa)
+///
+/// Red state: the recv-loop ignores pool pushes entirely; no pools are
+/// stored and no trace events fire.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn portal_pool_handled_via_portal_key() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    // Push an STC with two pools: one generic (lb_realm=0) and one
+    // portal-realm (lb_realm=1). Both must be stored independently.
+    let stc = zwift_proto::ServerToClient {
+        udp_config_vod_1: Some(zwift_proto::UdpConfigVod {
+            relay_addresses_vod: vec![
+                zwift_proto::RelayAddressesVod {
+                    lb_realm: Some(0),
+                    lb_course: Some(0),
+                    relay_addresses: vec![zwift_proto::RelayAddress {
+                        ip: Some("10.0.0.1".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                zwift_proto::RelayAddressesVod {
+                    lb_realm: Some(1),
+                    lb_course: Some(0),
+                    relay_addresses: vec![zwift_proto::RelayAddress {
+                        ip: Some("10.0.0.2".to_string()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.udp.pool_router.updated",
+        ),
+        "Batch A §Aa: recv_loop must store all pools (including portal-realm) \
+         from an inbound udp_config_vod_1 push; relay.udp.pool_router.updated \
+         not found in trace log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "lb_realm=1"),
+        "Batch A §Aa: relay.udp.pool_router.updated must carry lb_realm=1 \
+         for the portal-realm pool entry; not found in trace log",
     );
 }
