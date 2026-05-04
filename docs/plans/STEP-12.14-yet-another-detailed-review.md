@@ -160,7 +160,7 @@ any order after Phase 8):
       outer retry loop handles it (sauce parity); add
       `auth.logout()` and `auth.leave()` and call them on
       shutdown.
-- [ ] **Ca** — Tests for Batch C (state-refresh fallback &
+- [x] **Ca** — Tests for Batch C (state-refresh fallback &
       suspend / resume): `_refreshStates` polls
       `getPlayerState` on a self-tuning interval; daemon suspends
       after 15 s of no self-state; daemon resumes on incoming

@@ -2865,3 +2865,286 @@ async fn clean_shutdown_sends_logout_and_leave() {
          and emit relay.runtime.leave; not found in log",
     );
 }
+
+// --- Batch C tests -------------------------------------------------------
+//
+// Cover STEP-12.14 §L1 (state-refresh fallback) and §L2 (suspend / resume
+// on idle). Sauce's `_refreshStates` polls `getPlayerState` on a 3-30 s
+// self-tuning interval; auto-suspends after 15 s of no fresh self-state;
+// auto-resumes on incoming live data; and synthesizes "fake server
+// packets" from polled state so downstream consumers always see fresh
+// data. All four tests are red until Cb implements the refresher and
+// suspend / resume hooks.
+
+/// Auth stub that records every `get_player_state(id)` call's
+/// (athlete_id, virtual-clock instant) and returns a configurable
+/// `PlayerState`. Drives both the course gate (one call at startup)
+/// and the state-refresher (recurring calls during the test).
+struct PollingCounterAuth {
+    polls: Arc<StdMutex<Vec<(i64, tokio::time::Instant)>>>,
+    state: zwift_proto::PlayerState,
+}
+
+impl PollingCounterAuth {
+    fn new(
+        state: zwift_proto::PlayerState,
+    ) -> (Self, Arc<StdMutex<Vec<(i64, tokio::time::Instant)>>>) {
+        let polls = Arc::new(StdMutex::new(Vec::new()));
+        (
+            Self {
+                polls: Arc::clone(&polls),
+                state,
+            },
+            polls,
+        )
+    }
+}
+
+impl AuthLogin for PollingCounterAuth {
+    async fn login(&self, _email: &str, _password: &str) -> Result<(), zwift_api::Error> {
+        Ok(())
+    }
+    async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
+        Ok(12345)
+    }
+    async fn get_player_state(
+        &self,
+        athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
+        self.polls
+            .lock()
+            .unwrap()
+            .push((athlete_id, tokio::time::Instant::now()));
+        Ok(Some(self.state.clone()))
+    }
+}
+
+/// The state-refresher must poll `get_player_state(watched_id)` on a
+/// self-tuning interval — 3 s minimum while the inbound stream is live,
+/// expanding toward 30 s after 15 s of no inbound self-state.
+/// (STEP-12.14 §L1, §Ca)
+///
+/// Red state: no state-refresher exists; only the course-gate calls
+/// `get_player_state` once at startup, so the in-window count never
+/// rises above 1.
+#[tokio::test(start_paused = true)]
+async fn state_refresh_polls_get_player_state_on_self_tuning_interval() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (auth, poll_log) = PollingCounterAuth::new(zwift_proto::PlayerState {
+        world: Some(1),
+        ..Default::default()
+    });
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        auth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    // The course gate accounts for one call before start returns.
+    let initial = poll_log.lock().unwrap().len();
+
+    // 14 s of paused virtual time. Auto-advance fires the refresher's
+    // pending timer between each iteration, so a 3-s minimum cadence
+    // produces polls at t = 3, 6, 9, 12 → 4 additional calls.
+    tokio::time::sleep(std::time::Duration::from_secs(14)).await;
+    let after_initial = poll_log.lock().unwrap().len();
+    let polls_in_first_14s = after_initial - initial;
+
+    // 60 s of additional virtual time after the suspend threshold (15 s)
+    // is crossed. With the 3-s cadence held flat we would see ~20 polls;
+    // the self-tuning expansion toward 30 s must reduce that count.
+    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    let after_expansion = poll_log.lock().unwrap().len();
+    let polls_in_next_60s = after_expansion - after_initial;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    // Every refresher poll must target the WATCHED athlete (54321),
+    // not the monitor account (12345). Sauce's `_refreshStates` calls
+    // `getPlayerState(watchingId)`. (STEP-12.14 §R1 parity)
+    let log = poll_log.lock().unwrap();
+    for (id, _) in log.iter() {
+        assert_eq!(
+            *id,
+            54321i64,
+            "Batch C §Ca: refresher must poll the watched athlete's ID \
+             (54321), NOT the monitor's (12345); saw {id}",
+        );
+    }
+    drop(log);
+
+    assert!(
+        polls_in_first_14s >= 3,
+        "Batch C §Ca: state-refresher must poll get_player_state at the \
+         3-s minimum cadence; expected ≥3 refresher polls in 14s, got \
+         {polls_in_first_14s} (course gate accounted for {initial} initial poll)",
+    );
+    assert!(
+        polls_in_next_60s < 15,
+        "Batch C §Ca: after 15s of no inbound state the refresh delay \
+         must expand toward 30s; expected fewer than 15 polls in the \
+         next 60s of suspended idle, got {polls_in_next_60s}",
+    );
+}
+
+/// After 15 s with no inbound self-state, the daemon must auto-suspend
+/// and emit `relay.runtime.suspended_idle`. Sauce's `_refreshStates`
+/// calls `suspend()` when `age > 15000`. (STEP-12.14 §L2, §Ca)
+///
+/// Red state: no suspend logic exists; the trace event never fires.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn daemon_suspends_after_15s_of_no_self_state() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    // The NoopTcp transport delivers the udp_config push frame and then
+    // blocks forever; no inbound self-state ever arrives. Advance past
+    // the 15-s suspend threshold.
+    tokio::time::sleep(std::time::Duration::from_secs(16)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.suspended_idle",
+        ),
+        "Batch C §Ca: after 15s of no inbound self-state the daemon \
+         must auto-suspend and emit relay.runtime.suspended_idle; not \
+         found in log",
+    );
+}
+
+/// While suspended, an inbound self-state for the watched athlete must
+/// resume the daemon and emit `relay.runtime.resumed`. Sauce's
+/// `_updateSelfState` calls `resume()` on incoming live data.
+/// (STEP-12.14 §L2)
+///
+/// Red state: suspend / resume are not implemented; no trace event fires.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn daemon_resumes_on_incoming_self_state_when_suspended() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    // Cross the 15-s suspend threshold first.
+    tokio::time::sleep(std::time::Duration::from_secs(16)).await;
+
+    // Inject a fresh inbound state for the watched athlete (id = 54321).
+    // The recv-loop's Inbound arm must update the self-state timestamp
+    // and call resume() when the daemon is currently suspended.
+    let stc = zwift_proto::ServerToClient {
+        states: vec![zwift_proto::PlayerState {
+            id: Some(54321),
+            world: Some(1),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+
+    // Give the recv-loop a moment to process the injected event.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.resumed",
+        ),
+        "Batch C §Ca: an inbound self-state for the watched athlete must \
+         resume a suspended daemon and emit relay.runtime.resumed; not \
+         found in log",
+    );
+}
+
+/// Each polled `PlayerState` from the state-refresher must be broadcast
+/// as a `GameEvent::PlayerState` so downstream consumers see it the same
+/// as if it had arrived on the wire. Sauce's `_refreshStates` synthesizes
+/// "fake server packets" for exactly this reason. (STEP-12.14 §Ca)
+///
+/// Red state: no state-refresher exists, so polled states are never
+/// broadcast and no `GameEvent::PlayerState` arrives.
+#[tokio::test(start_paused = true)]
+async fn state_refresh_synthesizes_fake_server_packet_from_polled_state() {
+    let cfg = make_config("monitor@example.com", "pass");
+    // Polled state carries concrete athlete_id + power + cadence + speed
+    // so the synthesized GameEvent can be matched precisely.
+    let (auth, _polls) = PollingCounterAuth::new(zwift_proto::PlayerState {
+        id: Some(54321),
+        world: Some(1),
+        power: Some(213),
+        cadence_u_hz: Some(1_500_000),
+        speed: Some(40_000),
+        ..Default::default()
+    });
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        auth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    let mut events_rx = runtime.events();
+
+    // Sleep past the first refresh tick (3 s) so at least one synthesized
+    // packet has been broadcast.
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let mut found_synthesized = false;
+    while let Ok(event) = events_rx.try_recv() {
+        if let GameEvent::PlayerState {
+            athlete_id: 54321,
+            power_w: 213,
+            cadence_u_hz: 1_500_000,
+            speed_mm_h: 40_000,
+            ..
+        } = event
+        {
+            found_synthesized = true;
+            break;
+        }
+    }
+    assert!(
+        found_synthesized,
+        "Batch C §Ca: each polled PlayerState must be broadcast as a \
+         GameEvent::PlayerState (the \"fake server packet\" synthesis) \
+         carrying the polled athlete_id / power / cadence / speed; \
+         no matching event observed",
+    );
+}
