@@ -51,198 +51,198 @@ checklist text reproduced under the same pair numbers.
 unblocks the next point in the live-trace failure chain):
 
 - [x] **1a** — Tests for Phase 1 (UDP target port + ack matcher +
-  connId counters): `pick_initial_udp_target` uses port 3024 even
-  when `RelayAddress.port = 3022`; hello-ack matcher reads
-  `stc.stc_f5` (tag 5) and matches; UDP recv trace reports
-  `player_count` from `stc.states` (tag 8); TCP and UDP `connId`
-  counters are independent.
+      connId counters): `pick_initial_udp_target` uses port 3024 even
+      when `RelayAddress.port = 3022`; hello-ack matcher reads
+      `stc.stc_f5` (tag 5) and matches; UDP recv trace reports
+      `player_count` from `stc.states` (tag 8); TCP and UDP `connId`
+      counters are independent.
 - [x] **1b** — Implementation for Phase 1: hardcode 3024 in
-  `pick_initial_udp_target`; read `stc.stc_f5` instead of
-  `stc.seqno`; fix the `player_count` trace; split
-  `CONN_ID_COUNTER` into TCP and UDP statics.
+      `pick_initial_udp_target`; read `stc.stc_f5` instead of
+      `stc.seqno`; fix the `player_count` trace; split
+      `CONN_ID_COUNTER` into TCP and UDP statics.
 - [x] **2a** — Tests for Phase 2 (HTTP impersonation):
-  `Platform: OSX` on every authenticated request; full
-  `User-Agent: CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0`;
-  `Content-Type: application/x-protobuf-lite; version=2.0` on
-  protobuf POSTs; `Accept: application/json` on token requests;
-  `Accept: application/x-protobuf-lite` on protobuf requests.
+      `Platform: OSX` on every authenticated request; full
+      `User-Agent: CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0`;
+      `Content-Type: application/x-protobuf-lite; version=2.0` on
+      protobuf POSTs; `Accept: application/json` on token requests;
+      `Accept: application/x-protobuf-lite` on protobuf requests.
 - [x] **2b** — Implementation for Phase 2: add `platform` to
-  `Config`; thread `Platform` header into every send; replace
-  `DEFAULT_USER_AGENT`; append `; version=2.0` to
-  `PROTOBUF_CONTENT_TYPE`; set `Accept` headers in `login`,
-  `do_refresh`, and `post`.
+      `Config`; thread `Platform` header into every send; replace
+      `DEFAULT_USER_AGENT`; append `; version=2.0` to
+      `PROTOBUF_CONTENT_TYPE`; set `Accept` headers in `login`,
+      `do_refresh`, and `post`.
 - [x] **3a** — Tests for Phase 3 (UDP pool selection): daemon
-  picks UDP target from the `lb_course=0` pool when both generic
-  and per-course pools are present; errors with a typed variant
-  if no generic pool is in the push.
+      picks UDP target from the `lb_course=0` pool when both generic
+      and per-course pools are present; errors with a typed variant
+      if no generic pool is in the push.
 - [x] **3b** — Implementation for Phase 3: refactor
-  `extract_udp_servers` → `extract_udp_pools` preserving the
-  `(lb_realm, lb_course)` discriminator; daemon's wait-for-
-  udp_config branch picks from the generic pool; add
-  `RelayRuntimeError::NoGenericPool`.
+      `extract_udp_servers` → `extract_udp_pools` preserving the
+      `(lb_realm, lb_course)` discriminator; daemon's wait-for-
+      udp_config branch picks from the generic pool; add
+      `RelayRuntimeError::NoGenericPool`.
 - [x] **4a** — Tests for Phase 4 (course gate via
-  `getPlayerState`): `auth.get_player_state(id)` decodes the
-  proto response; daemon calls it with `cfg.watched_athlete_id`
-  (NOT the monitor's `auth.athlete_id()`); daemon suspends when
-  the watched athlete has no `state.world` (course); daemon
-  errors when `cfg.watched_athlete_id` is unset.
+      `getPlayerState`): `auth.get_player_state(id)` decodes the
+      proto response; daemon calls it with `cfg.watched_athlete_id`
+      (NOT the monitor's `auth.athlete_id()`); daemon suspends when
+      the watched athlete has no `state.world` (course); daemon
+      errors when `cfg.watched_athlete_id` is unset.
 - [x] **4b** — Implementation for Phase 4: add
-  `ZwiftAuth::get_player_state` (HTTP GET
-  `/relay/worlds/1/players/{id}` returning a parsed
-  `PlayerState`); insert step 4.5 in `start_all_inner` to call
-  it and gate UDP setup on `state.world` (tag 35); add
-  `RelayRuntimeError::NoWatchedAthlete` and
-  `WatchedAthleteNotInGame`.
+      `ZwiftAuth::get_player_state` (HTTP GET
+      `/relay/worlds/1/players/{id}` returning a parsed
+      `PlayerState`); insert step 4.5 in `start_all_inner` to call
+      it and gate UDP setup on `state.world` (tag 35); add
+      `RelayRuntimeError::NoWatchedAthlete` and
+      `WatchedAthleteNotInGame`.
 - [x] **5a** — Tests for Phase 5 (post-establish UDP send + TCP
-  hello seqno): exactly one `send_player_state` call with
-  `watching_rider_id`, `id`, `just_watching = true`, `world` is
-  recorded between UDP convergence and the first heartbeat; TCP
-  hello carries `seqno = Some(0)`, not `Some(1)`.
-- [ ] **5b** — Implementation for Phase 5: insert
-  `udp_channel.send_player_state(initial_state)` between steps
-  9 and 10 of `start_all_inner`; change TCP hello literal's
-  `seqno: Some(1)` to `seqno: Some(0)`.
-- [ ] **6a** — Tests for Phase 6 (heartbeat content + shared
-  WorldTimer): heartbeat carries `id`, `just_watching`,
-  `watching_rider_id`, `world` (course), and a non-zero
-  `world_time` reflecting the SNTP offset adjusted during UDP
-  hello sync.
+      hello seqno): exactly one `send_player_state` call with
+      `watching_rider_id`, `id`, `just_watching = true`, `world` is
+      recorded between UDP convergence and the first heartbeat; TCP
+      hello carries `seqno = Some(0)`, not `Some(1)`.
+- [x] **5b** — Implementation for Phase 5: insert
+      `udp_channel.send_player_state(initial_state)` between steps
+      9 and 10 of `start_all_inner`; change TCP hello literal's
+      `seqno: Some(1)` to `seqno: Some(0)`.
+- [x] **6a** — Tests for Phase 6 (heartbeat content + shared
+      WorldTimer): heartbeat carries `id`, `just_watching`,
+      `watching_rider_id`, `world` (course), and a non-zero
+      `world_time` reflecting the SNTP offset adjusted during UDP
+      hello sync.
 - [ ] **6b** — Implementation for Phase 6: clone `world_timer`
-  before moving into `UdpChannel::establish`; pass the clone to
-  `HeartbeatScheduler` along with `watched_id` and `course_id`;
-  rewrite `next_payload` (now `next_state`) to populate the
-  required PlayerState fields and read `world_time` from the
-  shared timer; drop dead CTS-level fields per R2.
+      before moving into `UdpChannel::establish`; pass the clone to
+      `HeartbeatScheduler` along with `watched_id` and `course_id`;
+      rewrite `next_payload` (now `next_state`) to populate the
+      required PlayerState fields and read `world_time` from the
+      shared timer; drop dead CTS-level fields per R2.
 - [ ] **7a** — Tests for Phase 7 (UDP hello header consistency):
-  every UDP hello iteration's encoded header carries
-  `RELAY_ID | CONN_ID | SEQNO`, not just `SEQNO`.
+      every UDP hello iteration's encoded header carries
+      `RELAY_ID | CONN_ID | SEQNO`, not just `SEQNO`.
 - [ ] **7b** — Implementation for Phase 7: drop the
-  `hello_idx == 1` special case in
-  `udp.rs::build_send_header`; emit the full triple every
-  iteration.
+      `hello_idx == 1` special case in
+      `udp.rs::build_send_header`; emit the full triple every
+      iteration.
 - [ ] **8a** — Tests for Phase 8 (reconnect-state tracking):
-  `inner.last_world_update_ts` advances from inbound
-  `WorldAttribute.timestamp`; TCP hello's `larg_wa_time`
-  reads the running max; world updates with stale `ts` are
-  dropped; `last_player_update` carries the world-update
-  seqno running max.
+      `inner.last_world_update_ts` advances from inbound
+      `WorldAttribute.timestamp`; TCP hello's `larg_wa_time`
+      reads the running max; world updates with stale `ts` are
+      dropped; `last_player_update` carries the world-update
+      seqno running max.
 - [ ] **8b** — Implementation for Phase 8: add
-  `last_world_update_ts: AtomicI64` and `largest_wa_seqno:
-  AtomicI64` to `RuntimeInner`; populate from `recv_loop`'s
-  `Inbound` arm with dedup; thread current values into the
-  TCP hello literal in step 8 of `start_all_inner`.
+      `last_world_update_ts: AtomicI64` and `largest_wa_seqno:
+AtomicI64` to `RuntimeInner`; populate from `recv_loop`'s
+      `Inbound` arm with dedup; thread current values into the
+      TCP hello literal in step 8 of `start_all_inner`.
 
 **Post-critical batches** (independent of each other; can land in
 any order after Phase 8):
 
 - [ ] **Aa** — Tests for Batch A (live pool routing &
-  multi-channel UDP): mid-session `udp_config_vod_*` pushes
-  update `inner.pool_router`; pool router swaps emit
-  `GameEvent::PoolSwap`; UDP channel swap runs grace shutdown
-  on the old channel; portal pools are accepted via a
-  `'portal'` key analogue.
+      multi-channel UDP): mid-session `udp_config_vod_*` pushes
+      update `inner.pool_router`; pool router swaps emit
+      `GameEvent::PoolSwap`; UDP channel swap runs grace shutdown
+      on the old channel; portal pools are accepted via a
+      `'portal'` key analogue.
 - [ ] **Ab** — Implementation for Batch A: wire
-  `extract_udp_pools` into `recv_loop`'s `Inbound` arm;
-  implement `recompute_udp_selection` to call
-  `find_best_udp_server` and trigger swaps; extend
-  `RelayRuntime` to hold multiple UDP channels with grace
-  shutdown; patch the proto for `xBoundMin`/`yBoundMin`/
-  `securePort` (depends on Eb if proto fork lands first).
+      `extract_udp_pools` into `recv_loop`'s `Inbound` arm;
+      implement `recompute_udp_selection` to call
+      `find_best_udp_server` and trigger swaps; extend
+      `RelayRuntime` to hold multiple UDP channels with grace
+      shutdown; patch the proto for `xBoundMin`/`yBoundMin`/
+      `securePort` (depends on Eb if proto fork lands first).
 - [ ] **Ba** — Tests for Batch B (connect retry & supervisor
-  recovery): start failure triggers exponential backoff retry;
-  TCP server is pinned across reconnects; supervisor re-login
-  recreates channels with the new key; clean shutdown sends
-  `logout` and `leave`.
+      recovery): start failure triggers exponential backoff retry;
+      TCP server is pinned across reconnects; supervisor re-login
+      recreates channels with the new key; clean shutdown sends
+      `logout` and `leave`.
 - [ ] **Bb** — Implementation for Batch B: wrap
-  `start_all_inner` in a retry loop with `1.2^attempt`
-  backoff; persist last-good TCP IP in `RuntimeInner`; replace
-  in-place re-login with `SessionEvent::SessionLost` so the
-  outer retry loop handles it (sauce parity); add
-  `auth.logout()` and `auth.leave()` and call them on
-  shutdown.
+      `start_all_inner` in a retry loop with `1.2^attempt`
+      backoff; persist last-good TCP IP in `RuntimeInner`; replace
+      in-place re-login with `SessionEvent::SessionLost` so the
+      outer retry loop handles it (sauce parity); add
+      `auth.logout()` and `auth.leave()` and call them on
+      shutdown.
 - [ ] **Ca** — Tests for Batch C (state-refresh fallback &
-  suspend / resume): `_refreshStates` polls
-  `getPlayerState` on a self-tuning interval; daemon suspends
-  after 15 s of no self-state; daemon resumes on incoming
-  self-state; polled state is broadcast as a fake server
-  packet.
+      suspend / resume): `_refreshStates` polls
+      `getPlayerState` on a self-tuning interval; daemon suspends
+      after 15 s of no self-state; daemon resumes on incoming
+      self-state; polled state is broadcast as a fake server
+      packet.
 - [ ] **Cb** — Implementation for Batch C: spawn
-  `StateRefresher` task in `start_all_inner` with self-tuning
-  delay (3 s minimum, 30 s on suspend, 5 min on errors); add
-  `RuntimeInner::suspended: AtomicBool`; gate heartbeat ticks
-  on `suspended == false`; resume from `_updateSelfState`-
-  equivalent path in `recv_loop`.
+      `StateRefresher` task in `start_all_inner` with self-tuning
+      delay (3 s minimum, 30 s on suspend, 5 min on errors); add
+      `RuntimeInner::suspended: AtomicBool`; gate heartbeat ticks
+      on `suspended == false`; resume from `_updateSelfState`-
+      equivalent path in `recv_loop`.
 - [ ] **Da** — Tests for Batch D (diagnostics & TCP-flag
-  parity): `expungeReason` is logged when present; TCP
-  non-hello sends emit no SEQNO flag in header; TCP hello
-  omits SEQNO flag when `iv_seqno == 0`; `udp_config_vod_2`
-  and flat `udp_config` fallback paths are inert.
+      parity): `expungeReason` is logged when present; TCP
+      non-hello sends emit no SEQNO flag in header; TCP hello
+      omits SEQNO flag when `iv_seqno == 0`; `udp_config_vod_2`
+      and flat `udp_config` fallback paths are inert.
 - [ ] **Db** — Implementation for Batch D: add `expunge_reason`
-  log in `recv_loop`; restructure `tcp.rs::send_packet` to
-  emit `flags=0` for non-hello and conditional SEQNO for
-  hello-with-iv_seqno=0; remove fallback paths from
-  `extract_udp_pools` (or feature-gate for zwift-offline
-  compat).
+      log in `recv_loop`; restructure `tcp.rs::send_packet` to
+      emit `flags=0` for non-hello and conditional SEQNO for
+      hello-with-iv_seqno=0; remove fallback paths from
+      `extract_udp_pools` (or feature-gate for zwift-offline
+      compat).
 - [ ] **Ea** — Tests for Batch E (proto fork: drop required
-  markers, add missing fields): TCP hello wire bytes omit tag
-  1 (`server_realm`), tag 7 (`state`), tag 10
-  (`last_update`), tag 12 (`last_player_update`); UDP hello
-  carries exactly four wire fields (tags 1-4); `RelayAddress`
-  round-trips with all 9 tags populated.
+      markers, add missing fields): TCP hello wire bytes omit tag
+      1 (`server_realm`), tag 7 (`state`), tag 10
+      (`last_update`), tag 12 (`last_player_update`); UDP hello
+      carries exactly four wire fields (tags 1-4); `RelayAddress`
+      round-trips with all 9 tags populated.
 - [ ] **Eb** — Implementation for Batch E: fork the vendored
-  proto under `crates/zwift-proto/src/zwift_patched.proto`
-  changing `required` → `optional` on tags 1, 7, 10, 12 of
-  `ClientToServer`; add tags 7, 8, 9 to `RelayAddress`;
-  regenerate via `prost-build`; update every
-  `ClientToServer { … }` literal to omit defaulted fields;
-  add presence-check audits for fields we still expect set.
+      proto under `crates/zwift-proto/src/zwift_patched.proto`
+      changing `required` → `optional` on tags 1, 7, 10, 12 of
+      `ClientToServer`; add tags 7, 8, 9 to `RelayAddress`;
+      regenerate via `prost-build`; update every
+      `ClientToServer { … }` literal to omit defaulted fields;
+      add presence-check audits for fields we still expect set.
 
 ## 0. Findings summary (priority-ordered)
 
-| ID | Severity | Summary | Bundled into checklist pair |
-| --- | --- | --- | --- |
-| **C5** | **Critical** | Hardcode UDP port 3024; `RelayAddress.port` is the **plaintext** port (3022) — encrypted hellos to the plaintext port surface as the live trace's `Connection refused` | 1 |
-| **N10** | **Critical** | Hello-ack matcher reads `stc.seqno` (tag 4) instead of `stc.stc_f5` (tag 5 = sauce's `ackSeqno`) — SNTP convergence is fed coincidentally-matching nonsense; second blocker after C5 | 1 |
-| **N13** | **Critical** | `WorldTimer` SNTP offset is silently lost between hello loop and heartbeat (two `WorldTimer::new()` calls = independent state); heartbeats send uncorrected `world_time` — server may drop the session | 6 |
-| **C1** | **Critical** | `extract_udp_servers` flattens all pools and picks the first arbitrary entry; sauce specifically uses `_udpServerPools.get(0).servers[0]` (the `lb_course=0` generic load-balancer pool) | 3 |
-| **C2** | **Critical** | Daemon never learns the watched athlete's `courseId`; sauce gates UDP setup on `getPlayerState(selfAthleteId)` returning a course | 4 |
-| **C3** | **Critical** | No post-establish UDP `sendPlayerState({watchingAthleteId})` — without it, UDP comes up but server sends nothing back | 5 |
-| **C4** | **Critical** | Heartbeat sends `state: PlayerState::default()`; sauce sends `{id, just_watching, watching_rider_id, courseId, x, y, z, eventSubgroupId}` — server drops session after a few empty heartbeats | 6 |
-| **C6** | **Critical** | Missing `Platform: OSX` HTTP header on every authenticated request | 2 |
-| **C7** | **Critical** | `User-Agent: CNL/4.2.0` is a stub; sauce sends the full Zwift game string `CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0` | 2 |
-| **C8** | **Critical** | Protobuf `Content-Type` missing `; version=2.0` parameter | 2 |
-| **N1** | Material | `ClientToServer` hello body sends extra `state`, `last_update`, `last_player_update` fields sauce omits — proto-required forces them; needs proto fork | (deferred) |
-| **N3** | Material | Token endpoint missing `Accept: application/json` | 2 |
-| **N4** | Material | Protobuf requests missing `Accept: application/x-protobuf-lite` | 2 |
-| **N6** | Material | Inbound `worldUpdates` not deduplicated by `ts` (pre-req for L3 / M2) | 8 |
-| **N7** | Material | Tag 10 / tag 12 (`last_update`/`last_player_update`) sent as 0; reconnect re-floods world updates from session start | 8 |
-| **N9** | Material | No clean `/api/users/logout` / `/relay/worlds/1/leave` on shutdown — server-side session lingers up to 90 min | (L-block) |
-| **N14** | Material | Supervisor re-login (post-refresh-failure) writes new capture manifest but does NOT recreate channels — old `aes_key` still in use; silent data-plane death | (blocked-by-L5) |
-| **M1** | Material | UDP hello iter 2+ drops `relay_id`+`conn_id` from header; sauce keeps them on every hello — relevant on lossy networks | 7 |
-| **M2** | Material | TCP hello sends `larg_wa_time = 0` (vs sauce's `_lastWorldUpdate`); reconnect path re-floods world updates | 8 |
-| **L1** | Material | No `_refreshStates` polling fallback (`getPlayerState` on 3-30s self-tuning interval); data pipeline silent during UDP quiet periods | (L-block) |
-| **L2** | Material | No suspend / resume on idle (15 s of no self-state → suspend; live data → resume) | (L-block) |
-| **L3** | Material | `_lastWorldUpdate` not tracked from incoming `worldUpdates[*].ts` (pre-req for M2/N7) | 8 |
-| **L5** | Material | No connect retry with exponential backoff (`1.2^backoffCount`); a single network blip kills the daemon | (L-block) |
-| **L6** | Material | Single UDP channel; no overlap-and-grace switch (sauce: `_udpChannels[]` with 60s reusable / 1s otherwise); required once pool routing lands | (L-block) |
-| **C9** | Cosmetic | Documentation breadcrumb: courseId lives in `PlayerState.world` (tag 35), not `f19` aux | inline in 4b/6b |
-| **C10** | Cosmetic | Documentation breadcrumb: y/z fields swapped in zoffline naming (sauce's tag 26 `z` is our `y_altitude`) | inline in 6b |
-| **C11** | Cosmetic | Vendored proto missing `xBoundMin`/`yBoundMin`/`securePort` on `RelayAddress` (tags 7-9); needed for full pool routing | (deferred) |
-| **C12** | Cosmetic | `watching_rider_id` is int64 in zoffline, int32 in sauce (tag 28) — wire-tolerant | (deferred) |
-| **N2** | Cosmetic | TCP/UDP share one `connId` counter; sauce uses two (per-class statics) | 1 |
-| **N5** | Cosmetic | TCP hello uses `seqno: 1`; sauce starts at 0 (off-by-one) | 5 |
-| **N8** | Cosmetic | `expungeReason` from server is silently ignored (sauce also doesn't act on it; defines field for diagnostics) | (L-block) |
-| **N11** | Cosmetic | UDP recv tracing reports `player_count = stc.player_states.len()` (tag 28 = blocked list) instead of `stc.states.len()` (tag 8) | 1 |
-| **N12** | Cosmetic | TCP hello carries `server_realm: 1`; sauce's TCP hello omits realm (same root as N1) | (deferred) |
-| **M3** | Cosmetic | TCP non-hello sends include `SEQNO` flag; sauce uses flags=0 (server tolerates either) | (deferred) |
-| **k1** | Cosmetic | TCP hello sets `SEQNO` flag with seqno=0; sauce omits when iv.seqno=0 (server tolerates) | (deferred) |
-| **k2** | Cosmetic | We honour `udp_config_vod_2` and flat `udp_config` as fallbacks; sauce only acts on `udpConfigVOD.pools` | (deferred) |
-| **k3** | Cosmetic | No `udpConfigVOD.portalPools` handling | (deferred) |
-| **k4** | Cosmetic | `find_best_udp_server` exists but is never called (no live pool routing) | (12.13 plan §4) |
-| **L4** | Cosmetic | TCP server is not pinned across reconnects (sauce: `_lastTCPServer`) | (L-block) |
-| **L7** | Cosmetic | `auxCourseId` packed in `PlayerState.f19` bits 16-23 — alternative to C9; not actually needed since tag 35 is canonical | inline in 4b |
-| **R1** | Refinement | C2 must call `get_player_state(cfg.watched_athlete_id)`, not the monitor's `auth.athlete_id()` | inline in 4b |
-| **R2** | Refinement | `HeartbeatScheduler::next_payload` builds a CTS whose all-but-`state` fields are dead code | inline in 6b |
+| ID      | Severity     | Summary                                                                                                                                                                                                | Bundled into checklist pair |
+| ------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| **C5**  | **Critical** | Hardcode UDP port 3024; `RelayAddress.port` is the **plaintext** port (3022) — encrypted hellos to the plaintext port surface as the live trace's `Connection refused`                                 | 1                           |
+| **N10** | **Critical** | Hello-ack matcher reads `stc.seqno` (tag 4) instead of `stc.stc_f5` (tag 5 = sauce's `ackSeqno`) — SNTP convergence is fed coincidentally-matching nonsense; second blocker after C5                   | 1                           |
+| **N13** | **Critical** | `WorldTimer` SNTP offset is silently lost between hello loop and heartbeat (two `WorldTimer::new()` calls = independent state); heartbeats send uncorrected `world_time` — server may drop the session | 6                           |
+| **C1**  | **Critical** | `extract_udp_servers` flattens all pools and picks the first arbitrary entry; sauce specifically uses `_udpServerPools.get(0).servers[0]` (the `lb_course=0` generic load-balancer pool)               | 3                           |
+| **C2**  | **Critical** | Daemon never learns the watched athlete's `courseId`; sauce gates UDP setup on `getPlayerState(selfAthleteId)` returning a course                                                                      | 4                           |
+| **C3**  | **Critical** | No post-establish UDP `sendPlayerState({watchingAthleteId})` — without it, UDP comes up but server sends nothing back                                                                                  | 5                           |
+| **C4**  | **Critical** | Heartbeat sends `state: PlayerState::default()`; sauce sends `{id, just_watching, watching_rider_id, courseId, x, y, z, eventSubgroupId}` — server drops session after a few empty heartbeats          | 6                           |
+| **C6**  | **Critical** | Missing `Platform: OSX` HTTP header on every authenticated request                                                                                                                                     | 2                           |
+| **C7**  | **Critical** | `User-Agent: CNL/4.2.0` is a stub; sauce sends the full Zwift game string `CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0`                                                  | 2                           |
+| **C8**  | **Critical** | Protobuf `Content-Type` missing `; version=2.0` parameter                                                                                                                                              | 2                           |
+| **N1**  | Material     | `ClientToServer` hello body sends extra `state`, `last_update`, `last_player_update` fields sauce omits — proto-required forces them; needs proto fork                                                 | (deferred)                  |
+| **N3**  | Material     | Token endpoint missing `Accept: application/json`                                                                                                                                                      | 2                           |
+| **N4**  | Material     | Protobuf requests missing `Accept: application/x-protobuf-lite`                                                                                                                                        | 2                           |
+| **N6**  | Material     | Inbound `worldUpdates` not deduplicated by `ts` (pre-req for L3 / M2)                                                                                                                                  | 8                           |
+| **N7**  | Material     | Tag 10 / tag 12 (`last_update`/`last_player_update`) sent as 0; reconnect re-floods world updates from session start                                                                                   | 8                           |
+| **N9**  | Material     | No clean `/api/users/logout` / `/relay/worlds/1/leave` on shutdown — server-side session lingers up to 90 min                                                                                          | (L-block)                   |
+| **N14** | Material     | Supervisor re-login (post-refresh-failure) writes new capture manifest but does NOT recreate channels — old `aes_key` still in use; silent data-plane death                                            | (blocked-by-L5)             |
+| **M1**  | Material     | UDP hello iter 2+ drops `relay_id`+`conn_id` from header; sauce keeps them on every hello — relevant on lossy networks                                                                                 | 7                           |
+| **M2**  | Material     | TCP hello sends `larg_wa_time = 0` (vs sauce's `_lastWorldUpdate`); reconnect path re-floods world updates                                                                                             | 8                           |
+| **L1**  | Material     | No `_refreshStates` polling fallback (`getPlayerState` on 3-30s self-tuning interval); data pipeline silent during UDP quiet periods                                                                   | (L-block)                   |
+| **L2**  | Material     | No suspend / resume on idle (15 s of no self-state → suspend; live data → resume)                                                                                                                      | (L-block)                   |
+| **L3**  | Material     | `_lastWorldUpdate` not tracked from incoming `worldUpdates[*].ts` (pre-req for M2/N7)                                                                                                                  | 8                           |
+| **L5**  | Material     | No connect retry with exponential backoff (`1.2^backoffCount`); a single network blip kills the daemon                                                                                                 | (L-block)                   |
+| **L6**  | Material     | Single UDP channel; no overlap-and-grace switch (sauce: `_udpChannels[]` with 60s reusable / 1s otherwise); required once pool routing lands                                                           | (L-block)                   |
+| **C9**  | Cosmetic     | Documentation breadcrumb: courseId lives in `PlayerState.world` (tag 35), not `f19` aux                                                                                                                | inline in 4b/6b             |
+| **C10** | Cosmetic     | Documentation breadcrumb: y/z fields swapped in zoffline naming (sauce's tag 26 `z` is our `y_altitude`)                                                                                               | inline in 6b                |
+| **C11** | Cosmetic     | Vendored proto missing `xBoundMin`/`yBoundMin`/`securePort` on `RelayAddress` (tags 7-9); needed for full pool routing                                                                                 | (deferred)                  |
+| **C12** | Cosmetic     | `watching_rider_id` is int64 in zoffline, int32 in sauce (tag 28) — wire-tolerant                                                                                                                      | (deferred)                  |
+| **N2**  | Cosmetic     | TCP/UDP share one `connId` counter; sauce uses two (per-class statics)                                                                                                                                 | 1                           |
+| **N5**  | Cosmetic     | TCP hello uses `seqno: 1`; sauce starts at 0 (off-by-one)                                                                                                                                              | 5                           |
+| **N8**  | Cosmetic     | `expungeReason` from server is silently ignored (sauce also doesn't act on it; defines field for diagnostics)                                                                                          | (L-block)                   |
+| **N11** | Cosmetic     | UDP recv tracing reports `player_count = stc.player_states.len()` (tag 28 = blocked list) instead of `stc.states.len()` (tag 8)                                                                        | 1                           |
+| **N12** | Cosmetic     | TCP hello carries `server_realm: 1`; sauce's TCP hello omits realm (same root as N1)                                                                                                                   | (deferred)                  |
+| **M3**  | Cosmetic     | TCP non-hello sends include `SEQNO` flag; sauce uses flags=0 (server tolerates either)                                                                                                                 | (deferred)                  |
+| **k1**  | Cosmetic     | TCP hello sets `SEQNO` flag with seqno=0; sauce omits when iv.seqno=0 (server tolerates)                                                                                                               | (deferred)                  |
+| **k2**  | Cosmetic     | We honour `udp_config_vod_2` and flat `udp_config` as fallbacks; sauce only acts on `udpConfigVOD.pools`                                                                                               | (deferred)                  |
+| **k3**  | Cosmetic     | No `udpConfigVOD.portalPools` handling                                                                                                                                                                 | (deferred)                  |
+| **k4**  | Cosmetic     | `find_best_udp_server` exists but is never called (no live pool routing)                                                                                                                               | (12.13 plan §4)             |
+| **L4**  | Cosmetic     | TCP server is not pinned across reconnects (sauce: `_lastTCPServer`)                                                                                                                                   | (L-block)                   |
+| **L7**  | Cosmetic     | `auxCourseId` packed in `PlayerState.f19` bits 16-23 — alternative to C9; not actually needed since tag 35 is canonical                                                                                | inline in 4b                |
+| **R1**  | Refinement   | C2 must call `get_player_state(cfg.watched_athlete_id)`, not the monitor's `auth.athlete_id()`                                                                                                         | inline in 4b                |
+| **R2**  | Refinement   | `HeartbeatScheduler::next_payload` builds a CTS whose all-but-`state` fields are dead code                                                                                                             | inline in 6b                |
 
 **Critical-block fix order** (what unblocks the first successful
 live trace, ordered by suggested implementation sequence):
@@ -315,9 +315,9 @@ connect:
 
 ```js
 if (!ip) {
-    // Use a load balancer initially, We'll get swapped to a direct
-    // server soon after..
-    ip = this._udpServerPools.get(0).servers[0].ip;
+  // Use a load balancer initially, We'll get swapped to a direct
+  // server soon after..
+  ip = this._udpServerPools.get(0).servers[0].ip;
 }
 ```
 
@@ -325,17 +325,17 @@ if (!ip) {
 
 ```js
 if (pb.udpConfig) {
-    // I believe this is the "load balancer" address, that can also
-    // be found in the VOD list..
+  // I believe this is the "load balancer" address, that can also
+  // be found in the VOD list..
 }
 if (pb.udpConfigVOD) {
-    for (const x of pb.udpConfigVOD.pools) {
-        this._udpServerPools.set(x.courseId, x);
-    }
-    if (pb.udpConfigVOD.portalPools) {
-        this._udpServerPools.set('portal', pb.udpConfigVOD.portalPools[0]);
-    }
-    this.emit('udpServerPoolsUpdated', this._udpServerPools);
+  for (const x of pb.udpConfigVOD.pools) {
+    this._udpServerPools.set(x.courseId, x);
+  }
+  if (pb.udpConfigVOD.portalPools) {
+    this._udpServerPools.set("portal", pb.udpConfigVOD.portalPools[0]);
+  }
+  this.emit("udpServerPoolsUpdated", this._udpServerPools);
 }
 ```
 
@@ -346,14 +346,14 @@ Three load-bearing facts in the reference:
    `courseId`; the special key `0` is the **generic load-balancer
    pool** that every newly-connected client uses first.
 2. **Initial UDP target = `_udpServerPools.get(0).servers[0].ip`** —
-   *not* an arbitrary entry from the flat list, *not* the per-course
-   pool, *not* `tcp_servers[0]`. The load balancer at courseId=0
+   _not_ an arbitrary entry from the flat list, _not_ the per-course
+   pool, _not_ `tcp_servers[0]`. The load balancer at courseId=0
    accepts everyone; per-course pools may reject athletes who aren't
    on that course.
 3. **`pb.udpConfig` is ignored** — sauce's own comment notes it's
    redundant with the VOD list. The daemon should not key off it.
 
-A separate fact, equally load-bearing for the *whole* UDP path to
+A separate fact, equally load-bearing for the _whole_ UDP path to
 even fire:
 
 4. **The daemon must know the watched athlete's `courseId` before
@@ -458,10 +458,10 @@ a `PlayerState` protobuf. The result's `courseId` is what populates
 
 ```js
 if (!this.suspended && this.courseId) {
-    this.setUDPChannel();
+  this.setUDPChannel();
 } else {
-    console.warn("User not in game: waiting for activity...");
-    this.suspend();
+  console.warn("User not in game: waiting for activity...");
+  this.suspend();
 }
 ```
 
@@ -477,7 +477,7 @@ hellos we already saw.
 
 For the live trace specifically: the daemon was operating as the
 monitor account (`5213306`). Until that athlete (or a watched
-athlete) is in a live game, sauce wouldn't even *try* UDP.
+athlete) is in a live game, sauce wouldn't even _try_ UDP.
 
 **Fix sketch:** add `ZwiftAuth` (or `zwift-relay::session`) helper
 `get_player_state(athlete_id) -> Option<PlayerState>`; call it from
@@ -570,11 +570,14 @@ We do **not** include `larg_wa_time` (sauce's
 **What sauce does** (`zwift.mjs:1895`):
 
 ```js
-session.tcpChannel.sendPacket({
+session.tcpChannel.sendPacket(
+  {
     athleteId: this.athleteId,
     worldTime: 0,
     largestWorldAttributeTimestamp: this._lastWorldUpdate,
-}, {hello: true})
+  },
+  { hello: true },
+);
 ```
 
 No `realm` / `server_realm` (sauce sets it server-side or relies on
@@ -585,7 +588,7 @@ defaults), no `state`, but **does** include
 **Why it matters:** the `state: PlayerState::default()` field is
 `required` in proto2; prost will encode it as a zero-length submessage
 on tag 7. Sauce's protobuf-js call (`fromObject({…})`) omits the
-field entirely, which on the wire is *also* an empty tag 7 in proto2
+field entirely, which on the wire is _also_ an empty tag 7 in proto2
 (required-but-absent is technically a wire-format violation, but
 Zwift evidently tolerates it). Either form is probably accepted.
 
@@ -708,7 +711,7 @@ Inbound `ServerToClient` flow effectively never starts.
 M1 (relayId/connId on hellos), and M2 (larg_wa_time), a daemon that
 gets to `relay.udp.established` will then sit silent forever. No
 inbound `relay.udp.message.recv`, no player states, no world
-updates. The trace will *look* successful but be useless.
+updates. The trace will _look_ successful but be useless.
 
 This is also what the user's live trace would have done if 3b had
 kept the daemon alive past UDP-establish: the daemon would have
@@ -743,11 +746,11 @@ zwift_proto::ClientToServer {
 
 ```js
 await ch.sendPlayerState({
-    watchingAthleteId: this.watchingAthleteId,
-    _flags2: portal ? encodePlayerStateFlags2({roadId: lws.roadId}) : undefined,
-    portal,
-    eventSubgroupId: lws?.eventSubgroupId || 0,
-    ...this.watchingStateExtra
+  watchingAthleteId: this.watchingAthleteId,
+  _flags2: portal ? encodePlayerStateFlags2({ roadId: lws.roadId }) : undefined,
+  portal,
+  eventSubgroupId: lws?.eventSubgroupId || 0,
+  ...this.watchingStateExtra,
 });
 ```
 
@@ -755,12 +758,14 @@ await ch.sendPlayerState({
 
 ```js
 const state = {
-    athleteId: this.athleteId,
-    worldTime,
-    justWatching: true,
-    x: 0, y: 0, z: 0,
-    courseId: this.courseId,
-    ...extraState,  // includes watchingAthleteId
+  athleteId: this.athleteId,
+  worldTime,
+  justWatching: true,
+  x: 0,
+  y: 0,
+  z: 0,
+  courseId: this.courseId,
+  ...extraState, // includes watchingAthleteId
 };
 ```
 
@@ -773,7 +778,7 @@ y: 0, z: 0, courseId, watchingAthleteId, eventSubgroupId,
 context. An empty PlayerState heartbeat probably reads to the server
 as "active rider with no position / no observation target". If C3
 above is fixed (initial post-establish send) the server may
-*briefly* deliver data, then drop us when the heartbeat-derived
+_briefly_ deliver data, then drop us when the heartbeat-derived
 session context goes empty.
 
 **Fix sketch:** the `HeartbeatScheduler` needs `watching_athlete_id`
@@ -792,7 +797,7 @@ and `{watchingId}`, synthesizes "fake server packets" so downstream
 consumers always have fresh data even when the live UDP stream is
 quiet.
 
-**Why it matters:** Zwift's UDP stream is *not* a guaranteed 1 Hz
+**Why it matters:** Zwift's UDP stream is _not_ a guaranteed 1 Hz
 delivery. If the watched athlete is parked or the network drops
 packets, the data pipeline goes silent. Sauce's HTTP fallback fills
 the gap.
@@ -809,6 +814,7 @@ Multi-step; sized for its own STEP, not 12.14.
 ### L2 — No suspend / resume
 
 **What sauce does:**
+
 - `_refreshStates` calls `suspend()` if `age > 15000` (15 s of
   no fresh self-state).
 - `_updateSelfState` calls `resume()` on incoming live data.
@@ -828,7 +834,7 @@ matters.
 
 Already noted as M2's data source. Sauce updates `_lastWorldUpdate`
 on every incoming `worldUpdates[*].ts`; we never read those
-timestamps. Fixing M2 *requires* this tracking — the M2 fix without
+timestamps. Fixing M2 _requires_ this tracking — the M2 fix without
 L3 would just send a constant `0`.
 
 ### L4 — TCP server is never pinned across reconnects
@@ -838,16 +844,16 @@ L3 would just send a constant `0`.
 ```js
 let ip;
 if (this._lastTCPServer) {
-    const lastServer = servers.find(x => x.ip === this._lastTCPServer);
-    if (lastServer) ip = lastServer.ip;
+  const lastServer = servers.find((x) => x.ip === this._lastTCPServer);
+  if (lastServer) ip = lastServer.ip;
 }
 if (!ip) ip = servers[0].ip;
 this._lastTCPServer = ip;
 ```
 
-The comment notes: *"After countless hours of testing and
+The comment notes: _"After countless hours of testing and
 experiments I've concluded that I really need to stick to the same
-TCP server no matter what."*
+TCP server no matter what."_
 
 **Daemon impact:** on reconnect we pick `tcp_servers[0]` afresh,
 which may not be the same as the previous run. Probably manifests
@@ -863,6 +869,7 @@ the daemon process; the operator has to restart manually.
 ### L6 — Single UDP channel; no overlap-and-grace switch
 
 Sauce maintains `_udpChannels: []` and switches by:
+
 1. Make a new channel.
 2. `schedShutdown(60000)` on the old one (60 s grace if the new
    one is reusable, 1 s otherwise).
@@ -876,7 +883,7 @@ routing) we'd have to drop everything from the old server.
 ### L7 — `course_id` is packed in `PlayerState.f19` bits 16-23, not exposed as a field
 
 `zoffline`'s proto has tag 19 = `f19: u32` with a comment noting
-*"byte\[2\]: fallback course/getMapRevisionId"*. Sauce decodes this
+_"byte\[2\]: fallback course/getMapRevisionId"_. Sauce decodes this
 as `auxCourseId = bits >>> 16 & 0xff` (`zwift.mjs:228`).
 
 **Implication for C2 and C4:** when we read the watched athlete's
@@ -959,14 +966,15 @@ None of them set a `Platform` header.
 
 ```js
 const defHeaders = {
-    'Platform': 'OSX',
-    'Source': 'Game Client',
-    'User-Agent': 'CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0'
+  Platform: "OSX",
+  Source: "Game Client",
+  "User-Agent":
+    "CNL/3.44.0 (Darwin Kernel 23.2.0) zwift/1.0.122968 game/1.54.0 curl/8.4.0",
 };
 ```
 
 **Why it matters:** Zwift's API is suspected to inspect headers and
-filter / degrade non-game-client traffic. We don't *know* what
+filter / degrade non-game-client traffic. We don't _know_ what
 Zwift does with a missing `Platform` header — it may silently
 omit fields from the response that an OSX game client would
 receive (e.g. `udp_config_vod_1` could be empty or absent for a
@@ -1013,8 +1021,8 @@ pub const PROTOBUF_CONTENT_TYPE: &str = "application/x-protobuf-lite";
 
 ```js
 if (options.pb) {
-    options.body = options.pb.finish();
-    headers['Content-Type'] = 'application/x-protobuf-lite; version=2.0';
+  options.body = options.pb.finish();
+  headers["Content-Type"] = "application/x-protobuf-lite; version=2.0";
 }
 ```
 
@@ -1089,6 +1097,7 @@ the canonical `(x, y, z)` per sauce's naming.
 1-6. Sauce's `UDPServer` (same wire structure) declares tags 1-9.
 
 The missing tags:
+
 - `xBoundMin` (tag 7, float) — needed for `find_best_udp_server`'s
   bounding-box check.
 - `yBoundMin` (tag 8, float) — same.
@@ -1129,11 +1138,14 @@ trace fixed.
 **Sauce's UDP hello body** (`zwift.mjs::UDPChannel.establish` line 1388):
 
 ```js
-this.sendPacket({
+this.sendPacket(
+  {
     athleteId: this.athleteId,
     realm: 1,
     worldTime: 0,
-}, {hello: true});
+  },
+  { hello: true },
+);
 ```
 
 `makeDataPBAndBuffer` adds `seqno: this._sendSeqno++` (starts at
@@ -1176,7 +1188,7 @@ of an "expected" hello packet. Three extra varints + a zero-length
 sub-message could trip a "this is not a real game client" filter
 in the same way C6/C7/C8 do for HTTP. Or it could be tolerated.
 Without an actual decode of what sauce sends and what we send to
-compare side-by-side, we can't *prove* the server cares — but
+compare side-by-side, we can't _prove_ the server cares — but
 sending things sauce doesn't send is a known divergence.
 
 **Fix sketch:** the cleanest fix requires forking the vendored
@@ -1217,8 +1229,7 @@ TCP and UDP halves of the same daemon session look "more
 unrelated" than sauce's do. Probably tolerated, but a divergence.
 
 **Fix sketch:** split into two atomics
-(`TCP_CONN_ID_COUNTER`, `UDP_CONN_ID_COUNTER`); each starts at
-0. One-line change.
+(`TCP_CONN_ID_COUNTER`, `UDP_CONN_ID_COUNTER`); each starts at 0. One-line change.
 
 ### N3 — Token endpoint: missing `Accept: application/json`
 
@@ -1251,7 +1262,7 @@ and we don't. Possible filter trigger.
 **What sauce does** (from `accept: 'protobuf'` in `fetchPB`):
 
 ```js
-headers['Accept'] = 'application/x-protobuf-lite';
+headers["Accept"] = "application/x-protobuf-lite";
 ```
 
 We send no Accept header on protobuf requests. Same risk class as
@@ -1362,7 +1373,7 @@ comment "tag464 UdpClient::receivedExpungeReason". The enum
 values include common reasons like `MULTIPLE_LOGINS`,
 `SERVER_FULL`, `KICKED`, etc.
 
-**Why it matters:** the server can tell us *why* it's about to
+**Why it matters:** the server can tell us _why_ it's about to
 disconnect us. Ignoring this means we can't distinguish "you
 have multiple logins" (try again) from "you're banned" (stop
 trying). Not a connect blocker; matters for retry/backoff
@@ -1444,7 +1455,7 @@ Sauce reads `packet.ackSeqno` (proto tag 5).
 
 - Sauce's `ServerToClient`: `int32 ackSeqno = 5; // UDP ack to our previously sent seqno`
 - Zoffline's `ServerToClient`: `pub stc_f5: Option<i32> tag = 5` with comment
-  *"low-priority world time sync algo (not investigated yet, maybe deprecated)"*
+  _"low-priority world time sync algo (not investigated yet, maybe deprecated)"_
 
 The field at tag 5 is the ACK seqno — the server echoes back
 the seqno of the hello it's acknowledging. Sauce reads tag 5 to
@@ -1506,7 +1517,7 @@ tracing::debug!(
 ```
 
 `stc.player_states` is zoffline's name for **tag 28**, which is
-sauce's `blockPlayerStates` — a *filtered* list ("block this
+sauce's `blockPlayerStates` — a _filtered_ list ("block this
 player" / shadow-bans / power-up filtering on the server side).
 The actual player-states list is at **tag 8**, which zoffline
 correctly names `stc.states` (and which the daemon uses
@@ -1530,11 +1541,14 @@ hello payload sets `server_realm: 1`.
 **What sauce sends** (`zwift.mjs::activateSession` line 1895):
 
 ```js
-session.tcpChannel.sendPacket({
+session.tcpChannel.sendPacket(
+  {
     athleteId: this.athleteId,
     worldTime: 0,
     largestWorldAttributeTimestamp: this._lastWorldUpdate,
-}, {hello: true});
+  },
+  { hello: true },
+);
 ```
 
 No `realm` field. The TCP session is bound to a single relay
@@ -1544,11 +1558,14 @@ realm from the bearer token and the relay-session login.
 Contrast sauce's UDP hello (which DOES set `realm: 1`):
 
 ```js
-this.sendPacket({
+this.sendPacket(
+  {
     athleteId: this.athleteId,
     realm: 1,
     worldTime: 0,
-}, {hello: true});
+  },
+  { hello: true },
+);
 ```
 
 UDP hello includes realm because UDP is stateless per-packet.
@@ -1581,7 +1598,7 @@ material is one C2 refinement and one observation about dead code.
   the monitor account is watching** (configured externally;
   conceptually our `cfg.watched_athlete_id`).
 
-So the courseId we need lives on the *watched* athlete's
+So the courseId we need lives on the _watched_ athlete's
 PlayerState, not the monitor account's. The monitor account is
 typically NOT in a game (it's a passive observer); fetching the
 monitor's PlayerState would return 404 or an empty state.
@@ -1698,6 +1715,7 @@ export const worldTimer = new WorldTimer();
 ```
 
 A **single global** `worldTimer` shared by:
+
 - The UDP hello loop (`UDPChannel.establish`, calls
   `worldTimer.adjustOffset(-meanOffset)` after convergence).
 - `broadcastPlayerState` 1 Hz heartbeats (`worldTimer.now()`).
@@ -1709,7 +1727,7 @@ clock.
 
 **Why it matters:** Zwift's UDP server cross-checks `world_time`
 on incoming `ClientToServer` packets against its own clock. The
-hello-loop sync exists *specifically* so the client's reported
+hello-loop sync exists _specifically_ so the client's reported
 `world_time` matches what the server expects. Sauce's worldTime
 offset can be tens or hundreds of milliseconds (it's measured by
 the SNTP-style algorithm to be exactly the round-trip-corrected
@@ -1730,12 +1748,12 @@ session drop, "multiple logins" errors (server thinks two sessions
 are alive), or simply no inbound traffic in response.
 
 **Why it wasn't caught earlier:** the codec layer is correct —
-`WorldTimer::clone()` *would* share state via the `Arc<Mutex<…>>`
-internal. The bug is in the daemon-level *plumbing*: we call
+`WorldTimer::clone()` _would_ share state via the `Arc<Mutex<…>>`
+internal. The bug is in the daemon-level _plumbing_: we call
 `WorldTimer::new()` twice and forget to clone-share. In a
 synchronously-coupled design (sauce's global) this can't happen.
 
-There's a *related* bug downstream of N13 — `HeartbeatScheduler::next_payload`
+There's a _related_ bug downstream of N13 — `HeartbeatScheduler::next_payload`
 sets `world_time: Some(self.world_timer.now())` on the wrapping
 CTS, but the caller (`UdpHeartbeatSink::send`) extracts only
 `payload.state` and discards the CTS-level `world_time`.
@@ -1805,8 +1823,8 @@ channels with the new session's key.
 
 Our supervisor's `refresh_loop`, by contrast, falls back to a
 full `login()` (new aes_key, new relay_id) and emits
-`SessionEvent::LoggedIn(new_session)` *while keeping the existing
-channels alive*. After that event fires:
+`SessionEvent::LoggedIn(new_session)` _while keeping the existing
+channels alive_. After that event fires:
 
 1. The daemon writes a manifest with the new key (so the capture
    file is decryptable past the rotation).
@@ -1831,6 +1849,7 @@ a manifest log + broadcast. There's no plumbing back into
 `start_all_inner`'s channel construction.
 
 **Fix sketches** (pick one):
+
 - **A — Sauce's approach (preferred for parity):** drop our
   in-place re-login from the supervisor. On refresh failure,
   emit `SessionEvent::RefreshFailed` and surface a typed
@@ -1896,45 +1915,45 @@ client.
 
 ## 5. What was implemented vs what is needed for the daemon to run
 
-| Phase | Item | Status | Live impact |
-| --- | --- | --- | --- |
-| 12.13 §3b | Wait for `udp_config*` push | Implemented | Necessary, not sufficient |
-| 12.14 **C1** | Pick from `lb_course=0` pool | **Not implemented** | **Blocks UDP from connecting at all** |
-| 12.14 **C2** | Read athlete `courseId` before UDP via `getPlayerState` | **Not implemented** | **Blocks UDP for non-active athletes** |
-| 12.14 **C3** | Send post-establish player state with `watching_rider_id` | **Not implemented** | **UDP comes up but server sends nothing back** |
-| 12.14 **C4** | Heartbeat carries `id`/`just_watching`/`watching_rider_id`/`courseId` | **Not implemented** | **Server drops the session after a few empty heartbeats** |
-| 12.14 **C5** | Hardcode UDP port 3024; ignore `RelayAddress.port` | **Not implemented** | **Probable root cause of `Connection refused` in live trace** |
-| 12.14 **C6** | Send `Platform: OSX` HTTP header | **Not implemented** | Likely degrades / filters Zwift API responses |
-| 12.14 **C7** | Use full game-client `User-Agent` string | **Not implemented** | Same as C6 |
-| 12.14 **C8** | Add `; version=2.0` to protobuf `Content-Type` | **Not implemented** | Same as C6 |
-| 12.14 C9 | Read course from `PlayerState.world` (tag 35) | **Not implemented** | Documentation breadcrumb for C2 / C4 |
-| 12.14 C10 | y/z naming swap between zoffline & sauce | **Not implemented** | Documentation; matters once positions are populated |
-| 12.14 C11 | Add `xBoundMin`/`yBoundMin`/`securePort` to `RelayAddress` proto | **Not implemented** | Pre-req for full pool routing; C5 sidesteps `securePort` |
-| 12.14 C12 | `watching_rider_id` int32 vs int64 (tag 28) | **Not implemented** | Tolerated; cosmetic |
-| 12.14 N1 | `ClientToServer` hello sends extra `state`/`last_update`/`last_player_update` | **Not implemented** | Possible "not a real client" filter trigger |
-| 12.14 N2 | TCP/UDP separate `connId` counters | **Not implemented** | Tolerated; cosmetic |
-| 12.14 N3 | `Accept: application/json` on token request | **Not implemented** | Same risk class as C6 |
-| 12.14 N4 | `Accept: application/x-protobuf-lite` on protobuf requests | **Not implemented** | Same risk class as C6 |
-| 12.14 N5 | TCP hello `seqno: 1` should be `0` | **Not implemented** | Cosmetic; off-by-one |
-| 12.14 N6 | Inbound `worldUpdates` not deduplicated (pre-req for L3) | **Not implemented** | Stats path; reconnect |
-| 12.14 N7 | Tag 10/12 `last_update`/`last_player_update` value (depends on N6) | **Not implemented** | Reconnect re-flood |
-| 12.14 N8 | `expungeReason` from server is silently ignored | **Not implemented** | Diagnostics; retry logic |
-| 12.14 N9 | No `logout` / `leave` on shutdown | **Not implemented** | Server-side session lingers |
-| 12.14 **N10** | Hello-ack matcher reads tag 4 (`stc.seqno`) instead of tag 5 (`stc_f5` = sauce's `ackSeqno`) | **Not implemented** | **SECOND BLOCKER after C5** — sync never converges |
-| 12.14 N11 | UDP recv tracing reports `player_count = stc.player_states.len()` (tag 28 = blocked list) instead of `stc.states.len()` (tag 8) | **Not implemented** | Misleading `--debug` trace; no behavioural impact |
-| 12.14 N12 | TCP hello carries `server_realm: 1`; sauce's TCP hello omits realm | **Not implemented** | Same root cause as N1 (proto-required) |
-| 12.14 **N13** | SNTP-corrected `WorldTimer` offset is silently lost between hello loop and heartbeat | **Not implemented** | **Heartbeats send uncorrected `world_time` — server may drop session as stale** |
-| 12.14 **N14** | Supervisor re-login writes new manifest but does not recreate channels (stale `aes_key`) | **Not implemented** | Sustained-op only — silent data-plane death after any refresh failure |
-| 12.14 M1 | UDP hello iter 2+ keeps `relay_id`+`conn_id` | **Not implemented** | Lossy networks only |
-| 12.14 M2 | TCP hello carries `larg_wa_time` (depends on L3) | **Not implemented** | Reconnect path only |
-| 12.14 L1 | `_refreshStates` polling fallback | **Not implemented** | Data pipeline goes silent during quiet periods |
-| 12.14 L2 | Suspend / resume on idle | **Not implemented** | Long-running flows; rate-limit risk |
-| 12.14 L3 | `_lastWorldUpdate` timestamp tracking | **Not implemented** | Pre-req for M2 |
-| 12.14 L4 | TCP server pinning across reconnects | **Not implemented** | Reconnect-stability path |
-| 12.14 L5 | Connect retry with exponential backoff | **Not implemented** | Network blip kills the daemon |
-| 12.14 L6 | Multi-UDP-channel grace-shutdown swap | **Not implemented** | Required once pool routing lands |
-| 12.13 plan §6 | Mid-session pool updates wired into `recv_loop` | **Not implemented** | Required for course changes |
-| 12.13 plan §4 | Per-watched-athlete UDP routing | **Not implemented** | Required for direct-server steady state |
+| Phase         | Item                                                                                                                            | Status              | Live impact                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------- |
+| 12.13 §3b     | Wait for `udp_config*` push                                                                                                     | Implemented         | Necessary, not sufficient                                                       |
+| 12.14 **C1**  | Pick from `lb_course=0` pool                                                                                                    | **Not implemented** | **Blocks UDP from connecting at all**                                           |
+| 12.14 **C2**  | Read athlete `courseId` before UDP via `getPlayerState`                                                                         | **Not implemented** | **Blocks UDP for non-active athletes**                                          |
+| 12.14 **C3**  | Send post-establish player state with `watching_rider_id`                                                                       | **Not implemented** | **UDP comes up but server sends nothing back**                                  |
+| 12.14 **C4**  | Heartbeat carries `id`/`just_watching`/`watching_rider_id`/`courseId`                                                           | **Not implemented** | **Server drops the session after a few empty heartbeats**                       |
+| 12.14 **C5**  | Hardcode UDP port 3024; ignore `RelayAddress.port`                                                                              | **Not implemented** | **Probable root cause of `Connection refused` in live trace**                   |
+| 12.14 **C6**  | Send `Platform: OSX` HTTP header                                                                                                | **Not implemented** | Likely degrades / filters Zwift API responses                                   |
+| 12.14 **C7**  | Use full game-client `User-Agent` string                                                                                        | **Not implemented** | Same as C6                                                                      |
+| 12.14 **C8**  | Add `; version=2.0` to protobuf `Content-Type`                                                                                  | **Not implemented** | Same as C6                                                                      |
+| 12.14 C9      | Read course from `PlayerState.world` (tag 35)                                                                                   | **Not implemented** | Documentation breadcrumb for C2 / C4                                            |
+| 12.14 C10     | y/z naming swap between zoffline & sauce                                                                                        | **Not implemented** | Documentation; matters once positions are populated                             |
+| 12.14 C11     | Add `xBoundMin`/`yBoundMin`/`securePort` to `RelayAddress` proto                                                                | **Not implemented** | Pre-req for full pool routing; C5 sidesteps `securePort`                        |
+| 12.14 C12     | `watching_rider_id` int32 vs int64 (tag 28)                                                                                     | **Not implemented** | Tolerated; cosmetic                                                             |
+| 12.14 N1      | `ClientToServer` hello sends extra `state`/`last_update`/`last_player_update`                                                   | **Not implemented** | Possible "not a real client" filter trigger                                     |
+| 12.14 N2      | TCP/UDP separate `connId` counters                                                                                              | **Not implemented** | Tolerated; cosmetic                                                             |
+| 12.14 N3      | `Accept: application/json` on token request                                                                                     | **Not implemented** | Same risk class as C6                                                           |
+| 12.14 N4      | `Accept: application/x-protobuf-lite` on protobuf requests                                                                      | **Not implemented** | Same risk class as C6                                                           |
+| 12.14 N5      | TCP hello `seqno: 1` should be `0`                                                                                              | **Not implemented** | Cosmetic; off-by-one                                                            |
+| 12.14 N6      | Inbound `worldUpdates` not deduplicated (pre-req for L3)                                                                        | **Not implemented** | Stats path; reconnect                                                           |
+| 12.14 N7      | Tag 10/12 `last_update`/`last_player_update` value (depends on N6)                                                              | **Not implemented** | Reconnect re-flood                                                              |
+| 12.14 N8      | `expungeReason` from server is silently ignored                                                                                 | **Not implemented** | Diagnostics; retry logic                                                        |
+| 12.14 N9      | No `logout` / `leave` on shutdown                                                                                               | **Not implemented** | Server-side session lingers                                                     |
+| 12.14 **N10** | Hello-ack matcher reads tag 4 (`stc.seqno`) instead of tag 5 (`stc_f5` = sauce's `ackSeqno`)                                    | **Not implemented** | **SECOND BLOCKER after C5** — sync never converges                              |
+| 12.14 N11     | UDP recv tracing reports `player_count = stc.player_states.len()` (tag 28 = blocked list) instead of `stc.states.len()` (tag 8) | **Not implemented** | Misleading `--debug` trace; no behavioural impact                               |
+| 12.14 N12     | TCP hello carries `server_realm: 1`; sauce's TCP hello omits realm                                                              | **Not implemented** | Same root cause as N1 (proto-required)                                          |
+| 12.14 **N13** | SNTP-corrected `WorldTimer` offset is silently lost between hello loop and heartbeat                                            | **Not implemented** | **Heartbeats send uncorrected `world_time` — server may drop session as stale** |
+| 12.14 **N14** | Supervisor re-login writes new manifest but does not recreate channels (stale `aes_key`)                                        | **Not implemented** | Sustained-op only — silent data-plane death after any refresh failure           |
+| 12.14 M1      | UDP hello iter 2+ keeps `relay_id`+`conn_id`                                                                                    | **Not implemented** | Lossy networks only                                                             |
+| 12.14 M2      | TCP hello carries `larg_wa_time` (depends on L3)                                                                                | **Not implemented** | Reconnect path only                                                             |
+| 12.14 L1      | `_refreshStates` polling fallback                                                                                               | **Not implemented** | Data pipeline goes silent during quiet periods                                  |
+| 12.14 L2      | Suspend / resume on idle                                                                                                        | **Not implemented** | Long-running flows; rate-limit risk                                             |
+| 12.14 L3      | `_lastWorldUpdate` timestamp tracking                                                                                           | **Not implemented** | Pre-req for M2                                                                  |
+| 12.14 L4      | TCP server pinning across reconnects                                                                                            | **Not implemented** | Reconnect-stability path                                                        |
+| 12.14 L5      | Connect retry with exponential backoff                                                                                          | **Not implemented** | Network blip kills the daemon                                                   |
+| 12.14 L6      | Multi-UDP-channel grace-shutdown swap                                                                                           | **Not implemented** | Required once pool routing lands                                                |
+| 12.13 plan §6 | Mid-session pool updates wired into `recv_loop`                                                                                 | **Not implemented** | Required for course changes                                                     |
+| 12.13 plan §4 | Per-watched-athlete UDP routing                                                                                                 | **Not implemented** | Required for direct-server steady state                                         |
 
 **Critical path to the first working trace** (8 must-fix items):
 
@@ -1949,7 +1968,7 @@ client.
 - **C3 + C4** keep traffic flowing once the connect succeeds.
 
 The C9–C12 items are documentation pitfalls / proto schema gaps
-that matter for *implementing* C2/C4/pool-routing correctly. They
+that matter for _implementing_ C2/C4/pool-routing correctly. They
 don't add new behaviour — they prevent the next implementer from
 falling into the same naming / field-tag traps.
 
@@ -1973,7 +1992,7 @@ header impersonation; small). Then C1, C2, C3, C4 together (the
 flow correctness work).
 
 - [ ] **1a** — Tests for **C5 + N10 + N2** (one combined pair —
-  the UDP-connect critical path):
+      the UDP-connect critical path):
   - **C5**: a synthetic `udp_config` push with
     `RelayAddress.port = 3022` results in the daemon connecting to
     port **3024**, not 3022.
@@ -1990,13 +2009,13 @@ flow correctness work).
   - **N10**: in `udp.rs::establish` hello-loop, change `stc.seqno`
     to `stc.stc_f5` (or expose a typed `ack_seqno()` accessor).
     Also fix `udp.rs:620`'s **N11** — `player_count =
-    stc.states.len()` instead of `stc.player_states.len()`.
+stc.states.len()` instead of `stc.player_states.len()`.
   - **N2**: split `CONN_ID_COUNTER` into `TCP_CONN_ID_COUNTER`
     and `UDP_CONN_ID_COUNTER`; `next_tcp_conn_id()` /
     `next_udp_conn_id()` callers in `start_all_inner`.
 
 - [ ] **2a** — Tests for **C6/C7/C8/N3/N4** (one combined pair —
-  HTTP-header impersonation):
+      HTTP-header impersonation):
   - `auth.login` and `auth.do_refresh` send `Accept: application/json`
     on the token POST.
   - `auth.post` (used for relay-session login + refresh) sends
@@ -2009,54 +2028,54 @@ flow correctness work).
     header on every send including the token endpoint.
   - Replace `DEFAULT_USER_AGENT = "CNL/4.2.0"` with the full
     sauce string `"CNL/3.44.0 (Darwin Kernel 23.2.0)
-    zwift/1.0.122968 game/1.54.0 curl/8.4.0"`.
+zwift/1.0.122968 game/1.54.0 curl/8.4.0"`.
   - Append `; version=2.0` to `PROTOBUF_CONTENT_TYPE`.
   - Set `Accept: application/json` on `login` + `do_refresh`.
   - Set `Accept: application/x-protobuf-lite` on `post` whenever
     `content_type` starts with that prefix.
 
 - [ ] **3a** — Tests for **C1**: `extract_udp_servers` (or its
-  replacement) preserves the `lb_course` discriminator; the daemon
-  picks UDP target from the `lb_course=0` pool when both a generic
-  pool and a per-course pool are present in the same push.
+      replacement) preserves the `lb_course` discriminator; the daemon
+      picks UDP target from the `lb_course=0` pool when both a generic
+      pool and a per-course pool are present in the same push.
 - [ ] **3b** — Implementation for C1: refactor
-  `extract_udp_servers` to return per-course pools (rather than a
-  flat list); update `start_all_inner` step 8.5 to look up the
-  generic pool and pick its first server. Reject the push as
-  insufficient (typed error) if no `lb_course=0` pool is present
-  after a reasonable wait.
+      `extract_udp_servers` to return per-course pools (rather than a
+      flat list); update `start_all_inner` step 8.5 to look up the
+      generic pool and pick its first server. Reject the push as
+      insufficient (typed error) if no `lb_course=0` pool is present
+      after a reasonable wait.
 
 - [ ] **4a** — Tests for **C2**: when the watched athlete is not
-  in a game (`get_player_state` returns `None` or `state.world ==
-  None / 0`), the daemon does NOT call `udp_factory.connect()`;
-  instead it logs `relay.runtime.suspended_no_course` and waits.
+      in a game (`get_player_state` returns `None` or `state.world ==
+None / 0`), the daemon does NOT call `udp_factory.connect()`;
+      instead it logs `relay.runtime.suspended_no_course` and waits.
 - [ ] **4b** — Implementation for C2: add a
-  `get_player_state(athlete_id)` helper to `zwift-api` (HTTP GET
-  `/relay/worlds/1/players/{id}` returning a parsed `PlayerState`);
-  read course from `state.world` (tag 35 — see C9 breadcrumb,
-  *not* the `f19` aux field); call from `start_all_inner` after
-  auth login **with `cfg.watched_athlete_id`** (per R1 — sauce
-  fetches the watched athlete's state, NOT the monitor account's);
-  gate the UDP setup branch on the resulting course. If
-  `cfg.watched_athlete_id` is None, refuse to start with a clear
-  `RelayRuntimeError::NoWatchedAthlete`.
+      `get_player_state(athlete_id)` helper to `zwift-api` (HTTP GET
+      `/relay/worlds/1/players/{id}` returning a parsed `PlayerState`);
+      read course from `state.world` (tag 35 — see C9 breadcrumb,
+      _not_ the `f19` aux field); call from `start_all_inner` after
+      auth login **with `cfg.watched_athlete_id`** (per R1 — sauce
+      fetches the watched athlete's state, NOT the monitor account's);
+      gate the UDP setup branch on the resulting course. If
+      `cfg.watched_athlete_id` is None, refuse to start with a clear
+      `RelayRuntimeError::NoWatchedAthlete`.
 
 - [ ] **5a** — Tests for **C3**: after `UdpChannel::establish`
-  returns Ok, the daemon issues exactly one `send_player_state`
-  call carrying `id = athlete_id`, `just_watching = true`, and
-  `watching_rider_id = watching_athlete_id`.
+      returns Ok, the daemon issues exactly one `send_player_state`
+      call carrying `id = athlete_id`, `just_watching = true`, and
+      `watching_rider_id = watching_athlete_id`.
 - [ ] **5b** — Implementation for C3: in `start_all_inner` step 10
-  (immediately after the UDP channel is established, before the
-  heartbeat scheduler), call
-  `udp_channel.send_player_state(initial_state)` with the
-  watching-athlete ID. Mirrors `establishUDPChannel` (line 2127).
+      (immediately after the UDP channel is established, before the
+      heartbeat scheduler), call
+      `udp_channel.send_player_state(initial_state)` with the
+      watching-athlete ID. Mirrors `establishUDPChannel` (line 2127).
 
 - [ ] **6a** — Tests for **C4 + N13 + R2**: the heartbeat
-  scheduler's outgoing PlayerState carries `id`, `just_watching =
-  true`, `watching_rider_id`, the `world` (course) field, and a
-  **non-zero `world_time`** that reflects the SNTP offset adjusted
-  during UDP hello sync (i.e. the `WorldTimer` instance shared
-  with `UdpChannel::establish`'s clock).
+      scheduler's outgoing PlayerState carries `id`, `just_watching =
+true`, `watching_rider_id`, the `world` (course) field, and a
+      **non-zero `world_time`** that reflects the SNTP offset adjusted
+      during UDP hello sync (i.e. the `WorldTimer` instance shared
+      with `UdpChannel::establish`'s clock).
 - [ ] **6b** — Implementation:
   - **N13**: in `start_all_inner` step 9, capture
     `world_timer.clone()` before moving the original into
@@ -2067,9 +2086,9 @@ flow correctness work).
   - **C4**: thread `watching_athlete_id` and `course_id` from
     `RuntimeInner.watched_state` into the `HeartbeatScheduler`;
     build the per-tick payload with `state.world_time =
-    Some(world_timer.now())`, `state.id`, `state.just_watching =
-    Some(true)`, `state.watching_rider_id`, and `state.world =
-    Some(course_id)` (per C9 — sauce's `courseId` is at proto
+Some(world_timer.now())`, `state.id`, `state.just_watching =
+Some(true)`, `state.watching_rider_id`, and `state.world =
+Some(course_id)` (per C9 — sauce's `courseId` is at proto
     tag 35).
   - **R2**: while in this site, simplify `HeartbeatScheduler::next_payload`
     to build a `PlayerState` directly (not the wrapping CTS); the
@@ -2079,25 +2098,26 @@ The **M-block (7–8)** is correctness work that doesn't block the
 first trace but should land in the same step:
 
 - [ ] **7a** — Tests for M1: every UDP hello iteration emits a
-  header carrying `RELAY_ID | CONN_ID | SEQNO`, not just SEQNO.
+      header carrying `RELAY_ID | CONN_ID | SEQNO`, not just SEQNO.
 - [ ] **7b** — Implementation for M1: drop the `hello_idx == 1`
-  special case in `build_send_header`; always emit the full triple
-  for hellos.
+      special case in `build_send_header`; always emit the full triple
+      for hellos.
 
 - [ ] **8a** — Tests for M2 + L3: incoming `worldUpdates[*].ts`
-  values advance a `last_world_update_ts: AtomicI64`; the next TCP
-  hello reads that value into `larg_wa_time`.
+      values advance a `last_world_update_ts: AtomicI64`; the next TCP
+      hello reads that value into `larg_wa_time`.
 - [ ] **8b** — Implementation for M2 + L3: add the atomic to
-  `RuntimeInner` (read `wa.timestamp`, tag 14, on each inbound
-  WorldAttribute); populate from the recv-loop's `Inbound` arm;
-  thread the current value into the TCP hello in `start_all_inner`
-  step 8.
+      `RuntimeInner` (read `wa.timestamp`, tag 14, on each inbound
+      WorldAttribute); populate from the recv-loop's `Inbound` arm;
+      thread the current value into the TCP hello in `start_all_inner`
+      step 8.
 
 The C9, C10, C11, C12 documentation breadcrumbs are baked into
 items 4b, 6b, and 1b above as inline comments / type-extension
 helpers — no separate Na/Nb pair needed.
 
 The N1–N9 round-4 findings split as follows:
+
 - **N1** (extra hello-body fields) — risky enough to fix in this
   STEP if C5+C6/7/8 don't unblock the trace. The fix requires
   forking the proto to drop `required` on tags 10/12, so it's a
@@ -2322,11 +2342,12 @@ no clean logout/leave on shutdown.
   re-login from the supervisor; emit
   `SessionEvent::SessionLost` instead. The outer retry loop
   (L5) handles the full reconnect cleanly.
-  
-  *(Alternative if approach B is preferred: recreate channels
+
+  _(Alternative if approach B is preferred: recreate channels
   in place on `LoggedIn`. This requires holding `RuntimeInner`
   state — channels, abort handles — behind shared mutability
-  and is significantly more invasive. Approach A is preferred.)*
+  and is significantly more invasive. Approach A is preferred.)_
+
 - N9: add `auth.logout()` (`POST /api/users/logout`) and
   `auth.leave()` (`POST /relay/worlds/1/leave`) methods. On
   daemon shutdown, call both best-effort before exiting.

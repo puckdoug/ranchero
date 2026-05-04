@@ -2092,3 +2092,125 @@ async fn tcp_hello_seqno_is_zero_not_one() {
         cts.seqno,
     );
 }
+
+// ==========================================================================
+// STEP-12.14 Phase 6a — Heartbeat content + shared WorldTimer.
+//
+// Tests cover C4 (heartbeat PlayerState must carry watching-identity fields)
+// and N13 (world_time must live in the PlayerState, not only in the CTS
+// wrapper; the WorldTimer must be the clone shared with UdpChannel::establish
+// so any SNTP offset from the hello exchange is reflected in heartbeat ticks).
+//
+// Both tests are red until Phase 6b:
+//   1. HeartbeatScheduler gains `watching_rider_id` and `course_id` fields.
+//   2. `next_payload` populates `state.just_watching`, `state.watching_rider_id`,
+//      `state.world`, and `state.world_time` from the shared WorldTimer.
+//   3. The per-tick loop emits a `relay.heartbeat.state` trace event carrying
+//      those fields so operators can verify session registration without
+//      decrypting wire bytes.
+// ==========================================================================
+
+/// After each heartbeat tick the scheduler must emit a `relay.heartbeat.state`
+/// trace event carrying the watching-identity fields — `just_watching`,
+/// `watching_rider_id`, and `world` (course ID) — so operators can observe
+/// session registration without decrypting UDP traffic. (STEP-12.14 §C4)
+///
+/// Red state: the scheduler builds `state: PlayerState::default()` and emits
+/// no content-field trace. After 6b, the scheduler receives `watching_rider_id`
+/// and `course_id` from `start_all_inner` and emits the dedicated state event.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn heartbeat_player_state_emits_trace_with_watching_identity_fields() {
+    let cfg = make_config("monitor@example.com", "pass");
+    // make_config sets watched_athlete_id = Some(54321).
+    // StubAuth::get_player_state returns world = Some(1) → course_id = 1.
+    let (udp_factory, _connected, _written) = RecordingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    // Advance past the initial tick-skip (0 ms) and one full interval
+    // (1000 ms) so the first real heartbeat fires in the spawned task.
+    tokio::time::advance(std::time::Duration::from_millis(1100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.heartbeat.state",
+        ),
+        "STEP-12.14 §C4: heartbeat must emit a relay.heartbeat.state trace \
+         event after each tick; not found in captured log",
+    );
+    for field in ["watching_rider_id=", "just_watching=", "world="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.14 §C4: relay.heartbeat.state must carry field {field:?} \
+             so operators can verify session registration; not found in log",
+        );
+    }
+}
+
+/// The heartbeat's `PlayerState.world_time` must be populated and emitted
+/// in the `relay.heartbeat.state` event. In the current code `world_time`
+/// lives only in the CTS wrapper's top-level field, not inside `state`; the
+/// scheduler also receives a fresh independent timer rather than the clone
+/// shared with `UdpChannel::establish`, so any SNTP offset from the hello
+/// exchange is invisible to subsequent heartbeats. (STEP-12.14 §N13)
+///
+/// Red state: `relay.heartbeat.state` is not emitted at all, so its
+/// `world_time=` field cannot appear in the log either. After 6b, the
+/// WorldTimer clone is passed to the scheduler and the event carries
+/// `world_time=<non_zero_value>`. The lower-level `relay.udp.playerstate.sent`
+/// line from `zwift_relay::udp` also carries `world_time=`, so the test gates
+/// on `relay.heartbeat.state` being present first to confirm the assertion
+/// refers to the heartbeat-level field, not the lower-level UDP trace.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn heartbeat_player_state_world_time_in_state_not_only_cts() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (udp_factory, _connected, _written) = RecordingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    tokio::time::advance(std::time::Duration::from_millis(1100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    // Gate on the heartbeat-state event existing; without it, world_time=
+    // might only appear in the lower-level relay.udp.playerstate.sent line.
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.heartbeat.state",
+        ),
+        "STEP-12.14 §N13: relay.heartbeat.state must be emitted before \
+         world_time= can be verified at heartbeat level; not found in log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "world_time="),
+        "STEP-12.14 §N13: relay.heartbeat.state must carry world_time= \
+         reflecting the WorldTimer clone shared with UdpChannel::establish; \
+         not found in captured log",
+    );
+}
