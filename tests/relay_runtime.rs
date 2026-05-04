@@ -3148,3 +3148,227 @@ async fn state_refresh_synthesizes_fake_server_packet_from_polled_state() {
          no matching event observed",
     );
 }
+
+// --- Batch D tests -------------------------------------------------------
+//
+// Cover STEP-12.14 §N8 (expungeReason logging), §M3 (TCP non-hello sends
+// emit flags=0x00), §k1 (TCP hello at iv_seqno=0 omits the SEQNO flag),
+// and §k2 (udp_config_vod_2 and flat udp_config are inert in pool
+// extraction). All four tests are red until Db.
+
+/// When an inbound STC carries `expunge_reason`, the recv-loop must
+/// emit `relay.tcp.expunge_reason` so operators can see why the server
+/// cut the session. (STEP-12.14 §N8)
+///
+/// Red state: the recv-loop ignores `stc.expunge_reason` entirely;
+/// no trace event fires.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn expunge_reason_is_logged_when_present() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    let stc = zwift_proto::ServerToClient {
+        expunge_reason: Some(zwift_proto::ExpungeReason::WorldFull as i32),
+        ..Default::default()
+    };
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.expunge_reason",
+        ),
+        "Batch D §Da §N8: when an inbound STC carries `expunge_reason`, \
+         the recv-loop must emit relay.tcp.expunge_reason at info so \
+         operators can see why the server cut the session; not found in log",
+    );
+}
+
+/// TCP non-hello sends must emit a header with `flags = 0x00` — no
+/// `RELAY_ID`, `CONN_ID`, or `SEQNO` bits set (sauce parity, M3).
+///
+/// Red state: `tcp.rs::send_packet` non-hello branch sets
+/// `flags: HeaderFlags::SEQNO`, so the wire's flags byte is `0x01`.
+#[tokio::test]
+async fn tcp_non_hello_send_emits_no_seqno_flag_in_header() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (tcp_factory, written) = RecordingTcpFactory::new();
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    // The first write was the TCP hello sent at startup. Drive a
+    // non-hello send so we have a second frame to inspect.
+    let payload = zwift_proto::ClientToServer {
+        seqno: Some(7),
+        ..Default::default()
+    };
+    runtime
+        .send_tcp(payload, false)
+        .await
+        .expect("send_tcp must not error");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let writes = written.lock().unwrap();
+    assert!(
+        writes.len() >= 2,
+        "Batch D §Da §M3: expected hello + non-hello writes; got {}",
+        writes.len(),
+    );
+    // TCP wire layout: [length_hi, length_lo, flags_byte, ...].
+    let flags_byte = writes[1][2];
+    assert_eq!(
+        flags_byte,
+        0x00,
+        "Batch D §Da §M3: TCP non-hello sends must emit a header with \
+         flags=0x00 (no RELAY_ID, CONN_ID, or SEQNO bits set); got 0x{flags_byte:02x}",
+    );
+}
+
+/// The first TCP hello is sent at `iv_seqno = 0`. Sauce omits the
+/// `SEQNO` flag in that case (`(options.hello && iv.seqno) ||
+/// options.forceSeq`), so the encoded header carries only
+/// `RELAY_ID | CONN_ID = 0x06`. (STEP-12.14 §k1)
+///
+/// Red state: `tcp.rs::send_packet` hello branch unconditionally sets
+/// `RELAY_ID | CONN_ID | SEQNO = 0x07` regardless of `iv_seqno`.
+#[tokio::test]
+async fn tcp_hello_omits_seqno_flag_when_iv_seqno_is_zero() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (tcp_factory, written) = RecordingTcpFactory::new();
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let writes = written.lock().unwrap();
+    assert!(
+        !writes.is_empty(),
+        "Batch D §Da §k1: expected at least one write (the TCP hello); none recorded",
+    );
+    // TCP wire layout: [length_hi, length_lo, flags_byte, ...]. The
+    // first hello is sent at iv_seqno = 0, so the SEQNO flag (0x1)
+    // must be omitted; encoded flags = RELAY_ID|CONN_ID = 0x06.
+    let flags_byte = writes[0][2];
+    assert_eq!(
+        flags_byte,
+        0x06,
+        "Batch D §Da §k1: TCP hello at iv_seqno=0 must encode flags = \
+         RELAY_ID|CONN_ID = 0x06 (no SEQNO bit); got 0x{flags_byte:02x}",
+    );
+}
+
+/// `extract_udp_pools` must return `None` when only `udp_config_vod_2`
+/// or only the flat `udp_config` are populated. Sauce's
+/// `_udpServerPools` is updated only by `udp_config_vod_1`; the v2
+/// and flat fallbacks are dead code in the production daemon.
+/// (STEP-12.14 §k2)
+///
+/// Red state: `extract_udp_pools` walks v2 then flat, so injects of
+/// either kind currently flow through to `pool_router.apply_pool_update`
+/// and emit additional `relay.udp.pool_router.updated` events.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn udp_config_v2_and_flat_fallback_paths_are_inert() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    // Inject a vod_2-only push; with k2 parity this must NOT update
+    // the pool router.
+    let stc_vod2 = zwift_proto::ServerToClient {
+        udp_config_vod_2: Some(zwift_proto::UdpConfigVod {
+            relay_addresses_vod: vec![zwift_proto::RelayAddressesVod {
+                lb_realm: Some(99),
+                lb_course: Some(99),
+                relay_addresses: vec![zwift_proto::RelayAddress {
+                    ip: Some("10.99.99.99".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc_vod2)));
+
+    // Inject a flat-`udp_config`-only push; same expectation.
+    let stc_flat = zwift_proto::ServerToClient {
+        udp_config: Some(zwift_proto::UdpConfig {
+            relay_addresses: vec![zwift_proto::RelayAddress {
+                ip: Some("10.88.88.88".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc_flat)));
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    // The initial vod_1 push from `default_udp_config_push()` is
+    // consumed by `start_all_inner`'s wait-for-udp_config step, not
+    // by `recv_loop`, so it does NOT emit `pool_router.updated`.
+    // Under k2 parity, the two injects above must also produce zero
+    // emissions because `extract_udp_pools` returns `None` for both.
+    logs_assert(|lines| {
+        let count = lines
+            .iter()
+            .filter(|l| l.contains("pool_router.updated"))
+            .count();
+        if count == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "Batch D §Da §k2: udp_config_vod_2 and flat udp_config \
+                 must be inert (extract_udp_pools returns None); expected \
+                 zero relay.udp.pool_router.updated emissions, got {count}"
+            ))
+        }
+    });
+}

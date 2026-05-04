@@ -172,7 +172,7 @@ any order after Phase 8):
       `RuntimeInner::suspended: AtomicBool`; gate heartbeat ticks
       on `suspended == false`; resume from `_updateSelfState`-
       equivalent path in `recv_loop`.
-- [ ] **Da** — Tests for Batch D (diagnostics & TCP-flag
+- [x] **Da** — Tests for Batch D (diagnostics & TCP-flag
       parity): `expungeReason` is logged when present; TCP
       non-hello sends emit no SEQNO flag in header; TCP hello
       omits SEQNO flag when `iv_seqno == 0`; `udp_config_vod_2`
