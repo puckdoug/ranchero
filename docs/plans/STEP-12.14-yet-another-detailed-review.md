@@ -148,7 +148,7 @@ any order after Phase 8):
       `RelayRuntime` to hold multiple UDP channels with grace
       shutdown; patch the proto for `xBoundMin`/`yBoundMin`/
       `securePort` (depends on Eb if proto fork lands first).
-- [ ] **Ba** — Tests for Batch B (connect retry & supervisor
+- [x] **Ba** — Tests for Batch B (connect retry & supervisor
       recovery): start failure triggers exponential backoff retry;
       TCP server is pinned across reconnects; supervisor re-login
       recreates channels with the new key; clean shutdown sends

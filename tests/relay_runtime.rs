@@ -2585,3 +2585,283 @@ async fn portal_pool_handled_via_portal_key() {
          for the portal-realm pool entry; not found in trace log",
     );
 }
+
+// ==========================================================================
+// STEP-12.14 Batch B §Ba — Connect retry & supervisor recovery (red state).
+//
+// Tests cover L5 (connect retry with exponential back-off), L4 (TCP server
+// pinning across reconnects), N14 (supervisor re-login causes channel
+// recreation), and N9 (logout + leave called on clean shutdown).
+//
+// All four tests are red until Batch Bb:
+//   1. `start_with_all_deps` (or its internal `connect_with_retry` wrapper)
+//      retries a failed `start_all_inner` with 1000 ms × 1.2^attempt
+//      back-off, emitting `relay.runtime.connect_retry attempt=N backoff_ms=M`
+//      before each retry.
+//   2. The chosen TCP server's IP is remembered across retry/reconnect calls;
+//      when the supervisor returns a session with a shuffled server list, the
+//      runtime prefers the remembered IP and emits
+//      `relay.runtime.tcp_server_pinned`.
+//   3. A `SessionEvent::LoggedIn(new_session)` carrying a changed AES key
+//      causes the runtime to tear down and recreate TCP + UDP channels with
+//      the new key, emitting `relay.runtime.channels_recreated`.
+//   4. `RelayRuntime::shutdown()` calls `auth.logout()` and `auth.leave()`
+//      best-effort, emitting `relay.runtime.logout` and `relay.runtime.leave`.
+// ==========================================================================
+
+// --- stubs for Batch B tests -------------------------------------------
+
+/// TCP factory whose `connect()` always returns an I/O error. Used to
+/// exercise the connect-retry path without a real TCP server.
+struct FailingTcpFactory;
+
+impl TcpTransportFactory for FailingTcpFactory {
+    type Transport = NoopTcpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        async { Err(std::io::Error::other("FailingTcpFactory: connect refused")) }
+    }
+}
+
+/// TCP factory that vends a fresh `NoopTcpTransport` (with the default
+/// udp_config push) on every `connect()` call. Unlike `StubTcpFactory`,
+/// it never exhausts and can be called multiple times — needed by
+/// reconnect tests where `start_all_inner` runs more than once.
+struct RepeatableTcpFactory;
+
+impl TcpTransportFactory for RepeatableTcpFactory {
+    type Transport = NoopTcpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        async { Ok(NoopTcpTransport::with_pending(Some(default_udp_config_push()))) }
+    }
+}
+
+// --- Batch B tests -------------------------------------------------------
+
+/// After a TCP connect failure the runtime must retry `start_all_inner`
+/// with exponential back-off and emit `relay.runtime.connect_retry` carrying
+/// `attempt` and `backoff_ms` fields before each retry. (STEP-12.14 §L5)
+///
+/// Red state: `start_with_all_deps` propagates the `TcpConnect` error
+/// immediately without entering any retry loop; the trace event never fires.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn start_failure_triggers_exponential_backoff_retry() {
+    let cfg = make_config("monitor@example.com", "pass");
+
+    // FailingTcpFactory always errors; `start_all_inner` never succeeds.
+    // With paused time, any `tokio::time::sleep` calls in the retry loop
+    // complete in zero real time, so the first retry fires within the
+    // 5-second advance below.
+    let task = tokio::spawn(async move {
+        let _ = RelayRuntime::start_with_all_deps(
+            &cfg,
+            None,
+            StubAuth,
+            StubSupervisorFactory::new(fixture_session()),
+            FailingTcpFactory,
+            NoopUdpFactory,
+        )
+        .await;
+    });
+
+    // Advance the paused clock by 5 s; enough for the first retry's
+    // 1200 ms back-off to elapse and fire at least one retry event.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    task.abort();
+    let _ = task.await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.connect_retry",
+        ),
+        "STEP-12.14 §L5: start_with_all_deps must emit relay.runtime.connect_retry \
+         before each retry attempt after a TCP connect failure; not found in log",
+    );
+    for field in ["attempt=1", "backoff_ms="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.14 §L5: relay.runtime.connect_retry must carry field {field:?} \
+             — not found in log",
+        );
+    }
+}
+
+/// After successfully connecting to a TCP server, the runtime must remember
+/// that server's IP. When the supervisor returns a session with a shuffled
+/// server list on a reconnect, the runtime must prefer the remembered IP and
+/// emit `relay.runtime.tcp_server_pinned`. (STEP-12.14 §L4)
+///
+/// Red state: the runtime does not track which TCP server was last used;
+/// no pinning logic exists and the trace event never fires.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn tcp_server_pinned_across_reconnects() {
+    let cfg = make_config("monitor@example.com", "pass");
+
+    // Initial session: 10.0.0.1 first; the runtime should pin to that IP.
+    let initial_session = zwift_relay::RelaySession {
+        aes_key: [0u8; 16],
+        relay_id: 42,
+        tcp_servers: vec![
+            zwift_relay::TcpServer { ip: "10.0.0.1".into() },
+            zwift_relay::TcpServer { ip: "10.0.0.2".into() },
+        ],
+        expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(3600),
+        server_time_ms: Some(0),
+    };
+    // Shuffled session: 10.0.0.2 now first — Bb must still reconnect to
+    // 10.0.0.1 because that was the previously-used server.
+    let shuffled_session = zwift_relay::RelaySession {
+        aes_key: [1u8; 16],
+        relay_id: 43,
+        tcp_servers: vec![
+            zwift_relay::TcpServer { ip: "10.0.0.2".into() },
+            zwift_relay::TcpServer { ip: "10.0.0.1".into() },
+        ],
+        expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(3600),
+        server_time_ms: Some(0),
+    };
+
+    let (events_tx, _) = tokio::sync::broadcast::channel::<zwift_relay::SessionEvent>(16);
+    let factory = StubSupervisorFactory::with_events_tx(
+        initial_session,
+        events_tx.clone(),
+    );
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        factory,
+        RepeatableTcpFactory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    // Inject a LoggedIn event carrying the shuffled session. Under Bb (N14),
+    // the runtime treats this as a reconnect trigger. L4 pinning must prefer
+    // 10.0.0.1 even though 10.0.0.2 is now first in the server list.
+    let _ = events_tx.send(zwift_relay::SessionEvent::LoggedIn(shuffled_session));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.tcp_server_pinned",
+        ),
+        "STEP-12.14 §L4: when a reconnect sees a shuffled server list, the \
+         runtime must prefer the previously-used TCP server (10.0.0.1) and \
+         emit relay.runtime.tcp_server_pinned; not found in log",
+    );
+}
+
+/// A `SessionEvent::LoggedIn` carrying a new AES key must cause the runtime
+/// to tear down the existing TCP and UDP channels and recreate them using
+/// the new key, emitting `relay.runtime.channels_recreated`. (STEP-12.14 §N14)
+///
+/// Red state: the runtime either ignores the `LoggedIn` event or updates the
+/// AES key in-place without recreating channels; the trace event never fires.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn supervisor_relogin_recreates_channels_with_new_key() {
+    let cfg = make_config("monitor@example.com", "pass");
+
+    let (events_tx, _) = tokio::sync::broadcast::channel::<zwift_relay::SessionEvent>(16);
+    let factory = StubSupervisorFactory::with_events_tx(
+        fixture_session(),
+        events_tx.clone(),
+    );
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        factory,
+        RepeatableTcpFactory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    // Inject a LoggedIn event with a different AES key. Under Bb (N14),
+    // the runtime tears down and recreates TCP + UDP channels with the
+    // new key, then emits relay.runtime.channels_recreated.
+    let new_session = zwift_relay::RelaySession {
+        aes_key: [0xABu8; 16],
+        relay_id: 99,
+        tcp_servers: vec![zwift_relay::TcpServer { ip: "127.0.0.1".into() }],
+        expires_at: tokio::time::Instant::now() + std::time::Duration::from_secs(3600),
+        server_time_ms: Some(0),
+    };
+    let _ = events_tx.send(zwift_relay::SessionEvent::LoggedIn(new_session));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.channels_recreated",
+        ),
+        "STEP-12.14 §N14: a SessionEvent::LoggedIn with a different AES key must \
+         cause the runtime to tear down and recreate TCP + UDP channels, emitting \
+         relay.runtime.channels_recreated; not found in log",
+    );
+}
+
+/// On clean shutdown, the runtime must call `auth.logout()` and
+/// `auth.leave()` best-effort and emit `relay.runtime.logout` and
+/// `relay.runtime.leave`. Failures must not block exit. (STEP-12.14 §N9)
+///
+/// Red state: `RelayRuntime::shutdown()` tears down channels without
+/// calling logout or leave; neither trace event fires.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn clean_shutdown_sends_logout_and_leave() {
+    let cfg = make_config("monitor@example.com", "pass");
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.logout",
+        ),
+        "STEP-12.14 §N9: shutdown must call auth.logout() (POST /api/users/logout) \
+         and emit relay.runtime.logout; not found in log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.leave",
+        ),
+        "STEP-12.14 §N9: shutdown must call auth.leave() (POST /relay/worlds/1/leave) \
+         and emit relay.runtime.leave; not found in log",
+    );
+}
