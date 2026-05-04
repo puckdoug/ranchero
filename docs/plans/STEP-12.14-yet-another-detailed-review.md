@@ -126,7 +126,7 @@ unblocks the next point in the live-trace failure chain):
       reads the running max; world updates with stale `ts` are
       dropped; `last_player_update` carries the world-update
       seqno running max.
-- [ ] **8b** — Implementation for Phase 8: add
+- [x] **8b** — Implementation for Phase 8: add
       `last_world_update_ts: AtomicI64` and `largest_wa_seqno:
 AtomicI64` to `RuntimeInner`; populate from `recv_loop`'s
       `Inbound` arm with dedup; thread current values into the
