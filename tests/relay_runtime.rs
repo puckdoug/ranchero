@@ -1927,3 +1927,168 @@ async fn udp_setup_errors_when_no_lb_course_zero_pool_present() {
          only per-course pools are present — daemon should error first",
     );
 }
+
+// ==========================================================================
+// STEP-12.14 Phase 5a — Post-establish UDP send + TCP hello seqno.
+//
+// Tests cover C3 (post-establish `send_player_state`) and N5 (TCP hello
+// seqno = 0, not 1).
+//
+// All three tests are red until Phase 5b:
+//   1. `start_all_inner` calls `udp_channel.send_player_state(initial_state)`
+//      between UDP-establish and the heartbeat spawn.
+//   2. The call site logs `relay.udp.post_establish.sent` carrying
+//      `watching_rider_id`, `just_watching`, and `world` fields.
+//   3. The TCP hello literal changes `seqno: Some(1)` to `seqno: Some(0)`.
+// ==========================================================================
+
+/// Decode a framed TCP wire packet (as captured by `RecordingTcpTransport`)
+/// into its `ClientToServer` payload. Strips the 2-byte big-endian
+/// length prefix added by `frame_tcp`, parses the header, decrypts using
+/// the fixture AES key `[0u8; 16]`, and decodes the inner proto.
+fn decode_tcp_hello_cts(wire: &[u8]) -> zwift_proto::ClientToServer {
+    // TCP frames carry a 2-byte big-endian length prefix; skip it.
+    let frame = &wire[2..];
+    let parsed = zwift_relay::decode_header(frame).expect("decode header");
+    let aad = &frame[..parsed.consumed];
+    let cipher = &frame[parsed.consumed..];
+    let conn_id = parsed.header.conn_id.expect("TCP hello must carry conn_id in header");
+    let seqno = parsed.header.seqno.unwrap_or(0);
+    let iv = zwift_relay::RelayIv {
+        device: zwift_relay::DeviceType::Relay,
+        channel: zwift_relay::ChannelType::TcpClient,
+        conn_id,
+        seqno,
+    };
+    let plaintext = zwift_relay::decrypt(
+        &[0u8; 16],
+        &iv.to_bytes(),
+        aad,
+        cipher,
+    ).expect("decrypt TCP hello");
+    let tcp = zwift_relay::parse_tcp_plaintext(&plaintext).expect("parse TCP plaintext");
+    zwift_proto::ClientToServer::decode(tcp.proto_bytes).expect("decode CTS from TCP hello")
+}
+
+/// After `UdpChannel::establish` returns, `start_all_inner` must call
+/// `send_player_state` exactly once — before the 1 Hz heartbeat fires —
+/// to register the relay session with the server. (STEP-12.14 §C3)
+///
+/// Uses `RecordingUdpFactory` (max_hellos = 0 → no hello packets, instant
+/// convergence). Checks written-packet count immediately after
+/// `start_with_all_deps` returns, so the 1-second heartbeat delay hasn't
+/// elapsed and all recorded sends are the post-establish registration.
+#[tokio::test]
+async fn post_establish_sends_exactly_one_udp_packet_before_first_heartbeat() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (udp_factory, _connected, written) = RecordingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    // Read the count before awaiting anything. The post-establish send is
+    // synchronous inside start_all_inner; the 1 Hz heartbeat timer hasn't
+    // had time to fire.
+    let count = written.lock().unwrap().len();
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert_eq!(
+        count,
+        1,
+        "STEP-12.14 §C3: exactly one UDP send (the post-establish \
+         watching-registration packet) must fire between UDP convergence \
+         and the first heartbeat. Got {count} packets immediately after start.",
+    );
+}
+
+/// The post-establish `send_player_state` must emit a `relay.udp.post_establish.sent`
+/// trace event carrying `watching_rider_id`, `just_watching`, and `world`
+/// fields so operators can verify the session registration without decrypting
+/// wire bytes. (STEP-12.14 §C3)
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn post_establish_player_state_emits_trace_with_required_fields() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (udp_factory, _connected, _written) = RecordingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.udp.post_establish.sent",
+        ),
+        "STEP-12.14 §C3: relay.udp.post_establish.sent must fire at info \
+         synchronously after UdpChannel::establish; not found in log",
+    );
+    for field in ["watching_rider_id=", "just_watching=", "world="] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", field),
+            "STEP-12.14 §C3: relay.udp.post_establish.sent must carry \
+             field {field:?} — not found in any captured log line",
+        );
+    }
+}
+
+/// The TCP hello must carry `seqno = Some(0)`, matching sauce4zwift which
+/// starts the sequence at 0 (`zwift.mjs:1821`: `seqno: 0`). The daemon
+/// currently sends `seqno: Some(1)`, which is an off-by-one. (STEP-12.14 §N5)
+///
+/// Decrypts the first TCP write recorded by `RecordingTcpFactory` to read
+/// the hello's `ClientToServer.seqno` field directly.
+#[tokio::test]
+async fn tcp_hello_seqno_is_zero_not_one() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (tcp_factory, written) = RecordingTcpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let writes = written.lock().unwrap();
+    assert!(
+        !writes.is_empty(),
+        "STEP-12.14 §N5: TCP hello must have been written; \
+         RecordingTcpTransport recorded no writes",
+    );
+    let cts = decode_tcp_hello_cts(&writes[0]);
+    assert_eq!(
+        cts.seqno,
+        Some(0),
+        "STEP-12.14 §N5: TCP hello seqno must be 0 (sauce starts at 0, \
+         not 1). Got {:?}",
+        cts.seqno,
+    );
+}

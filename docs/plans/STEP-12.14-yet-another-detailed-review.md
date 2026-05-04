@@ -93,7 +93,7 @@ unblocks the next point in the live-trace failure chain):
   it and gate UDP setup on `state.world` (tag 35); add
   `RelayRuntimeError::NoWatchedAthlete` and
   `WatchedAthleteNotInGame`.
-- [ ] **5a** — Tests for Phase 5 (post-establish UDP send + TCP
+- [x] **5a** — Tests for Phase 5 (post-establish UDP send + TCP
   hello seqno): exactly one `send_player_state` call with
   `watching_rider_id`, `id`, `just_watching = true`, `world` is
   recorded between UDP convergence and the first heartbeat; TCP
