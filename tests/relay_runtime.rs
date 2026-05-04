@@ -93,17 +93,23 @@ fn build_inbound_servertoclient_frame(
 /// Default `ServerToClient` udp_config push delivered by the stub
 /// TCP transports (`NoopTcpTransport`, `RecordingTcpTransport`) so
 /// STEP-12.13 §D3's wait-for-udp_config step in `start_all_inner`
-/// resolves. Points the daemon at `127.0.0.1:3024`, which matches
-/// what the previous `tcp_servers[0]`-based code would have used.
+/// resolves. Uses `udp_config_vod_1` — the only format that
+/// `extract_udp_pools` processes after §k2; flat `udp_config` is
+/// intentionally ignored by the production daemon.
 fn default_udp_config_push() -> Vec<u8> {
     let stc = zwift_proto::ServerToClient {
-        udp_config: Some(zwift_proto::UdpConfig {
-            relay_addresses: vec![zwift_proto::RelayAddress {
+        udp_config_vod_1: Some(zwift_proto::UdpConfigVod {
+            relay_addresses_vod: vec![zwift_proto::RelayAddressesVod {
                 lb_realm: Some(0),
                 lb_course: Some(0),
-                ip: Some("127.0.0.1".to_string()),
-                port: Some(3024),
-                ..Default::default()
+                relay_addresses: vec![zwift_proto::RelayAddress {
+                    lb_realm: Some(0),
+                    lb_course: Some(0),
+                    ip: Some("127.0.0.1".to_string()),
+                    port: Some(3024),
+                    ..Default::default()
+                }],
+                rav_f4: None,
             }],
             ..Default::default()
         }),
@@ -1600,32 +1606,6 @@ impl ScriptedTcpFactory {
         }
     }
 
-    /// Build a factory whose TCP channel will deliver one
-    /// `ServerToClient` containing a flat `UdpConfig` with a single
-    /// `RelayAddress` pointing at `(ip, port)`.
-    fn pushing_udp_config(ip: &str, port: i32) -> Self {
-        let stc = zwift_proto::ServerToClient {
-            udp_config: Some(zwift_proto::UdpConfig {
-                relay_addresses: vec![zwift_proto::RelayAddress {
-                    lb_realm: Some(0),
-                    lb_course: Some(0),
-                    ip: Some(ip.to_string()),
-                    port: Some(port),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        // conn_id=0, seqno=0 line up with the channel's initial
-        // recv_iv state on the very first inbound frame.
-        let frame = build_inbound_servertoclient_frame(&stc, 0, 0);
-        Self {
-            transport: StdMutex::new(Some(ScriptedTcpTransport {
-                pending: StdMutex::new(Some(frame)),
-            })),
-        }
-    }
 }
 
 impl TcpTransportFactory for ScriptedTcpFactory {
@@ -1678,9 +1658,9 @@ impl UdpTransportFactory for AddrCapturingUdpFactory {
     }
 }
 
-/// 3a.i — UDP target must come from the first `udp_config` push on
-/// the TCP stream, not from `session.tcp_servers[0]`. Today the
-/// daemon connects UDP to whatever `tcp_servers[0]` says, which is
+/// 3a.i — UDP target must come from the first `udp_config_vod_1` push on
+/// the TCP stream, not from `session.tcp_servers[0]`. Before D3, the
+/// daemon connected UDP to whatever `tcp_servers[0]` said, which is
 /// why the live trace got `Connection refused` — the UDP server
 /// pool is announced separately from the TCP server pool.
 #[tokio::test]
@@ -1689,9 +1669,9 @@ async fn udp_target_taken_from_first_udp_config_push_not_tcp_servers() {
     let mut session = fixture_session();
     session.tcp_servers = vec![zwift_relay::TcpServer { ip: "10.99.99.99".into() }];
     let pushed_udp_ip = "10.55.55.55";
-    let pushed_udp_port: i32 = 3023;
 
-    let tcp_factory = ScriptedTcpFactory::pushing_udp_config(pushed_udp_ip, pushed_udp_port);
+    // §k2: only udp_config_vod_1 is processed; use that format here.
+    let tcp_factory = ScriptedTcpFactory::pushing_udp_config_vod(&[(0, pushed_udp_ip)]);
     let (udp_factory, captured) = AddrCapturingUdpFactory::new();
 
     let runtime = RelayRuntime::start_with_all_deps(
@@ -1712,19 +1692,19 @@ async fn udp_target_taken_from_first_udp_config_push_not_tcp_servers() {
         .unwrap()
         .expect(
             "STEP-12.13 D3: udp_factory.connect() must be called once \
-             start_all_inner sees the first udp_config push",
+             start_all_inner sees the first udp_config_vod_1 push",
         );
     assert_eq!(
         target.ip().to_string(),
         pushed_udp_ip,
-        "STEP-12.13 D3: UDP target must come from the udp_config push, \
+        "STEP-12.13 D3: UDP target must come from the udp_config_vod_1 push, \
          not from session.tcp_servers; expected {pushed_udp_ip}, got {target}",
     );
     assert_ne!(
         target.ip().to_string(),
         "10.99.99.99",
         "STEP-12.13 D3: UDP must not silently fall back to tcp_servers[0] \
-         when a udp_config push is available on the TCP stream",
+         when a udp_config_vod_1 push is available on the TCP stream",
     );
 }
 

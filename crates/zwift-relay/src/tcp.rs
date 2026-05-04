@@ -236,18 +236,28 @@ impl<T: TcpTransport> TcpChannel<T> {
 
             let iv_seqno_used = send.iv_seqno;
             let header = if hello {
+                // §k1: include SEQNO in the hello header only when the IV
+                // seqno is non-zero (the very first hello has iv_seqno=0 and
+                // the server does not expect the SEQNO flag that time).
+                let flags = if iv_seqno_used > 0 {
+                    HeaderFlags::RELAY_ID | HeaderFlags::CONN_ID | HeaderFlags::SEQNO
+                } else {
+                    HeaderFlags::RELAY_ID | HeaderFlags::CONN_ID
+                };
                 Header {
-                    flags: HeaderFlags::RELAY_ID | HeaderFlags::CONN_ID | HeaderFlags::SEQNO,
+                    flags,
                     relay_id: Some(self.relay_id),
                     conn_id: Some(self.conn_id),
-                    seqno: Some(iv_seqno_used),
+                    seqno: if iv_seqno_used > 0 { Some(iv_seqno_used) } else { None },
                 }
             } else {
+                // §M3: non-hello frames carry no header flags; the server
+                // identifies them by the plaintext envelope byte alone.
                 Header {
-                    flags: HeaderFlags::SEQNO,
+                    flags: HeaderFlags::empty(),
                     relay_id: None,
                     conn_id: None,
-                    seqno: Some(iv_seqno_used),
+                    seqno: None,
                 }
             };
             let header_bytes = header.encode();

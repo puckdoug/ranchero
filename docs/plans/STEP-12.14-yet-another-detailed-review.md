@@ -177,7 +177,7 @@ any order after Phase 8):
       non-hello sends emit no SEQNO flag in header; TCP hello
       omits SEQNO flag when `iv_seqno == 0`; `udp_config_vod_2`
       and flat `udp_config` fallback paths are inert.
-- [ ] **Db** — Implementation for Batch D: add `expunge_reason`
+- [x] **Db** — Implementation for Batch D: add `expunge_reason`
       log in `recv_loop`; restructure `tcp.rs::send_packet` to
       emit `flags=0` for non-hello and conditional SEQNO for
       hello-with-iv_seqno=0; remove fallback paths from

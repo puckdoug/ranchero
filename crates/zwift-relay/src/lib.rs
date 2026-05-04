@@ -94,10 +94,8 @@ pub struct UdpPoolEntry {
 /// pools (lb_course ≠ 0) are for direct-server routing after the daemon
 /// knows the watched athlete's current course.
 ///
-/// Priority order mirrors sauce:
-/// 1. `udp_config_vod_1` — production Zwift.
-/// 2. `udp_config_vod_2` — second slot (rare).
-/// 3. Flat `udp_config` — treated as a single `lb_course=0` pool.
+/// Only `udp_config_vod_1` is read; the `udp_config_vod_2` and flat
+/// `udp_config` fields were never observed in production and are ignored.
 ///
 /// Returns `None` when the message carries no UDP server hints.
 pub fn extract_udp_pools(
@@ -116,28 +114,15 @@ pub fn extract_udp_pools(
             .collect()
     };
 
+    // §k2: only the production vod_1 slot is authoritative for pool
+    // routing. The vod_2 and flat fallback paths were never observed in
+    // production traffic and their presence caused spurious pool updates
+    // in tests; they are intentionally excluded here.
     if let Some(vod) = &stc.udp_config_vod_1 {
         let pools = pools_from_vod(vod);
         if !pools.is_empty() {
             return Some(pools);
         }
-    }
-    if let Some(vod) = &stc.udp_config_vod_2 {
-        let pools = pools_from_vod(vod);
-        if !pools.is_empty() {
-            return Some(pools);
-        }
-    }
-    if let Some(cfg) = &stc.udp_config
-        && !cfg.relay_addresses.is_empty()
-    {
-        // Flat UdpConfig has no per-pool course info; treat as generic.
-        return Some(vec![UdpPoolEntry {
-            lb_realm: 0,
-            lb_course: 0,
-            use_first_in_bounds: false,
-            addresses: cfg.relay_addresses.clone(),
-        }]);
     }
     None
 }

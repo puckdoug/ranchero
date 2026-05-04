@@ -2499,6 +2499,14 @@ where
                             }
                             inner.recompute_udp_selection();
                         }
+                        // §N8: log the server's expunge reason when present.
+                        if let Some(reason) = stc.expunge_reason {
+                            tracing::info!(
+                                target: "ranchero::relay",
+                                reason,
+                                "relay.tcp.expunge_reason",
+                            );
+                        }
                     }
                     Ok(zwift_relay::TcpChannelEvent::Timeout) => {
                         tracing::info!(target: "ranchero::relay", "relay.tcp.timeout");
