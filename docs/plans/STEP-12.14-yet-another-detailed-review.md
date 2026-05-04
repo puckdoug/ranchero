@@ -120,7 +120,7 @@ unblocks the next point in the live-trace failure chain):
       `hello_idx == 1` special case in
       `udp.rs::build_send_header`; emit the full triple every
       iteration.
-- [ ] **8a** — Tests for Phase 8 (reconnect-state tracking):
+- [x] **8a** — Tests for Phase 8 (reconnect-state tracking):
       `inner.last_world_update_ts` advances from inbound
       `WorldAttribute.timestamp`; TCP hello's `larg_wa_time`
       reads the running max; world updates with stale `ts` are
@@ -708,10 +708,10 @@ in the bidirectional sync) but no idea what data the client wants.
 Inbound `ServerToClient` flow effectively never starts.
 
 **Why it matters:** even with C1 (right pool), C2 (right courseId),
-M1 (relayId/connId on hellos), and M2 (larg_wa_time), a daemon that
+M1 (relayId/connId on hellos), and M2 (larg*wa_time), a daemon that
 gets to `relay.udp.established` will then sit silent forever. No
 inbound `relay.udp.message.recv`, no player states, no world
-updates. The trace will _look_ successful but be useless.
+updates. The trace will \_look* successful but be useless.
 
 This is also what the user's live trace would have done if 3b had
 kept the daemon alive past UDP-establish: the daemon would have
@@ -1822,9 +1822,9 @@ calls `_schedConnectRetry()` which goes through the full
 channels with the new session's key.
 
 Our supervisor's `refresh_loop`, by contrast, falls back to a
-full `login()` (new aes_key, new relay_id) and emits
-`SessionEvent::LoggedIn(new_session)` _while keeping the existing
-channels alive_. After that event fires:
+full `login()` (new aes*key, new relay_id) and emits
+`SessionEvent::LoggedIn(new_session)` \_while keeping the existing
+channels alive*. After that event fires:
 
 1. The daemon writes a manifest with the new key (so the capture
    file is decryptable past the rotation).
@@ -2103,7 +2103,7 @@ first trace but should land in the same step:
       special case in `build_send_header`; always emit the full triple
       for hellos.
 
-- [ ] **8a** — Tests for M2 + L3: incoming `worldUpdates[*].ts`
+- [x] **8a** — Tests for M2 + L3: incoming `worldUpdates[*].ts`
       values advance a `last_world_update_ts: AtomicI64`; the next TCP
       hello reads that value into `larg_wa_time`.
 - [ ] **8b** — Implementation for M2 + L3: add the atomic to

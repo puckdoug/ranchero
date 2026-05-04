@@ -2216,3 +2216,121 @@ async fn heartbeat_player_state_world_time_in_state_not_only_cts() {
          not found in captured log",
     );
 }
+
+// ==========================================================================
+// STEP-12.14 Phase 8a — WorldAttribute timestamp tracking + TCP hello
+// larg_wa_time field.
+//
+// Tests cover M2 (TCP hello must carry larg_wa_time) and L3 (recv-loop must
+// advance last_world_update_ts from inbound WorldAttribute.timestamp entries).
+//
+// Both tests are red until Phase 8b:
+//   1. RuntimeInner gains last_world_update_ts: AtomicI64 (initially 0).
+//   2. recv-loop Inbound arm walks stc.updates, advances last_world_update_ts
+//      to max(current, wa.timestamp.unwrap_or(0)), and emits a
+//      relay.tcp.world_update.tracked trace event carrying the new value.
+//   3. TCP hello construction reads last_world_update_ts and sets
+//      larg_wa_time: Some(...); relay.tcp.hello.sent trace gains larg_wa_time=.
+// ==========================================================================
+
+/// After injecting an inbound ServerToClient that carries WorldAttribute
+/// entries with timestamp values, the recv-loop must advance
+/// `last_world_update_ts` to the highest timestamp in the batch and emit a
+/// `relay.tcp.world_update.tracked` trace event. (STEP-12.14 §L3)
+///
+/// Red state: the recv-loop's Inbound arm checks `stc.updates.is_empty()`
+/// for the message-kind label but does not read `wa.timestamp` or advance
+/// any tracked state. No trace event is emitted and the assertion fails.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn inbound_world_updates_advance_last_world_update_ts() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (udp_factory, _connected, _written) = RecordingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("start");
+
+    // Two WorldAttributes in one batch; the one with the higher timestamp
+    // (9_000_000) must win.
+    let stc = zwift_proto::ServerToClient {
+        updates: vec![
+            zwift_proto::WorldAttribute {
+                timestamp: Some(5_000_000),
+                ..Default::default()
+            },
+            zwift_proto::WorldAttribute {
+                timestamp: Some(9_000_000),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.world_update.tracked",
+        ),
+        "STEP-12.14 §L3: recv-loop must emit relay.tcp.world_update.tracked \
+         when processing WorldAttribute entries with timestamps; not found in log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "last_world_update_ts=9000000",
+        ),
+        "STEP-12.14 §L3: relay.tcp.world_update.tracked must carry \
+         last_world_update_ts=9000000 (the max of all timestamps in the batch); \
+         not found in log",
+    );
+}
+
+/// The TCP hello must include `larg_wa_time` in both the encoded
+/// ClientToServer and the `relay.tcp.hello.sent` trace event so operators
+/// can verify the reconnect-timestamp handshake. (STEP-12.14 §M2)
+///
+/// Red state: `relay.tcp.hello.sent` is emitted without any fields; the
+/// assertion on `larg_wa_time=` fails immediately.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn tcp_hello_carries_larg_wa_time_field_in_trace() {
+    let cfg = make_config("monitor@example.com", "pass");
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.tcp.hello.sent"),
+        "relay.tcp.hello.sent must be emitted (prerequisite for the larg_wa_time check)",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "larg_wa_time="),
+        "STEP-12.14 §M2: relay.tcp.hello.sent must carry a larg_wa_time= field \
+         so operators can verify the reconnect timestamp is correctly populated; \
+         not found in log",
+    );
+}
