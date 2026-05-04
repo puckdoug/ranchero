@@ -319,11 +319,11 @@ struct UdpHeartbeatSink<T: zwift_relay::UdpTransport>(Arc<zwift_relay::UdpChanne
 impl<T: zwift_relay::UdpTransport> HeartbeatSink for UdpHeartbeatSink<T> {
     fn send(
         &self,
-        payload: zwift_proto::ClientToServer,
+        state: zwift_proto::PlayerState,
     ) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
         let ch = Arc::clone(&self.0);
         async move {
-            ch.send_player_state(payload.state)
+            ch.send_player_state(state)
                 .await
                 .map_err(|e| std::io::Error::other(e.to_string()))
         }
@@ -425,13 +425,12 @@ pub struct RelayRuntime {
 // STEP-12.3 — Heartbeat scheduler (stub).
 // ---------------------------------------------------------------------------
 
-/// Sink for outbound `ClientToServer` heartbeats. The
-/// production implementation wraps a `UdpChannel`; tests use a
-/// recording stub.
+/// Sink for outbound heartbeat `PlayerState` packets. The production
+/// implementation wraps a `UdpChannel`; tests use a recording stub.
 pub trait HeartbeatSink: Send + Sync + 'static {
     fn send(
         &self,
-        payload: zwift_proto::ClientToServer,
+        state: zwift_proto::PlayerState,
     ) -> impl std::future::Future<Output = std::io::Result<()>> + Send;
 }
 
@@ -445,18 +444,28 @@ pub struct HeartbeatScheduler<T: HeartbeatSink> {
     interval: std::time::Duration,
     seqno: std::sync::atomic::AtomicU32,
     athlete_id: i64,
+    watching_rider_id: i64,
+    course_id: i32,
 }
 
 impl<T: HeartbeatSink> HeartbeatScheduler<T> {
     /// Build a scheduler. The default interval is 1 Hz; tests
     /// may override with `with_interval`.
-    pub fn new(sink: T, world_timer: zwift_relay::WorldTimer, athlete_id: i64) -> Self {
+    pub fn new(
+        sink: T,
+        world_timer: zwift_relay::WorldTimer,
+        athlete_id: i64,
+        watching_rider_id: i64,
+        course_id: i32,
+    ) -> Self {
         Self {
             sink,
             world_timer,
             interval: std::time::Duration::from_secs(1),
             seqno: std::sync::atomic::AtomicU32::new(0),
             athlete_id,
+            watching_rider_id,
+            course_id,
         }
     }
 
@@ -471,21 +480,27 @@ impl<T: HeartbeatSink> HeartbeatScheduler<T> {
         self.seqno.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Build the heartbeat payload for the next send. Increments
-    /// the seqno and reads the current `world_time`.
-    fn next_payload(&self) -> zwift_proto::ClientToServer {
-        let next_seqno = self
-            .seqno
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        zwift_proto::ClientToServer {
-            server_realm: 1,
-            player_id: self.athlete_id,
-            world_time: Some(self.world_timer.now()),
-            seqno: Some(next_seqno),
-            state: zwift_proto::PlayerState::default(),
-            last_update: 0,
-            last_player_update: 0,
+    /// Build the heartbeat state for the next send. Increments the
+    /// seqno, reads the current `world_time`, and emits a trace event
+    /// so integration tests can observe the identity fields.
+    fn next_state(&self) -> zwift_proto::PlayerState {
+        self.seqno
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let world_time = self.world_timer.now();
+        tracing::trace!(
+            target: "ranchero::relay",
+            watching_rider_id = self.watching_rider_id,
+            just_watching = true,
+            world = self.course_id,
+            world_time,
+            "relay.heartbeat.state",
+        );
+        zwift_proto::PlayerState {
+            id: Some(self.athlete_id),
+            just_watching: Some(true),
+            watching_rider_id: Some(self.watching_rider_id),
+            world: Some(self.course_id),
+            world_time: Some(world_time),
             ..Default::default()
         }
     }
@@ -494,8 +509,8 @@ impl<T: HeartbeatSink> HeartbeatScheduler<T> {
     /// internal loop and by tests that want to exercise the
     /// payload-construction logic without a tokio interval.
     pub async fn send_one(&self) -> std::io::Result<()> {
-        let payload = self.next_payload();
-        self.sink.send(payload).await
+        let state = self.next_state();
+        self.sink.send(state).await
     }
 
     /// Run the 1 Hz scheduler until cancelled. The loop never
@@ -1382,6 +1397,7 @@ impl RelayRuntime {
             ..udp_factory.channel_config()
         };
         let world_timer = zwift_relay::WorldTimer::new();
+        let heartbeat_world_timer = world_timer.clone();
         let (udp_channel, _udp_events_from_channel) =
             zwift_relay::UdpChannel::establish(udp_transport, &session, world_timer, udp_config)
                 .await
@@ -1424,11 +1440,15 @@ impl RelayRuntime {
         let udp_channel = Arc::new(udp_channel);
         let heartbeat_abort = {
             let udp_for_heartbeat = Arc::clone(&udp_channel);
-            let heartbeat_world_timer = zwift_relay::WorldTimer::new();
             let handle = tokio::spawn(async move {
                 let sink = UdpHeartbeatSink(udp_for_heartbeat);
-                let scheduler =
-                    HeartbeatScheduler::new(sink, heartbeat_world_timer, athlete_id);
+                let scheduler = HeartbeatScheduler::new(
+                    sink,
+                    heartbeat_world_timer,
+                    athlete_id,
+                    watched_id_i64,
+                    course_id,
+                );
                 scheduler.run().await;
             });
             let abort = handle.abort_handle();
@@ -2716,15 +2736,15 @@ mod tests {
     // STEP-12.3 — Heartbeat scheduler tests.
     // -----------------------------------------------------------------
 
-    /// Recording sink: stores every payload it receives. Used by
+    /// Recording sink: stores every state it receives. Used by
     /// the heartbeat tests to observe the scheduler's output
     /// without going through a real UDP transport.
     struct StubHeartbeatSink {
-        sent: Arc<StdMutex<Vec<zwift_proto::ClientToServer>>>,
+        sent: Arc<StdMutex<Vec<zwift_proto::PlayerState>>>,
     }
 
     impl StubHeartbeatSink {
-        fn new() -> (Self, Arc<StdMutex<Vec<zwift_proto::ClientToServer>>>) {
+        fn new() -> (Self, Arc<StdMutex<Vec<zwift_proto::PlayerState>>>) {
             let sent = Arc::new(StdMutex::new(Vec::new()));
             (Self { sent: sent.clone() }, sent)
         }
@@ -2733,9 +2753,9 @@ mod tests {
     impl HeartbeatSink for StubHeartbeatSink {
         fn send(
             &self,
-            payload: zwift_proto::ClientToServer,
+            state: zwift_proto::PlayerState,
         ) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
-            self.sent.lock().unwrap().push(payload);
+            self.sent.lock().unwrap().push(state);
             async { Ok(()) }
         }
     }
@@ -2747,6 +2767,8 @@ mod tests {
             sink,
             zwift_relay::WorldTimer::new(),
             12345,
+            99,
+            10,
         );
 
         let _ = tokio::time::timeout(
@@ -2769,18 +2791,19 @@ mod tests {
             sink,
             zwift_relay::WorldTimer::new(),
             12345,
+            99,
+            10,
         );
 
         for _ in 0..3 {
             scheduler.send_one().await.expect("send_one");
         }
 
-        let recorded = sent.lock().unwrap();
-        let seqnos: Vec<u32> = recorded
-            .iter()
-            .map(|p| p.seqno.expect("seqno present"))
-            .collect();
-        assert_eq!(seqnos, vec![1, 2, 3], "seqno must increment by one per send");
+        assert_eq!(
+            sent.lock().unwrap().len(),
+            3,
+            "sink must receive one PlayerState per send_one call",
+        );
         assert_eq!(scheduler.seqno(), 3, "scheduler seqno reports total sends");
     }
 
@@ -2788,7 +2811,7 @@ mod tests {
     async fn heartbeat_world_time_tracks_world_timer() {
         let (sink, sent) = StubHeartbeatSink::new();
         let world_timer = zwift_relay::WorldTimer::new();
-        let scheduler = HeartbeatScheduler::new(sink, world_timer.clone(), 12345);
+        let scheduler = HeartbeatScheduler::new(sink, world_timer.clone(), 12345, 99, 10);
 
         scheduler.send_one().await.expect("send_one #1");
         let first_time = sent.lock().unwrap().last().unwrap().world_time;

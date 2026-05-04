@@ -107,7 +107,7 @@ unblocks the next point in the live-trace failure chain):
       `watching_rider_id`, `world` (course), and a non-zero
       `world_time` reflecting the SNTP offset adjusted during UDP
       hello sync.
-- [ ] **6b** — Implementation for Phase 6: clone `world_timer`
+- [x] **6b** — Implementation for Phase 6: clone `world_timer`
       before moving into `UdpChannel::establish`; pass the clone to
       `HeartbeatScheduler` along with `watched_id` and `course_id`;
       rewrite `next_payload` (now `next_state`) to populate the
@@ -2070,13 +2070,13 @@ None / 0`), the daemon does NOT call `udp_factory.connect()`;
       `udp_channel.send_player_state(initial_state)` with the
       watching-athlete ID. Mirrors `establishUDPChannel` (line 2127).
 
-- [ ] **6a** — Tests for **C4 + N13 + R2**: the heartbeat
+- [x] **6a** — Tests for **C4 + N13 + R2**: the heartbeat
       scheduler's outgoing PlayerState carries `id`, `just_watching =
 true`, `watching_rider_id`, the `world` (course) field, and a
       **non-zero `world_time`** that reflects the SNTP offset adjusted
       during UDP hello sync (i.e. the `WorldTimer` instance shared
       with `UdpChannel::establish`'s clock).
-- [ ] **6b** — Implementation:
+- [x] **6b** — Implementation:
   - **N13**: in `start_all_inner` step 9, capture
     `world_timer.clone()` before moving the original into
     `UdpChannel::establish`; pass the clone to `HeartbeatScheduler`

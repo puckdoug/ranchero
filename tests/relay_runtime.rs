@@ -1380,7 +1380,7 @@ struct CountingHeartbeatSink {
 }
 
 impl HeartbeatSink for CountingHeartbeatSink {
-    async fn send(&self, _payload: zwift_proto::ClientToServer) -> std::io::Result<()> {
+    async fn send(&self, _state: zwift_proto::PlayerState) -> std::io::Result<()> {
         self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
@@ -1389,7 +1389,7 @@ impl HeartbeatSink for CountingHeartbeatSink {
 struct FailingHeartbeatSink;
 
 impl HeartbeatSink for FailingHeartbeatSink {
-    async fn send(&self, _payload: zwift_proto::ClientToServer) -> std::io::Result<()> {
+    async fn send(&self, _state: zwift_proto::PlayerState) -> std::io::Result<()> {
         Err(std::io::Error::other("simulated heartbeat failure"))
     }
 }
@@ -1400,7 +1400,7 @@ async fn heartbeat_tick_emits_debug_event_per_interval() {
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let sink = CountingHeartbeatSink { count: Arc::clone(&count) };
     let scheduler = Arc::new(
-        HeartbeatScheduler::new(sink, WorldTimer::new(), 12345)
+        HeartbeatScheduler::new(sink, WorldTimer::new(), 12345, 99, 10)
             .with_interval(std::time::Duration::from_millis(30)),
     );
     let s2 = Arc::clone(&scheduler);
@@ -1498,7 +1498,7 @@ async fn start_all_inner_writes_udp_outbound_to_capture_file() {
 #[tracing_test::traced_test]
 async fn heartbeat_send_failure_emits_warn() {
     let scheduler = Arc::new(
-        HeartbeatScheduler::new(FailingHeartbeatSink, WorldTimer::new(), 12345)
+        HeartbeatScheduler::new(FailingHeartbeatSink, WorldTimer::new(), 12345, 99, 10)
             .with_interval(std::time::Duration::from_millis(30)),
     );
     let s2 = Arc::clone(&scheduler);
@@ -2137,9 +2137,10 @@ async fn heartbeat_player_state_emits_trace_with_watching_identity_fields() {
     .await
     .expect("start_with_all_deps must succeed");
 
-    // Advance past the initial tick-skip (0 ms) and one full interval
-    // (1000 ms) so the first real heartbeat fires in the spawned task.
-    tokio::time::advance(std::time::Duration::from_millis(1100)).await;
+    // Sleep in paused-time mode: tokio advances the clock through all
+    // intermediate timer deadlines, giving the spawned heartbeat task a
+    // chance to initialize its interval and fire its first tick at 1000 ms.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
     runtime.shutdown();
     let _ = runtime.join().await;
@@ -2192,7 +2193,8 @@ async fn heartbeat_player_state_world_time_in_state_not_only_cts() {
     .await
     .expect("start_with_all_deps must succeed");
 
-    tokio::time::advance(std::time::Duration::from_millis(1100)).await;
+    // Same paused-time sleep as the companion test.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
     runtime.shutdown();
     let _ = runtime.join().await;
