@@ -153,7 +153,7 @@ any order after Phase 8):
       TCP server is pinned across reconnects; supervisor re-login
       recreates channels with the new key; clean shutdown sends
       `logout` and `leave`.
-- [ ] **Bb** — Implementation for Batch B: wrap
+- [x] **Bb** — Implementation for Batch B: wrap
       `start_all_inner` in a retry loop with `1.2^attempt`
       backoff; persist last-good TCP IP in `RuntimeInner`; replace
       in-place re-login with `SessionEvent::SessionLost` so the

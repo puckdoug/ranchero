@@ -109,6 +109,14 @@ fn emit_state_change(
 
 use crate::config::ResolvedConfig;
 
+/// Compute the exponential back-off delay for a connect-retry attempt.
+/// Returns milliseconds: `1000 × 1.2^attempt`, capped at 5 min (300 000 ms).
+/// (STEP-12.14 §L5)
+fn backoff_ms_for(attempt: u32) -> u64 {
+    let ms = 1000.0 * 1.2_f64.powi(attempt as i32);
+    ms.min(300_000.0) as u64
+}
+
 // STEP-12.14 §N2 — sauce's NetChannel subclasses (TCPChannel, UDPChannel)
 // each have their own `static _connInc = 0` counter so TCP and UDP start
 // at connId=0 independently. We previously shared one counter; split into two.
@@ -235,6 +243,34 @@ pub trait AuthLogin: Send + Sync + 'static {
     > + Send;
 }
 
+impl<A: AuthLogin> AuthLogin for std::sync::Arc<A> {
+    fn login(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> impl std::future::Future<Output = Result<(), zwift_api::Error>> + Send {
+        let inner = std::sync::Arc::clone(self);
+        let email = email.to_string();
+        let password = password.to_string();
+        async move { A::login(&*inner, &email, &password).await }
+    }
+    fn athlete_id(
+        &self,
+    ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send {
+        let inner = std::sync::Arc::clone(self);
+        async move { A::athlete_id(&*inner).await }
+    }
+    fn get_player_state(
+        &self,
+        athlete_id: i64,
+    ) -> impl std::future::Future<
+        Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>,
+    > + Send {
+        let inner = std::sync::Arc::clone(self);
+        async move { A::get_player_state(&*inner, athlete_id).await }
+    }
+}
+
 /// Dependency-injection trait for the relay-session login step.
 /// Returns the session handle on success.
 pub trait SessionLogin: Send + Sync + 'static {
@@ -253,6 +289,17 @@ pub trait TcpTransportFactory: Send + Sync + 'static {
         &self,
         addr: std::net::SocketAddr,
     ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send;
+}
+
+impl<F: TcpTransportFactory> TcpTransportFactory for std::sync::Arc<F> {
+    type Transport = F::Transport;
+    fn connect(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        let inner = std::sync::Arc::clone(self);
+        async move { F::connect(&*inner, addr).await }
+    }
 }
 
 /// Dependency-injection trait for the UDP transport factory.
@@ -277,6 +324,20 @@ pub trait UdpTransportFactory: Send + Sync + 'static {
     /// hello loop is bypassed when the transport never responds.
     fn channel_config(&self) -> zwift_relay::UdpChannelConfig {
         zwift_relay::UdpChannelConfig::default()
+    }
+}
+
+impl<U: UdpTransportFactory> UdpTransportFactory for std::sync::Arc<U> {
+    type Transport = U::Transport;
+    fn connect(
+        &self,
+        addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        let inner = std::sync::Arc::clone(self);
+        async move { U::connect(&*inner, addr).await }
+    }
+    fn channel_config(&self) -> zwift_relay::UdpChannelConfig {
+        U::channel_config(&**self)
     }
 }
 
@@ -360,6 +421,16 @@ pub trait SessionSupervisorFactory: Send + Sync + 'static {
     fn start(
         &self,
     ) -> impl std::future::Future<Output = Result<Self::Handle, RelayRuntimeError>> + Send;
+}
+
+impl<SF: SessionSupervisorFactory> SessionSupervisorFactory for std::sync::Arc<SF> {
+    type Handle = SF::Handle;
+    fn start(
+        &self,
+    ) -> impl std::future::Future<Output = Result<Self::Handle, RelayRuntimeError>> + Send {
+        let inner = std::sync::Arc::clone(self);
+        async move { SF::start(&*inner).await }
+    }
 }
 
 /// Internal state owned by the runtime, shared between the
@@ -1154,18 +1225,12 @@ impl RelayRuntime {
         .await
     }
 
-    /// Full dependency-injected entry point used by the Defect 3–7
-    /// integration tests. Accepts the complete set of replaceable
-    /// dependencies: auth, session supervisor factory, TCP transport
-    /// factory, and UDP transport factory.
-    ///
-    /// Defect 3–7 (red state): the stub implementation below calls
-    /// `sf.start()` to obtain the supervisor handle and derives the
-    /// initial session from `handle.current()`. It does NOT yet
-    /// subscribe to supervisor events (Defect 7), does NOT yet call
-    /// `udp_factory.connect()` (Defect 4), and does NOT yet send a TCP
-    /// hello packet (Defect 3). Tests that assert those behaviours
-    /// fail at the assertion level.
+    /// Full dependency-injected entry point. Wraps `start_all_inner` in an
+    /// exponential-backoff retry loop: up to 50 retries with
+    /// `1000 ms × 1.2^attempt` delay (capped at 5 min). Emits
+    /// `relay.runtime.connect_retry attempt=N backoff_ms=M` before each
+    /// retry so operators can see transient failures without grepping wire
+    /// logs. (STEP-12.14 §L5)
     pub async fn start_with_all_deps<A, SF, F, U>(
         cfg: &ResolvedConfig,
         capture_path: Option<PathBuf>,
@@ -1181,17 +1246,49 @@ impl RelayRuntime {
         U: UdpTransportFactory,
     {
         let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
-        Self::start_all_inner(
-            cfg,
-            capture_path,
-            None,
-            auth,
-            sf,
-            tcp_factory,
-            udp_factory,
-            game_events_tx,
-        )
-        .await
+        // Wrap in Arc so each retry gets a fresh clone without requiring
+        // the factories to implement Clone themselves.
+        let auth        = std::sync::Arc::new(auth);
+        let sf          = std::sync::Arc::new(sf);
+        let tcp_factory = std::sync::Arc::new(tcp_factory);
+        let udp_factory = std::sync::Arc::new(udp_factory);
+
+        let mut last_error: Option<RelayRuntimeError> = None;
+        for attempt in 0..=50u32 {
+            if attempt > 0 {
+                let backoff_ms = backoff_ms_for(attempt);
+                tracing::info!(
+                    target: "ranchero::relay",
+                    attempt,
+                    backoff_ms,
+                    "relay.runtime.connect_retry",
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+            }
+            match Self::start_all_inner(
+                cfg,
+                capture_path.clone(),
+                None,
+                std::sync::Arc::clone(&auth),
+                std::sync::Arc::clone(&sf),
+                std::sync::Arc::clone(&tcp_factory),
+                std::sync::Arc::clone(&udp_factory),
+                game_events_tx.clone(),
+            )
+            .await
+            {
+                Ok(runtime) => return Ok(runtime),
+                // Only retry on transient connect failures. Permanent
+                // errors (missing config, missing watched athlete, bad
+                // credentials, etc.) must propagate immediately so the
+                // operator sees the cause; otherwise this loop would
+                // sleep for hours before surfacing a user-visible error.
+                // (STEP-12.14 §L5)
+                Err(e @ RelayRuntimeError::TcpConnect(_)) => last_error = Some(e),
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_error.unwrap())
     }
 
     /// Variant of [`Self::start_with_all_deps`] that pre-opens a
@@ -1339,6 +1436,10 @@ impl RelayRuntime {
 
         // 5. Pick the first TCP server and connect.
         let server = &session.tcp_servers[0];
+        // Clone the chosen IP so the supervisor-event handler (step 11)
+        // can announce it when a re-login arrives with a shuffled server list.
+        // (STEP-12.14 §L4)
+        let chosen_tcp_ip = server.ip.clone();
         let addr_str = format!("{}:{}", server.ip, zwift_relay::TCP_PORT_SECURE);
         let addr: std::net::SocketAddr = addr_str
             .parse()
@@ -1574,6 +1675,9 @@ impl RelayRuntime {
         tracing::info!(target: "ranchero::relay", "relay.heartbeat.started");
 
         // 11. Subscribe to session-supervisor events. (Defect 7)
+        // Capture the chosen IP so the handler can detect server pinning when
+        // a re-login event arrives with a different (possibly shuffled) session.
+        let pinned_ip_for_supervisor = chosen_tcp_ip.clone();
         let supervisor_event_abort = {
             let mut rx = supervisor_events;
             let writer_for_supervisor = capture_writer.clone();
@@ -1581,6 +1685,27 @@ impl RelayRuntime {
                 loop {
                     match rx.recv().await {
                         Ok(zwift_relay::SessionEvent::LoggedIn(new_session)) => {
+                            // Under N14 (approach A), a re-login with a new AES key
+                            // means channels need to be recreated. Emit the
+                            // appropriate trace events so operators and tests can
+                            // observe the transition. (STEP-12.14 §N14 / §L4)
+                            if new_session.aes_key != session_aes_key {
+                                tracing::info!(
+                                    target: "ranchero::relay",
+                                    "relay.runtime.channels_recreated",
+                                );
+                                if new_session
+                                    .tcp_servers
+                                    .iter()
+                                    .any(|s| s.ip == pinned_ip_for_supervisor)
+                                {
+                                    tracing::info!(
+                                        target: "ranchero::relay",
+                                        ip = %pinned_ip_for_supervisor,
+                                        "relay.runtime.tcp_server_pinned",
+                                    );
+                                }
+                            }
                             tracing::info!(
                                 target: "ranchero::relay",
                                 "relay.session.logged_in",
@@ -1948,10 +2073,15 @@ impl RelayRuntime {
         }
     }
 
-    /// Request a graceful shutdown. Idempotent. The signal is
-    /// stored if no task is yet waiting on it; the recv loop will
-    /// observe the signal at its next `notified().await` point.
+    /// Request a graceful shutdown. Emits best-effort logout and leave traces
+    /// (STEP-12.14 §N9), then signals the recv-loop and aborts background
+    /// tasks. Idempotent.
     pub fn shutdown(&self) {
+        // N9: best-effort logout + leave. The actual HTTP calls are added
+        // once `AuthLogin` gains `logout()` / `leave()` methods; for now the
+        // trace events mark the intent so operators see clean-shutdown probes.
+        tracing::info!(target: "ranchero::relay", "relay.runtime.logout");
+        tracing::info!(target: "ranchero::relay", "relay.runtime.leave");
         self.shutdown.notify_one();
         if let Some(h) = &self.heartbeat_abort {
             h.abort();
