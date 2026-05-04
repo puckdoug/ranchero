@@ -2106,7 +2106,7 @@ first trace but should land in the same step:
 - [x] **8a** — Tests for M2 + L3: incoming `worldUpdates[*].ts`
       values advance a `last_world_update_ts: AtomicI64`; the next TCP
       hello reads that value into `larg_wa_time`.
-- [ ] **8b** — Implementation for M2 + L3: add the atomic to
+- [x] **8b** — Implementation for M2 + L3: add the atomic to
       `RuntimeInner` (read `wa.timestamp`, tag 14, on each inbound
       WorldAttribute); populate from the recv-loop's `Inbound` arm;
       thread the current value into the TCP hello in `start_all_inner`

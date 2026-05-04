@@ -378,6 +378,11 @@ struct RuntimeInner {
     pool_router: std::sync::Mutex<UdpPoolRouter>,
     watched_state: std::sync::Mutex<WatchedAthleteState>,
     current_udp_server: std::sync::Mutex<Option<std::net::SocketAddr>>,
+    /// Highest `WorldAttribute.timestamp` (tag 14, microseconds since epoch)
+    /// seen on any inbound STC. Advanced by the recv-loop; read by the TCP
+    /// hello as `larg_wa_time` so reconnects tell the server the last world
+    /// state the client already has. (STEP-12.14 §M2 / §L3)
+    last_world_update_ts: std::sync::atomic::AtomicI64,
 }
 
 /// The orchestrator owned by the daemon. `start` performs the auth
@@ -1213,6 +1218,17 @@ impl RelayRuntime {
             "relay.course_gate.in_game",
         );
 
+        // Pre-create the shared runtime state so step 8 (TCP hello) can read
+        // last_world_update_ts into larg_wa_time. On a fresh connect the value
+        // is 0; it advances once the recv-loop starts processing inbound STCs.
+        let initial_watched = WatchedAthleteState::for_athlete(watched_id_i64);
+        let inner = Arc::new(RuntimeInner {
+            pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
+            watched_state: std::sync::Mutex::new(initial_watched),
+            current_udp_server: std::sync::Mutex::new(None),
+            last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
+        });
+
         // Resolve the capture writer: prefer the preopen, fall back
         // to opening from the supplied path (None → no capture).
         let capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
@@ -1295,6 +1311,8 @@ impl RelayRuntime {
         let tcp_sender: Arc<dyn TcpSend> = Arc::clone(&channel) as Arc<dyn TcpSend>;
 
         // 8. Send the TCP hello packet. (Defect 3)
+        let hello_larg_wa_time =
+            inner.last_world_update_ts.load(std::sync::atomic::Ordering::Relaxed);
         tcp_sender
             .send_packet(
                 zwift_proto::ClientToServer {
@@ -1303,12 +1321,17 @@ impl RelayRuntime {
                     world_time: Some(0),
                     seqno: Some(0),
                     state: zwift_proto::PlayerState::default(),
+                    larg_wa_time: Some(hello_larg_wa_time),
                     ..Default::default()
                 },
                 true,
             )
             .await?;
-        tracing::info!(target: "ranchero::relay", "relay.tcp.hello.sent");
+        tracing::info!(
+            target: "ranchero::relay",
+            larg_wa_time = hello_larg_wa_time,
+            "relay.tcp.hello.sent",
+        );
 
         // 8.5. Wait for the first ServerToClient carrying a udp_config /
         //      udp_config_vod*. Zwift announces UDP servers separately
@@ -1550,19 +1573,10 @@ impl RelayRuntime {
         let shutdown = Arc::new(Notify::new());
         let (udp_events_tx, udp_events_rx) =
             tokio::sync::broadcast::channel::<zwift_relay::ChannelEvent>(64);
-        let initial_watched = match cfg.watched_athlete_id {
-            Some(id) => WatchedAthleteState::for_athlete(id as i64),
-            None => WatchedAthleteState::default(),
-        };
-        let inner = Arc::new(RuntimeInner {
-            pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
-            watched_state: std::sync::Mutex::new(initial_watched),
-            current_udp_server: std::sync::Mutex::new(None),
-        });
-
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
         let recv_game_events = game_events_tx.clone();
+        let inner_for_recv = Arc::clone(&inner);
         let join_handle = tokio::spawn(async move {
             recv_loop(
                 channel,
@@ -1571,6 +1585,7 @@ impl RelayRuntime {
                 recv_shutdown,
                 recv_writer,
                 recv_game_events,
+                inner_for_recv,
             )
             .await
         });
@@ -1716,12 +1731,14 @@ impl RelayRuntime {
             pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
             watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
+            last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
         });
 
         let channel = Arc::new(channel);
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
         let recv_game_events = game_events_tx.clone();
+        let inner_for_recv = Arc::clone(&inner);
         let join_handle = tokio::spawn(async move {
             recv_loop(
                 channel,
@@ -1730,6 +1747,7 @@ impl RelayRuntime {
                 recv_shutdown,
                 recv_writer,
                 recv_game_events,
+                inner_for_recv,
             )
             .await
         });
@@ -2067,6 +2085,7 @@ async fn recv_loop<T>(
     shutdown: Arc<Notify>,
     capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
     game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    inner: Arc<RuntimeInner>,
 ) -> Result<(), RelayRuntimeError>
 where
     T: zwift_relay::TcpTransport,
@@ -2119,6 +2138,28 @@ where
                                     world_time_ms: state.world_time.unwrap_or(0),
                                 });
                             }
+                        }
+                        // Advance last_world_update_ts to the highest
+                        // WorldAttribute.timestamp in this batch (§L3 / §N6).
+                        let mut found_ts = false;
+                        for wa in &stc.updates {
+                            if let Some(ts) = wa.timestamp {
+                                inner.last_world_update_ts.fetch_max(
+                                    ts,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                found_ts = true;
+                            }
+                        }
+                        if found_ts {
+                            let tracked = inner
+                                .last_world_update_ts
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            tracing::debug!(
+                                target: "ranchero::relay",
+                                last_world_update_ts = tracked,
+                                "relay.tcp.world_update.tracked",
+                            );
                         }
                     }
                     Ok(zwift_relay::TcpChannelEvent::Timeout) => {
