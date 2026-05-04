@@ -166,7 +166,7 @@ any order after Phase 8):
       after 15 s of no self-state; daemon resumes on incoming
       self-state; polled state is broadcast as a fake server
       packet.
-- [ ] **Cb** — Implementation for Batch C: spawn
+- [x] **Cb** — Implementation for Batch C: spawn
       `StateRefresher` task in `start_all_inner` with self-tuning
       delay (3 s minimum, 30 s on suspend, 5 min on errors); add
       `RuntimeInner::suspended: AtomicBool`; gate heartbeat ticks

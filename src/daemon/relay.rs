@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
@@ -453,6 +453,18 @@ struct RuntimeInner {
     /// hello as `larg_wa_time` so reconnects tell the server the last world
     /// state the client already has. (STEP-12.14 §M2 / §L3)
     last_world_update_ts: std::sync::atomic::AtomicI64,
+    /// Set true when the daemon has been suspended due to no fresh
+    /// inbound self-state for >15 s. The state-refresher sets this
+    /// when it detects the idle threshold has been crossed; the
+    /// recv-loop clears it on the next inbound self-state for the
+    /// watched athlete. (STEP-12.14 §L2)
+    suspended: AtomicBool,
+    /// Virtual-clock instant of the most recent inbound self-state
+    /// (an STC `state` whose `id` matches the watched athlete). Read
+    /// by the state-refresher to compute idle age. Initialised at
+    /// startup so the first 15 s aren't treated as already-stale.
+    /// (STEP-12.14 §L1 / §L2)
+    last_self_state_at: std::sync::Mutex<Option<tokio::time::Instant>>,
     /// Broadcast sender for high-level `GameEvent`s. Shared with
     /// `RelayRuntime::game_events_tx`; stored here so
     /// `recompute_udp_selection` can emit `PoolSwap` events without
@@ -513,6 +525,76 @@ impl RuntimeInner {
     }
 }
 
+/// Sauce's `_refreshStates` parity. Polls
+/// `auth.get_player_state(watched_id)` on a self-tuning interval
+/// (3 s minimum, expanding toward 30 s after 15 s of no inbound
+/// self-state, capped at 5 min on errors). Each polled `PlayerState`
+/// is broadcast as a synthesized `GameEvent::PlayerState` so
+/// downstream consumers see it the same as if it had arrived on the
+/// wire. When the inbound self-state goes silent for >15 s, sets
+/// `inner.suspended` and emits `relay.runtime.suspended_idle`; the
+/// recv-loop clears `suspended` and emits `relay.runtime.resumed`
+/// on the next inbound self-state. (STEP-12.14 §L1 / §L2)
+async fn run_state_refresher<A: AuthLogin>(
+    auth: Arc<A>,
+    watched_id: i64,
+    inner: Arc<RuntimeInner>,
+) {
+    use std::time::Duration;
+    const MIN_DELAY: Duration = Duration::from_secs(3);
+    const SUSPEND_DELAY: Duration = Duration::from_secs(30);
+    const MAX_DELAY: Duration = Duration::from_secs(300);
+    const SUSPEND_THRESHOLD: Duration = Duration::from_secs(15);
+
+    let mut delay = MIN_DELAY;
+
+    loop {
+        tokio::time::sleep(delay).await;
+
+        match auth.get_player_state(watched_id).await {
+            Ok(Some(state)) => {
+                // Synthesize a "fake server packet" so downstream
+                // consumers see polled state the same as wire-delivered.
+                if let Some(athlete_id) = state.id {
+                    let _ = inner.game_events_tx.send(GameEvent::PlayerState {
+                        athlete_id,
+                        power_w: state.power.unwrap_or(0),
+                        cadence_u_hz: state.cadence_u_hz.unwrap_or(0),
+                        speed_mm_h: state.speed.unwrap_or(0),
+                        world_time_ms: state.world_time.unwrap_or(0),
+                    });
+                }
+
+                let last = *inner
+                    .last_self_state_at
+                    .lock()
+                    .expect("last_self_state_at mutex");
+                let age = match last {
+                    Some(t) => tokio::time::Instant::now().saturating_duration_since(t),
+                    None => Duration::from_secs(u64::MAX / 2),
+                };
+
+                if age >= SUSPEND_THRESHOLD {
+                    if !inner.suspended.swap(true, Ordering::Relaxed) {
+                        tracing::info!(
+                            target: "ranchero::relay",
+                            age_ms = age.as_millis() as u64,
+                            "relay.runtime.suspended_idle",
+                        );
+                    }
+                    delay =
+                        (delay + SUSPEND_DELAY.saturating_sub(delay) / 2).min(SUSPEND_DELAY);
+                } else if age < delay.mul_f64(0.95) {
+                    delay = (delay - (delay - MIN_DELAY) / 2).max(MIN_DELAY);
+                }
+            }
+            Ok(None) | Err(_) => {
+                delay = delay.mul_f64(1.15).min(MAX_DELAY);
+            }
+        }
+    }
+}
+
 /// The orchestrator owned by the daemon. `start` performs the auth
 /// and relay-session login synchronously, opens the capture writer
 /// if a path is given, then spawns the recv-loop task.
@@ -552,6 +634,10 @@ pub struct RelayRuntime {
     /// Abort handle for the session-event subscriber task spawned by
     /// `start_all_inner`. `None` on the older start paths.
     supervisor_event_abort: Option<tokio::task::AbortHandle>,
+    /// Abort handle for the `_refreshStates` polling task spawned by
+    /// `start_all_inner`. `None` on the older start paths.
+    /// (STEP-12.14 §L1 / §L2)
+    state_refresher_abort: Option<tokio::task::AbortHandle>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1416,6 +1502,8 @@ impl RelayRuntime {
             watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
             last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
+            suspended: AtomicBool::new(false),
+            last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
         });
 
@@ -1806,6 +1894,25 @@ impl RelayRuntime {
             .await
         });
 
+        // 13. Spawn the state-refresher polling task. (STEP-12.14 §L1 / §L2)
+        // Wraps `auth` in an Arc so the spawned task and any future
+        // post-start-up auth use can share the same handle.
+        let auth_for_refresher = std::sync::Arc::new(auth);
+        let inner_for_refresher = Arc::clone(&inner);
+        let state_refresher_abort = {
+            let handle = tokio::spawn(async move {
+                run_state_refresher(
+                    auth_for_refresher,
+                    watched_id_i64,
+                    inner_for_refresher,
+                )
+                .await;
+            });
+            let abort = handle.abort_handle();
+            drop(handle);
+            abort
+        };
+
         Ok(Self {
             join_handle,
             shutdown,
@@ -1816,6 +1923,7 @@ impl RelayRuntime {
             tcp_sender: Some(tcp_sender),
             heartbeat_abort: Some(heartbeat_abort),
             supervisor_event_abort: Some(supervisor_event_abort),
+            state_refresher_abort: Some(state_refresher_abort),
         })
     }
 
@@ -1948,6 +2056,8 @@ impl RelayRuntime {
             watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
             last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
+            suspended: AtomicBool::new(false),
+            last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
         });
 
@@ -1977,6 +2087,7 @@ impl RelayRuntime {
             tcp_sender: None,
             heartbeat_abort: None,
             supervisor_event_abort: None,
+            state_refresher_abort: None,
         })
     }
 
@@ -2087,6 +2198,9 @@ impl RelayRuntime {
             h.abort();
         }
         if let Some(h) = &self.supervisor_event_abort {
+            h.abort();
+        }
+        if let Some(h) = &self.state_refresher_abort {
             h.abort();
         }
     }
@@ -2309,6 +2423,14 @@ where
                             has_world_info,
                             "relay.tcp.message.recv",
                         );
+                        // Snapshot the watched athlete ID once per batch; the
+                        // resume check below compares each inbound state's id
+                        // against it. (STEP-12.14 §L2)
+                        let watched_id = inner
+                            .watched_state
+                            .lock()
+                            .expect("watched_state mutex")
+                            .athlete_id;
                         for state in &stc.states {
                             if let Some(athlete_id) = state.id {
                                 let _ = inner.game_events_tx.send(GameEvent::PlayerState {
@@ -2318,6 +2440,22 @@ where
                                     speed_mm_h: state.speed.unwrap_or(0),
                                     world_time_ms: state.world_time.unwrap_or(0),
                                 });
+                                // L2: an inbound self-state for the watched
+                                // athlete updates the idle-age clock and resumes
+                                // the daemon if the refresher had suspended it.
+                                if athlete_id == watched_id {
+                                    *inner
+                                        .last_self_state_at
+                                        .lock()
+                                        .expect("last_self_state_at mutex") =
+                                        Some(tokio::time::Instant::now());
+                                    if inner.suspended.swap(false, Ordering::Relaxed) {
+                                        tracing::info!(
+                                            target: "ranchero::relay",
+                                            "relay.runtime.resumed",
+                                        );
+                                    }
+                                }
                             }
                         }
                         // Advance last_world_update_ts to the highest
