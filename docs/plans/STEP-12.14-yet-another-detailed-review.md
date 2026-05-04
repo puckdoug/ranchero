@@ -116,7 +116,7 @@ unblocks the next point in the live-trace failure chain):
 - [x] **7a** — Tests for Phase 7 (UDP hello header consistency):
       every UDP hello iteration's encoded header carries
       `RELAY_ID | CONN_ID | SEQNO`, not just `SEQNO`.
-- [ ] **7b** — Implementation for Phase 7: drop the
+- [x] **7b** — Implementation for Phase 7: drop the
       `hello_idx == 1` special case in
       `udp.rs::build_send_header`; emit the full triple every
       iteration.
@@ -2099,7 +2099,7 @@ first trace but should land in the same step:
 
 - [x] **7a** — Tests for M1: every UDP hello iteration emits a
       header carrying `RELAY_ID | CONN_ID | SEQNO`, not just SEQNO.
-- [ ] **7b** — Implementation for M1: drop the `hello_idx == 1`
+- [x] **7b** — Implementation for M1: drop the `hello_idx == 1`
       special case in `build_send_header`; always emit the full triple
       for hellos.
 

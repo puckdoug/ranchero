@@ -252,7 +252,6 @@ impl<T: UdpTransport> UdpChannel<T> {
             let plaintext = udp_plaintext(&proto_bytes);
 
             let header = build_send_header(
-                hello_idx,
                 session.relay_id,
                 config.conn_id,
                 hello_iv_seqno,
@@ -523,24 +522,15 @@ fn build_hello(athlete_id: i64, app_seqno: u32) -> zwift_proto::ClientToServer {
     }
 }
 
-fn build_send_header(hello_idx: u32, relay_id: u32, conn_id: u16, iv_seqno: u32) -> Header {
-    if hello_idx == 1 {
-        // First hello: full IV in the AAD so the server can
-        // initialize its decrypt state machine.
-        Header {
-            flags: HeaderFlags::RELAY_ID | HeaderFlags::CONN_ID | HeaderFlags::SEQNO,
-            relay_id: Some(relay_id),
-            conn_id: Some(conn_id),
-            seqno: Some(iv_seqno),
-        }
-    } else {
-        // Steady-state: SEQNO only — peer caches the rest.
-        Header {
-            flags: HeaderFlags::SEQNO,
-            relay_id: None,
-            conn_id: None,
-            seqno: Some(iv_seqno),
-        }
+fn build_send_header(relay_id: u32, conn_id: u16, iv_seqno: u32) -> Header {
+    // Sauce keeps the full RELAY_ID | CONN_ID | SEQNO triple on every
+    // hello iteration so the server can re-initialise its decrypt state
+    // on any lossy-network packet loss (STEP-12.14 §M1).
+    Header {
+        flags: HeaderFlags::RELAY_ID | HeaderFlags::CONN_ID | HeaderFlags::SEQNO,
+        relay_id: Some(relay_id),
+        conn_id: Some(conn_id),
+        seqno: Some(iv_seqno),
     }
 }
 
