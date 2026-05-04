@@ -103,18 +103,6 @@ impl AuthLogin for PlayerStateAuth {
 
 // --- shared test infrastructure (reuse patterns from relay_runtime.rs) ---
 
-struct StubSession(zwift_relay::RelaySession);
-impl ranchero::daemon::relay::SessionLogin for StubSession {
-    fn login(
-        &self,
-    ) -> impl std::future::Future<
-        Output = Result<zwift_relay::RelaySession, zwift_relay::SessionError>,
-    > + Send {
-        let s = self.0.clone();
-        async move { Ok(s) }
-    }
-}
-
 struct StubSupervisor(zwift_relay::RelaySession);
 impl SessionSupervisorHandle for StubSupervisor {
     fn current(

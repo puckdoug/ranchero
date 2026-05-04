@@ -64,7 +64,9 @@ const UNROUTABLE_ZWIFT_BASE: &str = "http://127.0.0.1:1";
 const TEST_KEYRING_SERVICE: &str = "ranchero-test-isolated";
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+#[allow(dead_code)]
 const READY_TIMEOUT: Duration = Duration::from_secs(5);
+#[allow(dead_code)]
 const ORCHESTRATOR_GRACE: Duration = Duration::from_secs(15);
 const CAPTURE_APPEAR_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -115,6 +117,7 @@ struct DaemonHarness {
     _dir: tempfile::TempDir,
     config_path: PathBuf,
     pidfile: PathBuf,
+    #[allow(dead_code)]
     socket: PathBuf,
     log_file: PathBuf,
     capture_path: PathBuf,
@@ -165,6 +168,7 @@ impl DaemonHarness {
         ]
     }
 
+    #[allow(dead_code)]
     fn run_cli(&self, extra: &[&str]) -> Output {
         let mut cmd = Command::new(binary_path());
         cmd.args(self.config_args()).args(extra);
@@ -221,6 +225,7 @@ impl DaemonHarness {
         cmd.output().expect("spawn ranchero start (bg)")
     }
 
+    #[allow(dead_code)]
     fn wait_for_pidfile(&self) -> Option<u32> {
         let deadline = Instant::now() + READY_TIMEOUT;
         while Instant::now() < deadline {
@@ -235,6 +240,7 @@ impl DaemonHarness {
         None
     }
 
+    #[allow(dead_code)]
     fn wait_for_pidfile_gone(&self) -> bool {
         let deadline = Instant::now() + ORCHESTRATOR_GRACE;
         while Instant::now() < deadline {

@@ -559,22 +559,30 @@ async fn follower_no_idle_timeout_blocks_indefinitely() {
     let path_buf = path.path().to_path_buf();
     let writer = CaptureWriter::open(&path_buf).await.expect("open writer");
 
+    // A barrier prevents flakiness under full-suite scheduler pressure.
+    // Without it, spawn_blocking may start late (after the record has been
+    // written), so follower.next() returns immediately with elapsed < 140 ms.
+    // The follower signals the barrier just before entering next(); the async
+    // side waits on the barrier (via spawn_blocking) before sleeping.
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let barrier_follower = Arc::clone(&barrier);
+
     let follower_path = path_buf.clone();
     let follower_handle = tokio::task::spawn_blocking(move || {
         let mut follower = CaptureFollower::open(&follower_path)
             .expect("open follower")
             .with_poll_interval(Duration::from_millis(10));
-        // No idle timeout: this would block forever if the
-        // writer never produced a record. The test exercises that
-        // the follower keeps polling rather than returning early.
+        barrier_follower.wait(); // announce: about to poll
         let start = std::time::Instant::now();
         let result = follower.next();
         (result, start.elapsed())
     });
 
-    // Wait long enough that we know the follower would have
-    // returned None if it had an idle timeout. Then write one
-    // record so the follower can resolve.
+    // Wait until the follower is confirmed to be entering next(), then
+    // sleep before writing so elapsed is measurable on the far side.
+    tokio::task::spawn_blocking(move || barrier.wait())
+        .await
+        .expect("barrier");
     tokio::time::sleep(Duration::from_millis(150)).await;
     writer.record(record_with_payload(
         Direction::Inbound,

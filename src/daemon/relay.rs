@@ -1286,7 +1286,7 @@ impl RelayRuntime {
                     server_realm: 1,
                     player_id: athlete_id,
                     world_time: Some(0),
-                    seqno: Some(1),
+                    seqno: Some(0),
                     state: zwift_proto::PlayerState::default(),
                     ..Default::default()
                 },
@@ -1396,6 +1396,29 @@ impl RelayRuntime {
             "relay.udp.established",
         );
         emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::UdpEstablished);
+
+        // 9.5. Post-establish "I'm watching" registration (STEP-12.14 §C3).
+        // Mirrors sauce4zwift `establishUDPChannel` line 2127: after the
+        // UDP hello exchange completes, a PlayerState packet is sent to
+        // register as a watcher of the watched athlete.
+        let initial_state = zwift_proto::PlayerState {
+            id: Some(athlete_id),
+            just_watching: Some(true),
+            watching_rider_id: Some(watched_id_i64),
+            world: Some(course_id),
+            ..Default::default()
+        };
+        tracing::info!(
+            target: "ranchero::relay",
+            watching_rider_id = watched_id_i64,
+            just_watching = true,
+            world = course_id,
+            "relay.udp.post_establish.sent",
+        );
+        udp_channel
+            .send_player_state(initial_state)
+            .await
+            .map_err(RelayRuntimeError::UdpChannel)?;
 
         // 10. Spawn the 1 Hz heartbeat scheduler. (Defect 5)
         let udp_channel = Arc::new(udp_channel);

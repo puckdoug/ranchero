@@ -34,7 +34,7 @@ fn conn_id_counter_increments_on_successive_calls() {
 fn conn_id_fits_within_u16() {
     let id = next_tcp_conn_id();
     assert!(
-        id <= 0xffff,
+        u32::from(id) <= 0xffff,
         "conn_id must not exceed 0xffff (reference: modulo 0xffff); got {id}",
     );
 }
