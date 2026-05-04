@@ -113,7 +113,7 @@ unblocks the next point in the live-trace failure chain):
       rewrite `next_payload` (now `next_state`) to populate the
       required PlayerState fields and read `world_time` from the
       shared timer; drop dead CTS-level fields per R2.
-- [ ] **7a** — Tests for Phase 7 (UDP hello header consistency):
+- [x] **7a** — Tests for Phase 7 (UDP hello header consistency):
       every UDP hello iteration's encoded header carries
       `RELAY_ID | CONN_ID | SEQNO`, not just `SEQNO`.
 - [ ] **7b** — Implementation for Phase 7: drop the
@@ -2097,7 +2097,7 @@ Some(course_id)` (per C9 — sauce's `courseId` is at proto
 The **M-block (7–8)** is correctness work that doesn't block the
 first trace but should land in the same step:
 
-- [ ] **7a** — Tests for M1: every UDP hello iteration emits a
+- [x] **7a** — Tests for M1: every UDP hello iteration emits a
       header carrying `RELAY_ID | CONN_ID | SEQNO`, not just SEQNO.
 - [ ] **7b** — Implementation for M1: drop the `hello_idx == 1`
       special case in `build_send_header`; always emit the full triple

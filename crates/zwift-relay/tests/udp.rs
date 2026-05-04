@@ -187,8 +187,17 @@ async fn establish_first_hello_carries_relay_conn_seqno_flags() {
     let _ = task.await;
 }
 
+/// STEP-12.14 §M1 — every UDP hello iteration must carry the full
+/// `RELAY_ID | CONN_ID | SEQNO` triple, not just SEQNO. Sauce keeps the
+/// full triple on every iteration so the server can re-initialise its
+/// decrypt state on a lossy link. The current code emits the full triple
+/// only on hello #1 and drops to SEQNO-only from hello #2 onward.
+///
+/// Red state: the `hello_idx == 1` special case in `build_send_header`
+/// causes hello #2 to fail the RELAY_ID / CONN_ID assertions. After 7b
+/// the branch is removed and every hello carries the full triple.
 #[tokio::test]
-async fn establish_subsequent_hellos_carry_seqno_only() {
+async fn establish_subsequent_hellos_carry_relay_conn_seqno_flags() {
     let (transport, mut handle) = MockUdpTransport::new();
     let session = test_session();
     let config = test_config();
@@ -197,13 +206,48 @@ async fn establish_subsequent_hellos_carry_seqno_only() {
         UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
     });
 
-    let _first = handle.outbound_receiver.recv().await.expect("hello 1");
-    let second = handle.outbound_receiver.recv().await.expect("hello 2");
-    let (header, _cts) = parse_outbound(&second);
-    assert!(!header.flags.contains(HeaderFlags::RELAY_ID));
-    assert!(!header.flags.contains(HeaderFlags::CONN_ID));
-    assert!(header.flags.contains(HeaderFlags::SEQNO));
-    assert_eq!(header.seqno, Some(1));
+    // Check three consecutive hellos — iter 1 already passes, iters 2 and 3
+    // currently fail (red state for §M1).
+    for expected_iv_seqno in 0..3u32 {
+        let bytes = handle
+            .outbound_receiver
+            .recv()
+            .await
+            .expect("hello sent");
+        let (header, _cts) = parse_outbound(&bytes);
+        let iter = expected_iv_seqno + 1;
+        assert!(
+            header.flags.contains(HeaderFlags::RELAY_ID),
+            "STEP-12.14 §M1: hello iter {iter} must carry RELAY_ID so the server \
+             can recover decrypt state on packet loss; flags = {:?}",
+            header.flags,
+        );
+        assert!(
+            header.flags.contains(HeaderFlags::CONN_ID),
+            "STEP-12.14 §M1: hello iter {iter} must carry CONN_ID; flags = {:?}",
+            header.flags,
+        );
+        assert!(
+            header.flags.contains(HeaderFlags::SEQNO),
+            "STEP-12.14 §M1: hello iter {iter} must carry SEQNO; flags = {:?}",
+            header.flags,
+        );
+        assert_eq!(
+            header.relay_id,
+            Some(TEST_RELAY_ID),
+            "STEP-12.14 §M1: hello iter {iter} relay_id must equal the session relay_id",
+        );
+        assert_eq!(
+            header.conn_id,
+            Some(TEST_CONN_ID),
+            "STEP-12.14 §M1: hello iter {iter} conn_id must equal the channel conn_id",
+        );
+        assert_eq!(
+            header.seqno,
+            Some(expected_iv_seqno),
+            "STEP-12.14 §M1: hello iter {iter} seqno must be {expected_iv_seqno}",
+        );
+    }
 
     task.abort();
     let _ = task.await;
