@@ -103,8 +103,7 @@ fn default_udp_config_push() -> Vec<u8> {
                 lb_course: Some(0),
                 ip: Some("127.0.0.1".to_string()),
                 port: Some(3024),
-                ra_f5: None,
-                ra_f6: None,
+                ..Default::default()
             }],
             ..Default::default()
         }),
@@ -1577,8 +1576,7 @@ impl ScriptedTcpFactory {
                     lb_course: Some(*lb_course),
                     ip: Some(ip.to_string()),
                     port: None, // daemon must hardcode 3024 (§C5)
-                    ra_f5: None,
-                    ra_f6: None,
+                    ..Default::default()
                 }],
                 rav_f4: None,
             })
@@ -1613,8 +1611,7 @@ impl ScriptedTcpFactory {
                     lb_course: Some(0),
                     ip: Some(ip.to_string()),
                     port: Some(port),
-                    ra_f5: None,
-                    ra_f6: None,
+                    ..Default::default()
                 }],
                 ..Default::default()
             }),

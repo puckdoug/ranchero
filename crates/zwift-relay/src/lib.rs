@@ -78,6 +78,10 @@ pub enum CodecError {
 pub struct UdpPoolEntry {
     pub lb_realm: i32,
     pub lb_course: i32,
+    /// When `true`, the first server whose bounding box contains the
+    /// position is used; when `false`, the nearest-centre server wins.
+    /// Derived from `RelayAddressesVod.rav_f4`.
+    pub use_first_in_bounds: bool,
     pub addresses: Vec<zwift_proto::RelayAddress>,
 }
 
@@ -106,6 +110,7 @@ pub fn extract_udp_pools(
             .map(|p| UdpPoolEntry {
                 lb_realm: p.lb_realm.unwrap_or(0),
                 lb_course: p.lb_course.unwrap_or(0),
+                use_first_in_bounds: p.rav_f4.unwrap_or(false),
                 addresses: p.relay_addresses.clone(),
             })
             .collect()
@@ -130,6 +135,7 @@ pub fn extract_udp_pools(
         return Some(vec![UdpPoolEntry {
             lb_realm: 0,
             lb_course: 0,
+            use_first_in_bounds: false,
             addresses: cfg.relay_addresses.clone(),
         }]);
     }

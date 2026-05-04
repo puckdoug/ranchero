@@ -214,6 +214,9 @@ message RelayAddress {
 	optional int32 port = 4;
 	optional float ra_f5 = 5; //used when appropriate server selection occurs (RelayAddressService::getAddress)
 	optional float ra_f6 = 6; //used when appropriate server selection occurs (RelayAddressService::getAddress)
+	optional float x_bound_min = 7; // western bounding edge (RelayAddressService::getAddress)
+	optional float y_bound_min = 8; // southern bounding edge (RelayAddressService::getAddress)
+	optional int32 secure_port = 9; // TLS port; falls back to UDP_PORT_SECURE when absent
 }
 
 message UdpConfig {

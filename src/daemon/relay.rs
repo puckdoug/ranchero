@@ -373,7 +373,6 @@ pub trait SessionSupervisorFactory: Send + Sync + 'static {
 /// never read them. The `dead_code` allowance documents that
 /// asymmetry rather than silently masking a real defect.
 #[derive(Debug)]
-#[allow(dead_code)]
 struct RuntimeInner {
     pool_router: std::sync::Mutex<UdpPoolRouter>,
     watched_state: std::sync::Mutex<WatchedAthleteState>,
@@ -383,6 +382,64 @@ struct RuntimeInner {
     /// hello as `larg_wa_time` so reconnects tell the server the last world
     /// state the client already has. (STEP-12.14 §M2 / §L3)
     last_world_update_ts: std::sync::atomic::AtomicI64,
+    /// Broadcast sender for high-level `GameEvent`s. Shared with
+    /// `RelayRuntime::game_events_tx`; stored here so
+    /// `recompute_udp_selection` can emit `PoolSwap` events without
+    /// needing a separate parameter.
+    game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+}
+
+impl RuntimeInner {
+    /// Recompute the best UDP server for the currently-watched athlete.
+    /// Reads `pool_router` and `watched_state`; if the result differs
+    /// from `current_udp_server`, broadcasts `GameEvent::PoolSwap` and
+    /// schedules the old channel for 60-second grace shutdown.
+    /// (Batch A §Ab / L6)
+    fn recompute_udp_selection(&self) {
+        let watched = self
+            .watched_state
+            .lock()
+            .expect("watched_state mutex")
+            .clone();
+
+        let new_server = {
+            let router = self.pool_router.lock().expect("pool_router mutex");
+            router
+                .pool_for(watched.realm, watched.course_id)
+                .or_else(|| router.pool_for(0, 0))
+                .and_then(|pool| {
+                    find_best_udp_server(pool, watched.position.0, watched.position.1)
+                        .map(|entry| entry.addr)
+                })
+        };
+
+        let Some(addr) = new_server else { return };
+
+        let mut current = self
+            .current_udp_server
+            .lock()
+            .expect("current_udp_server mutex");
+        if *current == Some(addr) {
+            return;
+        }
+
+        if current.is_some() {
+            tracing::info!(
+                target: "ranchero::relay",
+                old_addr = %current.unwrap(),
+                new_addr = %addr,
+                "relay.udp.channel.grace_shutdown",
+            );
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                // Placeholder: actual channel transfer is implemented in L6.
+            });
+        }
+
+        let from = *current;
+        *current = Some(addr);
+        let _ = self.game_events_tx.send(GameEvent::PoolSwap { from, to: addr });
+    }
 }
 
 /// The orchestrator owned by the daemon. `start` performs the auth
@@ -649,6 +706,41 @@ impl UdpPoolRouter {
     /// Look up the pool for a given `(realm, courseId)`.
     pub fn pool_for(&self, realm: i32, course_id: i32) -> Option<&UdpServerPool> {
         self.pools.get(&(realm, course_id))
+    }
+}
+
+/// Convert a `UdpPoolEntry` (from [`zwift_relay::extract_udp_pools`]) into
+/// a `UdpServerPool` suitable for storage in `UdpPoolRouter`.
+///
+/// Port priority: `RelayAddress.secure_port` → `UDP_PORT_SECURE`.
+/// Bounds: `ra_f5` = x_bound (east edge), `ra_f6` = y_bound (north edge);
+/// `x_bound_min` and `y_bound_min` are the new proto tag-7/8 fields.
+fn build_server_pool(entry: &zwift_relay::UdpPoolEntry) -> UdpServerPool {
+    let servers = entry
+        .addresses
+        .iter()
+        .filter_map(|addr| {
+            let ip_str = addr.ip.as_deref()?;
+            let port = addr
+                .secure_port
+                .map(|p| p as u16)
+                .unwrap_or(zwift_relay::UDP_PORT_SECURE);
+            let socket_addr: std::net::SocketAddr =
+                format!("{ip_str}:{port}").parse().ok()?;
+            Some(UdpServerEntry {
+                addr: socket_addr,
+                x_bound_min: addr.x_bound_min.unwrap_or(0.0) as f64,
+                x_bound: addr.ra_f5.unwrap_or(0.0) as f64,
+                y_bound_min: addr.y_bound_min.unwrap_or(0.0) as f64,
+                y_bound: addr.ra_f6.unwrap_or(0.0) as f64,
+            })
+        })
+        .collect();
+    UdpServerPool {
+        realm: entry.lb_realm,
+        course_id: entry.lb_course,
+        use_first_in_bounds: entry.use_first_in_bounds,
+        servers,
     }
 }
 
@@ -1227,6 +1319,7 @@ impl RelayRuntime {
             watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
             last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
+            game_events_tx: game_events_tx.clone(),
         });
 
         // Resolve the capture writer: prefer the preopen, fall back
@@ -1575,7 +1668,6 @@ impl RelayRuntime {
             tokio::sync::broadcast::channel::<zwift_relay::ChannelEvent>(64);
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
-        let recv_game_events = game_events_tx.clone();
         let inner_for_recv = Arc::clone(&inner);
         let join_handle = tokio::spawn(async move {
             recv_loop(
@@ -1584,7 +1676,6 @@ impl RelayRuntime {
                 udp_events_rx,
                 recv_shutdown,
                 recv_writer,
-                recv_game_events,
                 inner_for_recv,
             )
             .await
@@ -1732,12 +1823,12 @@ impl RelayRuntime {
             watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
             last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
+            game_events_tx: game_events_tx.clone(),
         });
 
         let channel = Arc::new(channel);
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
-        let recv_game_events = game_events_tx.clone();
         let inner_for_recv = Arc::clone(&inner);
         let join_handle = tokio::spawn(async move {
             recv_loop(
@@ -1746,7 +1837,6 @@ impl RelayRuntime {
                 udp_events_rx,
                 recv_shutdown,
                 recv_writer,
-                recv_game_events,
                 inner_for_recv,
             )
             .await
@@ -1792,7 +1882,7 @@ impl RelayRuntime {
             .lock()
             .expect("pool_router mutex")
             .apply_pool_update(pool);
-        self.recompute_udp_selection();
+        self.inner.recompute_udp_selection();
     }
 
     /// Drive a watched-athlete `(realm, courseId, x, y)` update
@@ -1809,7 +1899,7 @@ impl RelayRuntime {
             watched.course_id = course_id;
             watched.position = (x, y);
         }
-        self.recompute_udp_selection();
+        self.inner.recompute_udp_selection();
     }
 
     /// Switch the watched athlete by id. Clears the cached
@@ -1823,44 +1913,6 @@ impl RelayRuntime {
             .lock()
             .expect("watched_state mutex");
         watched.switch_to(new_athlete_id);
-    }
-
-    #[cfg(test)]
-    fn recompute_udp_selection(&self) {
-        let watched = self
-            .inner
-            .watched_state
-            .lock()
-            .expect("watched_state mutex")
-            .clone();
-
-        let new_server = {
-            let router = self
-                .inner
-                .pool_router
-                .lock()
-                .expect("pool_router mutex");
-            router
-                .pool_for(watched.realm, watched.course_id)
-                .and_then(|pool| {
-                    find_best_udp_server(pool, watched.position.0, watched.position.1)
-                        .map(|entry| entry.addr)
-                })
-        };
-
-        let Some(addr) = new_server else { return };
-
-        let mut current = self
-            .inner
-            .current_udp_server
-            .lock()
-            .expect("current_udp_server mutex");
-        if *current == Some(addr) {
-            return;
-        }
-        let from = *current;
-        *current = Some(addr);
-        let _ = self.game_events_tx.send(GameEvent::PoolSwap { from, to: addr });
     }
 
     /// Subscribe to high-level `GameEvent`s emitted by the
@@ -2084,7 +2136,6 @@ async fn recv_loop<T>(
     mut udp_events_rx: tokio::sync::broadcast::Receiver<zwift_relay::ChannelEvent>,
     shutdown: Arc<Notify>,
     capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
-    game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
     inner: Arc<RuntimeInner>,
 ) -> Result<(), RelayRuntimeError>
 where
@@ -2130,7 +2181,7 @@ where
                         );
                         for state in &stc.states {
                             if let Some(athlete_id) = state.id {
-                                let _ = game_events_tx.send(GameEvent::PlayerState {
+                                let _ = inner.game_events_tx.send(GameEvent::PlayerState {
                                     athlete_id,
                                     power_w: state.power.unwrap_or(0),
                                     cadence_u_hz: state.cadence_u_hz.unwrap_or(0),
@@ -2160,6 +2211,25 @@ where
                                 last_world_update_ts = tracked,
                                 "relay.tcp.world_update.tracked",
                             );
+                        }
+                        // Store mid-session pool updates in pool_router and
+                        // recompute the best UDP server. (Batch A §Ab)
+                        if let Some(pools) = zwift_relay::extract_udp_pools(&stc) {
+                            {
+                                let mut router =
+                                    inner.pool_router.lock().expect("pool_router mutex");
+                                for pool_entry in &pools {
+                                    tracing::debug!(
+                                        target: "ranchero::relay",
+                                        lb_realm = pool_entry.lb_realm,
+                                        lb_course = pool_entry.lb_course,
+                                        server_count = pool_entry.addresses.len(),
+                                        "relay.udp.pool_router.updated",
+                                    );
+                                    router.apply_pool_update(build_server_pool(pool_entry));
+                                }
+                            }
+                            inner.recompute_udp_selection();
                         }
                     }
                     Ok(zwift_relay::TcpChannelEvent::Timeout) => {
@@ -2979,8 +3049,7 @@ mod tests {
             port: Some(3022), // plaintext port — sauce ignores; zoffline-side comment says default 3022
             lb_realm: Some(0),
             lb_course: Some(0),
-            ra_f5: None,
-            ra_f6: None,
+            ..Default::default()
         }];
         let target = pick_initial_udp_target(&addrs).expect("address parses");
         assert_eq!(

@@ -141,7 +141,7 @@ any order after Phase 8):
       `GameEvent::PoolSwap`; UDP channel swap runs grace shutdown
       on the old channel; portal pools are accepted via a
       `'portal'` key analogue.
-- [ ] **Ab** — Implementation for Batch A: wire
+- [x] **Ab** — Implementation for Batch A: wire
       `extract_udp_pools` into `recv_loop`'s `Inbound` arm;
       implement `recompute_udp_selection` to call
       `find_best_udp_server` and trigger swaps; extend

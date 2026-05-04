@@ -177,8 +177,7 @@ fn default_udp_push() -> Vec<u8> {
                     lb_course: Some(0),
                     ip: Some("127.0.0.1".to_string()),
                     port: None,
-                    ra_f5: None,
-                    ra_f6: None,
+                    ..Default::default()
                 }],
                 rav_f4: None,
             }],
