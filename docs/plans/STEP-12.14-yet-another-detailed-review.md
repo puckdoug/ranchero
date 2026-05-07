@@ -188,10 +188,10 @@ any order after Phase 8):
       1 (`server_realm`), tag 7 (`state`), tag 10
       (`last_update`), tag 12 (`last_player_update`); UDP hello
       carries exactly four wire fields (tags 1-4); `RelayAddress`
-      round-trips with all 9 tags populated.  Note: tags 7-9 on
+      round-trips with all 9 tags populated. Note: tags 7-9 on
       `RelayAddress` were already generated (§C11 pre-done);
       the TCP/UDP `required`-field tests are the remaining red state.
-- [ ] **Eb** — Implementation for Batch E: fork the vendored
+- [x] **Eb** — Implementation for Batch E: fork the vendored
       proto under `crates/zwift-proto/src/zwift_patched.proto`
       changing `required` → `optional` on tags 1, 7, 10, 12 of
       `ClientToServer`; add tags 7, 8, 9 to `RelayAddress`;
