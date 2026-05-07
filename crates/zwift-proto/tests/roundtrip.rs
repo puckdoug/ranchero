@@ -105,3 +105,43 @@ fn event_roundtrips() {
 fn event_subgroup_roundtrips() {
     assert_roundtrip(EventSubgroupProtobuf::default());
 }
+
+// ---------------------------------------------------------------------------
+// Batch E — Ea red-state test (STEP-12.14 §C11)
+// ---------------------------------------------------------------------------
+
+/// `RelayAddress` must round-trip all nine proto fields, including the three
+/// geographic / TLS fields: tag 7 (`x_bound_min`, f32), tag 8 (`y_bound_min`,
+/// f32), tag 9 (`secure_port`, i32).
+///
+/// Approach: construct a `RelayAddress` with all 9 fields populated, encode
+/// it, decode the bytes back, and assert the decoded values match the
+/// originals.  If any field is absent from the generated struct it will be
+/// `None` on decode and the equality check fails.
+///
+/// (STEP-12.14 §C11)
+#[test]
+fn relay_address_proto_carries_x_y_bound_min_and_secure_port() {
+    let original = RelayAddress {
+        lb_realm: Some(0),
+        lb_course: Some(7),
+        ip: Some("10.1.2.3".to_string()),
+        port: Some(3024),
+        ra_f5: Some(-50.0),
+        ra_f6: Some(50.0),
+        x_bound_min: Some(-100.0),
+        y_bound_min: Some(-200.0),
+        secure_port: Some(3025),
+    };
+    let bytes = original.encode_to_vec();
+    let decoded = RelayAddress::decode(&bytes[..]).expect("decode RelayAddress");
+
+    assert_eq!(decoded.x_bound_min, original.x_bound_min,
+        "Batch E §C11: x_bound_min (tag 7) must survive encode→decode");
+    assert_eq!(decoded.y_bound_min, original.y_bound_min,
+        "Batch E §C11: y_bound_min (tag 8) must survive encode→decode");
+    assert_eq!(decoded.secure_port, original.secure_port,
+        "Batch E §C11: secure_port (tag 9) must survive encode→decode");
+    assert_eq!(decoded, original,
+        "Batch E §C11: RelayAddress must round-trip all 9 fields without loss");
+}

@@ -3352,3 +3352,162 @@ async fn udp_config_v2_and_flat_fallback_paths_are_inert() {
         }
     });
 }
+
+// ---------------------------------------------------------------------------
+// Batch E — Tests (Ea, red state)
+// STEP-12.14 covers N1, N12, C11.  The four tests below assert the wire
+// format produced by the TCP and UDP paths once the proto fork (Eb) removes
+// `required` markers from `ClientToServer` fields that sauce never encodes.
+// ---------------------------------------------------------------------------
+
+/// Walk raw protobuf bytes and return every top-level field tag number in
+/// encounter order.  Wire types 0/1/2/5 are handled; any other wire type
+/// stops the scan early.
+fn proto_field_tags(mut bytes: &[u8]) -> Vec<u32> {
+    fn read_varint(b: &[u8]) -> (u64, usize) {
+        let mut v = 0u64;
+        let mut shift = 0u32;
+        for (i, &byte) in b.iter().enumerate() {
+            v |= ((byte & 0x7F) as u64) << shift;
+            shift += 7;
+            if byte & 0x80 == 0 {
+                return (v, i + 1);
+            }
+        }
+        (v, b.len())
+    }
+    let mut tags = Vec::new();
+    while !bytes.is_empty() {
+        let (key, n) = read_varint(bytes);
+        if n == 0 {
+            break;
+        }
+        bytes = &bytes[n..];
+        tags.push((key >> 3) as u32);
+        match key & 0x7 {
+            0 => {
+                let (_, n) = read_varint(bytes);
+                if n == 0 { break; }
+                bytes = &bytes[n..];
+            }
+            1 => {
+                if bytes.len() < 8 { break; }
+                bytes = &bytes[8..];
+            }
+            2 => {
+                let (len, n) = read_varint(bytes);
+                if n == 0 { break; }
+                let skip = n + len as usize;
+                if bytes.len() < skip { break; }
+                bytes = &bytes[skip..];
+            }
+            5 => {
+                if bytes.len() < 4 { break; }
+                bytes = &bytes[4..];
+            }
+            _ => break,
+        }
+    }
+    tags
+}
+
+/// Decrypt the first captured TCP write and return the raw `ClientToServer`
+/// proto bytes (before prost decode).  The AES key used by all stub
+/// transports is `[0u8; 16]`.
+fn tcp_hello_proto_bytes(wire: &[u8]) -> Vec<u8> {
+    let frame = &wire[2..]; // strip 2-byte big-endian length prefix
+    let parsed = zwift_relay::decode_header(frame).expect("decode header");
+    let aad = &frame[..parsed.consumed];
+    let cipher = &frame[parsed.consumed..];
+    let conn_id = parsed.header.conn_id.expect("TCP hello must carry conn_id");
+    let seqno = parsed.header.seqno.unwrap_or(0);
+    let iv = zwift_relay::RelayIv {
+        device: zwift_relay::DeviceType::Relay,
+        channel: zwift_relay::ChannelType::TcpClient,
+        conn_id,
+        seqno,
+    };
+    let plaintext = zwift_relay::decrypt(&[0u8; 16], &iv.to_bytes(), aad, cipher)
+        .expect("decrypt TCP hello");
+    let tcp = zwift_relay::parse_tcp_plaintext(&plaintext).expect("parse TCP plaintext");
+    tcp.proto_bytes.to_vec()
+}
+
+/// TCP hello wire bytes must NOT encode `ClientToServer` tag 7 (`state`),
+/// tag 10 (`last_update`), or tag 12 (`last_player_update`).
+///
+/// Sauce's `sayHello` constructs the packet with none of those fields set;
+/// our proto marks them `required`, so prost unconditionally emits them even
+/// at zero / default values.  After Eb changes them to `optional` and the
+/// hello builder omits them, this test turns green.  (STEP-12.14 §N1/§N12)
+///
+/// Red state: all three tags appear in the wire bytes.
+#[tokio::test]
+async fn tcp_hello_wire_bytes_omit_state_last_update_last_player_update() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (tcp_factory, written) = RecordingTcpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let writes = written.lock().unwrap().clone();
+    assert!(!writes.is_empty(), "no TCP writes recorded");
+    let tags = proto_field_tags(&tcp_hello_proto_bytes(&writes[0]));
+
+    for forbidden in [7u32, 10, 12] {
+        assert!(
+            !tags.contains(&forbidden),
+            "Batch E §N1/§N12: TCP hello proto must NOT encode tag {forbidden} \
+             (7=state, 10=last_update, 12=last_player_update); \
+             sauce's sayHello never includes these fields. \
+             Tags present: {tags:?}",
+        );
+    }
+}
+
+/// TCP hello wire bytes must NOT encode tag 1 (`server_realm`).
+///
+/// Sauce's `TcpClient::sayHello` does not include `server_realm` in the
+/// TCP hello packet; our implementation currently sets it to `1` because
+/// the proto marks it `required`.  After Eb, the field is optional and the
+/// hello builder omits it.  (STEP-12.14 §N1)
+///
+/// Red state: tag 1 appears in the wire bytes (value 1).
+#[tokio::test]
+async fn tcp_hello_wire_bytes_omit_realm() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let (tcp_factory, written) = RecordingTcpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    let writes = written.lock().unwrap().clone();
+    assert!(!writes.is_empty(), "no TCP writes recorded");
+    let tags = proto_field_tags(&tcp_hello_proto_bytes(&writes[0]));
+
+    assert!(
+        !tags.contains(&1u32),
+        "Batch E §N1: TCP hello proto must NOT encode tag 1 (server_realm); \
+         sauce's TcpClient::sayHello carries no realm. Tags present: {tags:?}",
+    );
+}

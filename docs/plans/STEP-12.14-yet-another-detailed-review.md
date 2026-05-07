@@ -183,12 +183,14 @@ any order after Phase 8):
       hello-with-iv_seqno=0; remove fallback paths from
       `extract_udp_pools` (or feature-gate for zwift-offline
       compat).
-- [ ] **Ea** — Tests for Batch E (proto fork: drop required
+- [x] **Ea** — Tests for Batch E (proto fork: drop required
       markers, add missing fields): TCP hello wire bytes omit tag
       1 (`server_realm`), tag 7 (`state`), tag 10
       (`last_update`), tag 12 (`last_player_update`); UDP hello
       carries exactly four wire fields (tags 1-4); `RelayAddress`
-      round-trips with all 9 tags populated.
+      round-trips with all 9 tags populated.  Note: tags 7-9 on
+      `RelayAddress` were already generated (§C11 pre-done);
+      the TCP/UDP `required`-field tests are the remaining red state.
 - [ ] **Eb** — Implementation for Batch E: fork the vendored
       proto under `crates/zwift-proto/src/zwift_patched.proto`
       changing `required` → `optional` on tags 1, 7, 10, 12 of

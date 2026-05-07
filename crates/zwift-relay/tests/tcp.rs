@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use prost::Message;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
 use zwift_proto::{ClientToServer, PlayerState, ServerToClient};
 use zwift_relay::{
-    ChannelType, DeviceType, Header, HeaderFlags, RelaySession, RelayIv, TcpChannel,
-    TcpChannelConfig, TcpChannelEvent, TcpServer, TcpTransport, decode_header, decrypt, encrypt,
-    frame_tcp, next_tcp_frame, parse_tcp_plaintext,
+    decode_header, decrypt, encrypt, frame_tcp, next_tcp_frame, parse_tcp_plaintext, ChannelType,
+    DeviceType, Header, HeaderFlags, RelayIv, RelaySession, TcpChannel, TcpChannelConfig,
+    TcpChannelEvent, TcpServer, TcpTransport,
 };
 
 // --- mock transport ------------------------------------------------
@@ -94,13 +94,9 @@ fn test_config() -> TcpChannelConfig {
 
 fn test_payload(seqno: u32) -> ClientToServer {
     ClientToServer {
-        server_realm: 1,
-        player_id: TEST_ATHLETE_ID,
-        world_time: Some(0),
+        player_id: 1234,
+        world_time: Some(500),
         seqno: Some(seqno),
-        state: PlayerState::default(),
-        last_update: 0,
-        last_player_update: 0,
         ..Default::default()
     }
 }
@@ -109,7 +105,10 @@ fn test_payload(seqno: u32) -> ClientToServer {
 /// decode the header, decrypt with the test session's key + the
 /// `TcpClient` IV direction, strip the `[2, hello?, …]` envelope,
 /// decode the inner `ClientToServer`. Returns the parsed pieces.
-fn parse_outbound_tcp(bytes: &[u8]) -> (Header, /*hello*/ bool, ClientToServer) {
+fn parse_outbound_tcp(
+    bytes: &[u8],
+    expected_iv_seqno: u32,
+) -> (Header, /*hello*/ bool, ClientToServer) {
     let (frame_payload, _consumed) = next_tcp_frame(bytes)
         .expect("frame parses")
         .expect("complete frame");
@@ -117,7 +116,7 @@ fn parse_outbound_tcp(bytes: &[u8]) -> (Header, /*hello*/ bool, ClientToServer) 
     let aad = &frame_payload[..parsed.consumed];
     let cipher = &frame_payload[parsed.consumed..];
     let conn_id = parsed.header.conn_id.unwrap_or(TEST_CONN_ID);
-    let iv_seqno = parsed.header.seqno.unwrap_or(0);
+    let iv_seqno = expected_iv_seqno;
     let iv = RelayIv {
         device: DeviceType::Relay,
         channel: ChannelType::TcpClient,
@@ -163,7 +162,7 @@ fn test_stc(seqno: i32) -> ServerToClient {
 // --- 1-4. send packet shape ----------------------------------------
 
 #[tokio::test]
-async fn send_packet_hello_carries_full_iv_flags_and_hello_byte_zero() {
+async fn send_packet_hello_omits_seqno_when_iv_seqno_zero() {
     let (transport, mut handle) = MockTcpTransport::new();
     let (channel, _events) = TcpChannel::establish(transport, &test_session(), test_config())
         .await
@@ -179,19 +178,22 @@ async fn send_packet_hello_carries_full_iv_flags_and_hello_byte_zero() {
         .recv()
         .await
         .expect("hello packet sent");
-    let (header, hello, _cts) = parse_outbound_tcp(&bytes);
+    let (header, hello, _cts) = parse_outbound_tcp(&bytes, 0);
     assert!(header.flags.contains(HeaderFlags::RELAY_ID));
     assert!(header.flags.contains(HeaderFlags::CONN_ID));
-    assert!(header.flags.contains(HeaderFlags::SEQNO));
+    assert!(!header.flags.contains(HeaderFlags::SEQNO));
     assert_eq!(header.relay_id, Some(TEST_RELAY_ID));
     assert_eq!(header.conn_id, Some(TEST_CONN_ID));
-    assert!(hello, "hello=true → plaintext envelope hello byte must be 0");
+    assert!(
+        hello,
+        "hello=true → plaintext envelope hello byte must be 0"
+    );
 
     channel.shutdown();
 }
 
 #[tokio::test]
-async fn send_packet_steady_carries_seqno_only_and_hello_byte_one() {
+async fn send_packet_steady_carries_no_flags_and_hello_byte_one() {
     let (transport, mut handle) = MockTcpTransport::new();
     let (channel, _events) = TcpChannel::establish(transport, &test_session(), test_config())
         .await
@@ -202,12 +204,19 @@ async fn send_packet_steady_carries_seqno_only_and_hello_byte_one() {
         .await
         .expect("send");
 
-    let bytes = handle.outbound_receiver.recv().await.expect("steady packet");
-    let (header, hello, _cts) = parse_outbound_tcp(&bytes);
+    let bytes = handle
+        .outbound_receiver
+        .recv()
+        .await
+        .expect("steady packet");
+    let (header, hello, _cts) = parse_outbound_tcp(&bytes, 0);
     assert!(!header.flags.contains(HeaderFlags::RELAY_ID));
     assert!(!header.flags.contains(HeaderFlags::CONN_ID));
-    assert!(header.flags.contains(HeaderFlags::SEQNO));
-    assert!(!hello, "hello=false → plaintext envelope hello byte must be 1");
+    assert!(!header.flags.contains(HeaderFlags::SEQNO));
+    assert!(
+        !hello,
+        "hello=false → plaintext envelope hello byte must be 1"
+    );
 
     channel.shutdown();
 }
@@ -230,10 +239,11 @@ async fn send_packet_increments_iv_seqno() {
 
     let p1 = handle.outbound_receiver.recv().await.expect("p1");
     let p2 = handle.outbound_receiver.recv().await.expect("p2");
-    let (h1, _, _) = parse_outbound_tcp(&p1);
-    let (h2, _, _) = parse_outbound_tcp(&p2);
-    assert_eq!(h1.seqno, Some(0));
-    assert_eq!(h2.seqno, Some(1));
+    let _ = parse_outbound_tcp(&p1, 0);
+    let _ = parse_outbound_tcp(&p2, 1);
+    // If we reached here, the ciphertext decrypted successfully with iv_seqno=0
+    // for the first packet and iv_seqno=1 for the second, proving that the channel
+    // incremented its internal IV sequence number.
 
     channel.shutdown();
 }
@@ -450,7 +460,10 @@ async fn establish_emits_established_event() {
         .await
         .expect("event arrives within budget")
         .expect("event");
-    assert!(matches!(first, TcpChannelEvent::Established), "got {first:?}");
+    assert!(
+        matches!(first, TcpChannelEvent::Established),
+        "got {first:?}"
+    );
 
     channel.shutdown();
 }
@@ -629,7 +642,11 @@ async fn tcp_channel_with_capture_records_outbound_packets_with_hello_flag() {
         .filter_map(|r| r.ok())
         .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Tcp)
         .collect();
-    assert_eq!(outbound.len(), 2, "expected exactly 2 outbound TCP captures");
+    assert_eq!(
+        outbound.len(),
+        2,
+        "expected exactly 2 outbound TCP captures"
+    );
 
     // The hello flag round-trips alongside the captured wire bytes.
     assert!(outbound[0].hello, "first capture is the hello packet");
@@ -657,7 +674,9 @@ async fn tcp_send_records_framed_wire_bytes_not_proto() {
     use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
 
     let path = tempfile::NamedTempFile::new().expect("tempfile");
-    let writer = CaptureWriter::open(path.path()).await.expect("capture writer");
+    let writer = CaptureWriter::open(path.path())
+        .await
+        .expect("capture writer");
     let writer = std::sync::Arc::new(writer);
 
     let (transport, mut handle) = MockTcpTransport::new();
@@ -694,7 +713,11 @@ async fn tcp_send_records_framed_wire_bytes_not_proto() {
         .filter_map(|r| r.ok())
         .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Tcp)
         .collect();
-    assert_eq!(outbound.len(), 1, "expected exactly one outbound TCP capture");
+    assert_eq!(
+        outbound.len(),
+        1,
+        "expected exactly one outbound TCP capture"
+    );
 
     assert_eq!(
         outbound[0].payload, wire_bytes,
@@ -713,7 +736,9 @@ async fn tcp_recv_records_pre_decrypt_buffer() {
     use zwift_relay::capture::{CaptureReader, CaptureWriter, Direction, TransportKind};
 
     let path = tempfile::NamedTempFile::new().expect("tempfile");
-    let writer = CaptureWriter::open(path.path()).await.expect("capture writer");
+    let writer = CaptureWriter::open(path.path())
+        .await
+        .expect("capture writer");
     let writer = std::sync::Arc::new(writer);
 
     let (transport, handle) = MockTcpTransport::new();

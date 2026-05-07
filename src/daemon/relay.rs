@@ -11,8 +11,8 @@
 //! plan.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
@@ -64,9 +64,7 @@ fn manifest_from_session(
 /// yet), so per-realm/per-course routing has nothing to discriminate
 /// on. Mid-session pool updates and routing live in a follow-up
 /// step.
-fn pick_initial_udp_target(
-    addrs: &[zwift_proto::RelayAddress],
-) -> Option<std::net::SocketAddr> {
+fn pick_initial_udp_target(addrs: &[zwift_proto::RelayAddress]) -> Option<std::net::SocketAddr> {
     for a in addrs {
         let ip = match a.ip.as_deref() {
             Some(s) if !s.is_empty() => s,
@@ -199,15 +197,21 @@ pub enum RelayRuntimeError {
 }
 
 impl From<zwift_api::Error> for RelayRuntimeError {
-    fn from(e: zwift_api::Error) -> Self { RelayRuntimeError::Auth(e) }
+    fn from(e: zwift_api::Error) -> Self {
+        RelayRuntimeError::Auth(e)
+    }
 }
 
 impl From<zwift_relay::SessionError> for RelayRuntimeError {
-    fn from(e: zwift_relay::SessionError) -> Self { RelayRuntimeError::Session(e) }
+    fn from(e: zwift_relay::SessionError) -> Self {
+        RelayRuntimeError::Session(e)
+    }
 }
 
 impl From<zwift_relay::TcpError> for RelayRuntimeError {
-    fn from(e: zwift_relay::TcpError) -> Self { RelayRuntimeError::TcpChannel(e) }
+    fn from(e: zwift_relay::TcpError) -> Self {
+        RelayRuntimeError::TcpChannel(e)
+    }
 }
 
 /// Dependency-injection trait for the auth-login step. The default
@@ -225,9 +229,8 @@ pub trait AuthLogin: Send + Sync + 'static {
     /// must provide an explicit override — there is no default so that a
     /// missing implementation fails at compile time rather than silently
     /// sending `player_id = 0` in relay packets.
-    fn athlete_id(
-        &self,
-    ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send;
+    fn athlete_id(&self)
+        -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send;
 
     /// Fetch the current `PlayerState` for `athlete_id` from the
     /// `/relay/worlds/1/players/{id}` endpoint. Returns `Ok(None)`
@@ -238,9 +241,8 @@ pub trait AuthLogin: Send + Sync + 'static {
     fn get_player_state(
         &self,
         athlete_id: i64,
-    ) -> impl std::future::Future<
-        Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>,
-    > + Send;
+    ) -> impl std::future::Future<Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>>
+           + Send;
 }
 
 impl<A: AuthLogin> AuthLogin for std::sync::Arc<A> {
@@ -263,9 +265,8 @@ impl<A: AuthLogin> AuthLogin for std::sync::Arc<A> {
     fn get_player_state(
         &self,
         athlete_id: i64,
-    ) -> impl std::future::Future<
-        Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>,
-    > + Send {
+    ) -> impl std::future::Future<Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>>
+           + Send {
         let inner = std::sync::Arc::clone(self);
         async move { A::get_player_state(&*inner, athlete_id).await }
     }
@@ -396,13 +397,9 @@ impl<T: zwift_relay::UdpTransport> HeartbeatSink for UdpHeartbeatSink<T> {
 /// `zwift_relay::RelaySessionSupervisor`. Tests substitute a stub
 /// that returns a pre-configured session and emits pre-loaded events.
 pub trait SessionSupervisorHandle: Send + Sync + 'static {
-    fn current(
-        &self,
-    ) -> impl std::future::Future<Output = zwift_relay::RelaySession> + Send;
+    fn current(&self) -> impl std::future::Future<Output = zwift_relay::RelaySession> + Send;
 
-    fn subscribe_events(
-        &self,
-    ) -> tokio::sync::broadcast::Receiver<zwift_relay::SessionEvent>;
+    fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<zwift_relay::SessionEvent>;
 
     fn shutdown(&self);
 }
@@ -521,7 +518,9 @@ impl RuntimeInner {
 
         let from = *current;
         *current = Some(addr);
-        let _ = self.game_events_tx.send(GameEvent::PoolSwap { from, to: addr });
+        let _ = self
+            .game_events_tx
+            .send(GameEvent::PoolSwap { from, to: addr });
     }
 }
 
@@ -582,8 +581,7 @@ async fn run_state_refresher<A: AuthLogin>(
                             "relay.runtime.suspended_idle",
                         );
                     }
-                    delay =
-                        (delay + SUSPEND_DELAY.saturating_sub(delay) / 2).min(SUSPEND_DELAY);
+                    delay = (delay + SUSPEND_DELAY.saturating_sub(delay) / 2).min(SUSPEND_DELAY);
                 } else if age < delay.mul_f64(0.95) {
                     delay = (delay - (delay - MIN_DELAY) / 2).max(MIN_DELAY);
                 }
@@ -602,7 +600,7 @@ pub struct RelayRuntime {
     #[allow(dead_code)]
     join_handle: JoinHandle<Result<(), RelayRuntimeError>>,
     #[allow(dead_code)]
-    shutdown:    Arc<Notify>,
+    shutdown: Arc<Notify>,
     /// Forwarded broadcast of every `TcpChannelEvent` observed by
     /// the runtime. The runtime forwards the channel's own events
     /// here on a dedicated task; tests use [`Self::inject_event`]
@@ -703,8 +701,7 @@ impl<T: HeartbeatSink> HeartbeatScheduler<T> {
     /// seqno, reads the current `world_time`, and emits a trace event
     /// so integration tests can observe the identity fields.
     fn next_state(&self) -> zwift_proto::PlayerState {
-        self.seqno
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.seqno.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let world_time = self.world_timer.now();
         tracing::trace!(
             target: "ranchero::relay",
@@ -806,11 +803,7 @@ pub struct UdpServerEntry {
 /// returned. Otherwise, or if no server is in bounds, the result
 /// is the server whose bound centre minimises the Euclidean
 /// distance to the position.
-pub fn find_best_udp_server(
-    pool: &UdpServerPool,
-    x: f64,
-    y: f64,
-) -> Option<&UdpServerEntry> {
+pub fn find_best_udp_server(pool: &UdpServerPool, x: f64, y: f64) -> Option<&UdpServerEntry> {
     if pool.servers.is_empty() {
         return None;
     }
@@ -850,7 +843,9 @@ pub struct UdpPoolRouter {
 
 impl UdpPoolRouter {
     pub fn new() -> Self {
-        Self { pools: std::collections::HashMap::new() }
+        Self {
+            pools: std::collections::HashMap::new(),
+        }
     }
 
     /// Apply an inbound `udpConfigVOD` update. Replaces any
@@ -882,8 +877,7 @@ fn build_server_pool(entry: &zwift_relay::UdpPoolEntry) -> UdpServerPool {
                 .secure_port
                 .map(|p| p as u16)
                 .unwrap_or(zwift_relay::UDP_PORT_SECURE);
-            let socket_addr: std::net::SocketAddr =
-                format!("{ip_str}:{port}").parse().ok()?;
+            let socket_addr: std::net::SocketAddr = format!("{ip_str}:{port}").parse().ok()?;
             Some(UdpServerEntry {
                 addr: socket_addr,
                 x_bound_min: addr.x_bound_min.unwrap_or(0.0) as f64,
@@ -1092,11 +1086,11 @@ impl RelayRuntime {
         capture_path: Option<PathBuf>,
     ) -> Result<Self, RelayRuntimeError> {
         let auth_config = zwift_api::Config {
-            auth_base:  cfg.zwift_endpoints.auth_base.clone(),
-            api_base:   cfg.zwift_endpoints.api_base.clone(),
-            source:     zwift_api::DEFAULT_SOURCE.to_string(),
+            auth_base: cfg.zwift_endpoints.auth_base.clone(),
+            api_base: cfg.zwift_endpoints.api_base.clone(),
+            source: zwift_api::DEFAULT_SOURCE.to_string(),
             user_agent: zwift_api::DEFAULT_USER_AGENT.to_string(),
-            platform:   "OSX".to_string(),
+            platform: "OSX".to_string(),
         };
         let auth = Arc::new(zwift_api::ZwiftAuth::new(auth_config));
         let session_config = zwift_relay::RelaySessionConfig::default();
@@ -1104,17 +1098,16 @@ impl RelayRuntime {
 
         // Pre-open the capture file before auth so the file is created
         // regardless of whether the session succeeds (STEP-12.5 §B).
-        let preopen_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
-            match capture_path {
-                Some(ref path) => {
-                    let writer = zwift_relay::capture::CaptureWriter::open(path)
-                        .await
-                        .map_err(RelayRuntimeError::CaptureIo)?;
-                    tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
-                    Some(Arc::new(writer))
-                }
-                None => None,
-            };
+        let preopen_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> = match capture_path {
+            Some(ref path) => {
+                let writer = zwift_relay::capture::CaptureWriter::open(path)
+                    .await
+                    .map_err(RelayRuntimeError::CaptureIo)?;
+                tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
+                Some(Arc::new(writer))
+            }
+            None => None,
+        };
 
         match Self::start_all_inner(
             cfg,
@@ -1153,11 +1146,11 @@ impl RelayRuntime {
         capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
     ) -> Result<Self, RelayRuntimeError> {
         let auth_config = zwift_api::Config {
-            auth_base:  cfg.zwift_endpoints.auth_base.clone(),
-            api_base:   cfg.zwift_endpoints.api_base.clone(),
-            source:     zwift_api::DEFAULT_SOURCE.to_string(),
+            auth_base: cfg.zwift_endpoints.auth_base.clone(),
+            api_base: cfg.zwift_endpoints.api_base.clone(),
+            source: zwift_api::DEFAULT_SOURCE.to_string(),
             user_agent: zwift_api::DEFAULT_USER_AGENT.to_string(),
-            platform:   "OSX".to_string(),
+            platform: "OSX".to_string(),
         };
         let auth = Arc::new(zwift_api::ZwiftAuth::new(auth_config));
         let session_config = zwift_relay::RelaySessionConfig::default();
@@ -1244,17 +1237,16 @@ impl RelayRuntime {
         // given; the pre-opened-writer entry point sits beside
         // this one for tests that need to share an `Arc` with the
         // caller.
-        let capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> =
-            match capture_path {
-                Some(path) => {
-                    let writer = zwift_relay::capture::CaptureWriter::open(&path)
-                        .await
-                        .map_err(RelayRuntimeError::CaptureIo)?;
-                    tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
-                    Some(Arc::new(writer))
-                }
-                None => None,
-            };
+        let capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>> = match capture_path {
+            Some(path) => {
+                let writer = zwift_relay::capture::CaptureWriter::open(&path)
+                    .await
+                    .map_err(RelayRuntimeError::CaptureIo)?;
+                tracing::info!(target: "ranchero::relay", ?path, "relay.capture.opened");
+                Some(Arc::new(writer))
+            }
+            None => None,
+        };
         // If `start_inner` returns an error after the capture writer
         // was opened, flush and close it before propagating the
         // error so the file is left in a readable state. The writer
@@ -1334,8 +1326,8 @@ impl RelayRuntime {
         let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
         // Wrap in Arc so each retry gets a fresh clone without requiring
         // the factories to implement Clone themselves.
-        let auth        = std::sync::Arc::new(auth);
-        let sf          = std::sync::Arc::new(sf);
+        let auth = std::sync::Arc::new(auth);
+        let sf = std::sync::Arc::new(sf);
         let tcp_factory = std::sync::Arc::new(tcp_factory);
         let udp_factory = std::sync::Arc::new(udp_factory);
 
@@ -1566,21 +1558,33 @@ impl RelayRuntime {
                 .map_err(RelayRuntimeError::TcpChannel)?;
 
         let mut prev_state: Option<RuntimeState> = None;
-        emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::Authenticating);
-        emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::SessionLoggedIn);
+        emit_state_change(
+            &game_events_tx,
+            &mut prev_state,
+            RuntimeState::Authenticating,
+        );
+        emit_state_change(
+            &game_events_tx,
+            &mut prev_state,
+            RuntimeState::SessionLoggedIn,
+        );
 
         let established_deadline = std::time::Duration::from_secs(5);
         match tokio::time::timeout(established_deadline, events_rx.recv()).await {
             Ok(Ok(zwift_relay::TcpChannelEvent::Established)) => {
                 tracing::info!(target: "ranchero::relay", addr = %addr, "relay.tcp.established");
-                emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::TcpEstablished);
+                emit_state_change(
+                    &game_events_tx,
+                    &mut prev_state,
+                    RuntimeState::TcpEstablished,
+                );
             }
             Ok(Ok(other)) => {
-                return Err(RelayRuntimeError::TcpChannel(
-                    zwift_relay::TcpError::Io(std::io::Error::other(format!(
+                return Err(RelayRuntimeError::TcpChannel(zwift_relay::TcpError::Io(
+                    std::io::Error::other(format!(
                         "expected Established as first event, got {other:?}",
-                    ))),
-                ));
+                    )),
+                )));
             }
             Ok(Err(_)) | Err(_) => {
                 return Err(RelayRuntimeError::EstablishedTimeout(established_deadline));
@@ -1593,16 +1597,15 @@ impl RelayRuntime {
         let tcp_sender: Arc<dyn TcpSend> = Arc::clone(&channel) as Arc<dyn TcpSend>;
 
         // 8. Send the TCP hello packet. (Defect 3)
-        let hello_larg_wa_time =
-            inner.last_world_update_ts.load(std::sync::atomic::Ordering::Relaxed);
+        let hello_larg_wa_time = inner
+            .last_world_update_ts
+            .load(std::sync::atomic::Ordering::Relaxed);
         tcp_sender
             .send_packet(
                 zwift_proto::ClientToServer {
-                    server_realm: 1,
                     player_id: athlete_id,
                     world_time: Some(0),
                     seqno: Some(0),
-                    state: zwift_proto::PlayerState::default(),
                     larg_wa_time: Some(hello_larg_wa_time),
                     ..Default::default()
                 },
@@ -1626,8 +1629,7 @@ impl RelayRuntime {
             let mut picked: Option<std::net::SocketAddr> = None;
             let deadline = tokio::time::Instant::now() + udp_config_deadline;
             while picked.is_none() {
-                let remaining = deadline
-                    .saturating_duration_since(tokio::time::Instant::now());
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero() {
                     return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
                 }
@@ -1639,8 +1641,8 @@ impl RelayRuntime {
                             // for the initial connect: the generic
                             // load-balancer pool at lb_course=0. Per-course
                             // pools would reject athletes not on that course.
-                            let generic = pools.iter()
-                                .find(|p| p.lb_course == 0 && p.lb_realm == 0);
+                            let generic =
+                                pools.iter().find(|p| p.lb_course == 0 && p.lb_realm == 0);
                             match generic {
                                 Some(pool) => {
                                     tracing::info!(
@@ -1716,7 +1718,11 @@ impl RelayRuntime {
             latency_ms = udp_latency_ms,
             "relay.udp.established",
         );
-        emit_state_change(&game_events_tx, &mut prev_state, RuntimeState::UdpEstablished);
+        emit_state_change(
+            &game_events_tx,
+            &mut prev_state,
+            RuntimeState::UdpEstablished,
+        );
 
         // 9.5. Post-establish "I'm watching" registration (STEP-12.14 §C3).
         // Mirrors sauce4zwift `establishUDPChannel` line 2127: after the
@@ -1801,12 +1807,16 @@ impl RelayRuntime {
                             // Re-login rotates the AES key; persist the
                             // new manifest so the capture stays decryptable.
                             if let Some(writer) = writer_for_supervisor.as_ref() {
-                                writer.record_session_manifest(
-                                    manifest_from_session(&new_session, session_conn_id),
-                                );
+                                writer.record_session_manifest(manifest_from_session(
+                                    &new_session,
+                                    session_conn_id,
+                                ));
                             }
                         }
-                        Ok(zwift_relay::SessionEvent::Refreshed { relay_id, new_expires_at }) => {
+                        Ok(zwift_relay::SessionEvent::Refreshed {
+                            relay_id,
+                            new_expires_at,
+                        }) => {
                             tracing::info!(
                                 target: "ranchero::relay",
                                 relay_id,
@@ -1832,8 +1842,8 @@ impl RelayRuntime {
                                         recv_iv_seqno_udp: 0,
                                         relay_id,
                                         conn_id: session_conn_id,
-                                        expires_at_unix_ns: (now_unix + remaining)
-                                            .as_nanos() as u64,
+                                        expires_at_unix_ns: (now_unix + remaining).as_nanos()
+                                            as u64,
                                     },
                                 );
                             }
@@ -1901,12 +1911,7 @@ impl RelayRuntime {
         let inner_for_refresher = Arc::clone(&inner);
         let state_refresher_abort = {
             let handle = tokio::spawn(async move {
-                run_state_refresher(
-                    auth_for_refresher,
-                    watched_id_i64,
-                    inner_for_refresher,
-                )
-                .await;
+                run_state_refresher(auth_for_refresher, watched_id_i64, inner_for_refresher).await;
             });
             let abort = handle.abort_handle();
             drop(handle);
@@ -2008,11 +2013,11 @@ impl RelayRuntime {
                 let _ = game_events_tx.send(GameEvent::StateChange(RuntimeState::TcpEstablished));
             }
             Ok(Ok(other)) => {
-                return Err(RelayRuntimeError::TcpChannel(
-                    zwift_relay::TcpError::Io(std::io::Error::other(format!(
+                return Err(RelayRuntimeError::TcpChannel(zwift_relay::TcpError::Io(
+                    std::io::Error::other(format!(
                         "expected Established as first event, got {other:?}",
-                    ))),
-                ));
+                    )),
+                )));
             }
             Ok(Err(_)) => {
                 return Err(RelayRuntimeError::EstablishedTimeout(established_deadline));
@@ -2026,7 +2031,8 @@ impl RelayRuntime {
         //    recv-loop. The forwarder reads from the channel's
         //    broadcast and republishes on our `events_tx` so that
         //    tests can inject synthetic events on the same surface.
-        let (events_tx, recv_rx) = tokio::sync::broadcast::channel::<zwift_relay::TcpChannelEvent>(64);
+        let (events_tx, recv_rx) =
+            tokio::sync::broadcast::channel::<zwift_relay::TcpChannelEvent>(64);
         let forwarder_tx = events_tx.clone();
         tokio::spawn(async move {
             let mut rx = events_rx;
@@ -2262,18 +2268,13 @@ pub struct DefaultSessionLogin {
 }
 
 impl DefaultSessionLogin {
-    pub fn new(
-        auth: Arc<zwift_api::ZwiftAuth>,
-        config: zwift_relay::RelaySessionConfig,
-    ) -> Self {
+    pub fn new(auth: Arc<zwift_api::ZwiftAuth>, config: zwift_relay::RelaySessionConfig) -> Self {
         Self { auth, config }
     }
 }
 
 impl SessionLogin for DefaultSessionLogin {
-    async fn login(
-        &self,
-    ) -> Result<zwift_relay::RelaySession, zwift_relay::SessionError> {
+    async fn login(&self) -> Result<zwift_relay::RelaySession, zwift_relay::SessionError> {
         zwift_relay::login(&self.auth, &self.config).await
     }
 }
@@ -2286,15 +2287,8 @@ pub struct DefaultTcpTransportFactory;
 impl TcpTransportFactory for DefaultTcpTransportFactory {
     type Transport = zwift_relay::TokioTcpTransport;
 
-    async fn connect(
-        &self,
-        addr: std::net::SocketAddr,
-    ) -> std::io::Result<Self::Transport> {
-        zwift_relay::TokioTcpTransport::connect(
-            addr,
-            std::time::Duration::from_secs(10),
-        )
-        .await
+    async fn connect(&self, addr: std::net::SocketAddr) -> std::io::Result<Self::Transport> {
+        zwift_relay::TokioTcpTransport::connect(addr, std::time::Duration::from_secs(10)).await
     }
 }
 
@@ -2307,16 +2301,12 @@ pub struct DefaultSessionSupervisorHandle {
 }
 
 impl SessionSupervisorHandle for DefaultSessionSupervisorHandle {
-    fn current(
-        &self,
-    ) -> impl std::future::Future<Output = zwift_relay::RelaySession> + Send {
+    fn current(&self) -> impl std::future::Future<Output = zwift_relay::RelaySession> + Send {
         let s = self.session.clone();
         async move { s }
     }
 
-    fn subscribe_events(
-        &self,
-    ) -> tokio::sync::broadcast::Receiver<zwift_relay::SessionEvent> {
+    fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<zwift_relay::SessionEvent> {
         let (_, rx) = tokio::sync::broadcast::channel(1);
         rx
     }
@@ -2335,10 +2325,7 @@ pub struct DefaultSessionSupervisorFactory {
 }
 
 impl DefaultSessionSupervisorFactory {
-    pub fn new(
-        auth: Arc<zwift_api::ZwiftAuth>,
-        config: zwift_relay::RelaySessionConfig,
-    ) -> Self {
+    pub fn new(auth: Arc<zwift_api::ZwiftAuth>, config: zwift_relay::RelaySessionConfig) -> Self {
         Self { auth, config }
     }
 }
@@ -2568,20 +2555,18 @@ where
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
     use std::sync::Mutex as StdMutex;
     use std::time::Instant;
 
-    use crate::config::{
-        EditingMode, RedactedString, ResolvedConfig, ZwiftEndpoints,
-    };
+    use crate::config::{EditingMode, RedactedString, ResolvedConfig, ZwiftEndpoints};
 
     fn make_config(email: Option<&str>, password: Option<&str>) -> ResolvedConfig {
         ResolvedConfig {
-            main_email:    None,
+            main_email: None,
             main_password: None,
-            monitor_email:    email.map(str::to_string),
+            monitor_email: email.map(str::to_string),
             monitor_password: password.map(|p| RedactedString::new(p.to_string())),
             server_bind: "127.0.0.1".into(),
             server_port: 1080,
@@ -2596,7 +2581,7 @@ mod tests {
             // pinned to an unroutable address as a defence in depth.
             zwift_endpoints: ZwiftEndpoints {
                 auth_base: "http://127.0.0.1:1".into(),
-                api_base:  "http://127.0.0.1:1".into(),
+                api_base: "http://127.0.0.1:1".into(),
             },
             relay_enabled: true,
             watched_athlete_id: None,
@@ -2822,7 +2807,8 @@ mod tests {
             self.counter.record_tcp();
             let transport = self.transport.lock().unwrap().take();
             async move {
-                transport.ok_or_else(|| std::io::Error::other("StubTcpFactory: no transport configured"))
+                transport
+                    .ok_or_else(|| std::io::Error::other("StubTcpFactory: no transport configured"))
             }
         }
     }
@@ -2839,7 +2825,9 @@ mod tests {
     }
 
     fn fixture_servers() -> Vec<zwift_relay::TcpServer> {
-        vec![zwift_relay::TcpServer { ip: "127.0.0.1".into() }]
+        vec![zwift_relay::TcpServer {
+            ip: "127.0.0.1".into(),
+        }]
     }
 
     /// A `zwift_api::Error` value usable in error-propagation tests.
@@ -2890,12 +2878,28 @@ mod tests {
 
         let _ = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await;
 
-        assert_eq!(counter.auth_count.load(Ordering::SeqCst), 1, "auth.login must run once");
-        assert_eq!(counter.session_count.load(Ordering::SeqCst), 1, "session.login must run once");
-        assert_eq!(counter.tcp_count.load(Ordering::SeqCst), 1, "tcp.connect must run once");
+        assert_eq!(
+            counter.auth_count.load(Ordering::SeqCst),
+            1,
+            "auth.login must run once"
+        );
+        assert_eq!(
+            counter.session_count.load(Ordering::SeqCst),
+            1,
+            "session.login must run once"
+        );
+        assert_eq!(
+            counter.tcp_count.load(Ordering::SeqCst),
+            1,
+            "tcp.connect must run once"
+        );
 
         let auth_at = counter.auth_at.lock().unwrap().expect("auth recorded");
-        let session_at = counter.session_at.lock().unwrap().expect("session recorded");
+        let session_at = counter
+            .session_at
+            .lock()
+            .unwrap()
+            .expect("session recorded");
         let tcp_at = counter.tcp_at.lock().unwrap().expect("tcp recorded");
         assert!(auth_at <= session_at, "auth must precede session");
         assert!(session_at <= tcp_at, "session must precede tcp");
@@ -2916,9 +2920,21 @@ mod tests {
             "expected Auth error; got {:?}",
             result.as_ref().err(),
         );
-        assert_eq!(counter.auth_count.load(Ordering::SeqCst), 1, "auth must run once");
-        assert_eq!(counter.session_count.load(Ordering::SeqCst), 0, "session must not run");
-        assert_eq!(counter.tcp_count.load(Ordering::SeqCst), 0, "tcp must not run");
+        assert_eq!(
+            counter.auth_count.load(Ordering::SeqCst),
+            1,
+            "auth must run once"
+        );
+        assert_eq!(
+            counter.session_count.load(Ordering::SeqCst),
+            0,
+            "session must not run"
+        );
+        assert_eq!(
+            counter.tcp_count.load(Ordering::SeqCst),
+            0,
+            "tcp must not run"
+        );
     }
 
     #[tokio::test]
@@ -2938,7 +2954,11 @@ mod tests {
         );
         assert_eq!(counter.auth_count.load(Ordering::SeqCst), 1);
         assert_eq!(counter.session_count.load(Ordering::SeqCst), 1);
-        assert_eq!(counter.tcp_count.load(Ordering::SeqCst), 0, "tcp must not run");
+        assert_eq!(
+            counter.tcp_count.load(Ordering::SeqCst),
+            0,
+            "tcp must not run"
+        );
     }
 
     #[tokio::test]
@@ -2956,7 +2976,11 @@ mod tests {
             "expected NoTcpServers; got {:?}",
             result.as_ref().err(),
         );
-        assert_eq!(counter.tcp_count.load(Ordering::SeqCst), 0, "tcp must not run");
+        assert_eq!(
+            counter.tcp_count.load(Ordering::SeqCst),
+            0,
+            "tcp must not run"
+        );
     }
 
     // --- 3. lifecycle: established, inbound, recv error ----------
@@ -3070,19 +3094,18 @@ mod tests {
         let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
         let tcp = StubTcpFactory::ok(counter.clone());
 
-        let runtime = RelayRuntime::start_with_deps_and_writer(
-            &cfg,
-            Arc::clone(&writer),
-            auth,
-            session,
-            tcp,
-        )
-        .await
-        .expect("start_with_deps_and_writer must succeed");
+        let runtime =
+            RelayRuntime::start_with_deps_and_writer(&cfg, Arc::clone(&writer), auth, session, tcp)
+                .await
+                .expect("start_with_deps_and_writer must succeed");
 
         runtime.shutdown();
         let join_result = runtime.join().await;
-        assert!(join_result.is_ok(), "join must resolve cleanly: {:?}", join_result.err());
+        assert!(
+            join_result.is_ok(),
+            "join must resolve cleanly: {:?}",
+            join_result.err()
+        );
 
         // Drop the test's clone so any straggler `Arc` references
         // are released; this is harmless if the runtime already
@@ -3092,8 +3115,7 @@ mod tests {
         // Read the file back: exactly three records should be
         // readable, demonstrating that `flush_and_close` drained
         // the queue before the file was closed.
-        let reader =
-            zwift_relay::capture::CaptureReader::open(path.path()).expect("reader");
+        let reader = zwift_relay::capture::CaptureReader::open(path.path()).expect("reader");
         let count = reader.count();
         assert_eq!(
             count, 3,
@@ -3116,7 +3138,11 @@ mod tests {
         runtime.shutdown();
         runtime.shutdown();
         let result = runtime.join().await;
-        assert!(result.is_ok(), "join must resolve cleanly; got {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "join must resolve cleanly; got {:?}",
+            result.err()
+        );
     }
 
     // -----------------------------------------------------------------
@@ -3150,19 +3176,11 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn heartbeat_emits_at_one_hz() {
         let (sink, sent) = StubHeartbeatSink::new();
-        let scheduler = HeartbeatScheduler::new(
-            sink,
-            zwift_relay::WorldTimer::new(),
-            12345,
-            99,
-            10,
-        );
+        let scheduler =
+            HeartbeatScheduler::new(sink, zwift_relay::WorldTimer::new(), 12345, 99, 10);
 
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(5_500),
-            scheduler.run(),
-        )
-        .await;
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_millis(5_500), scheduler.run()).await;
 
         let count = sent.lock().unwrap().len();
         assert_eq!(
@@ -3174,13 +3192,8 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_increments_seqno_per_send() {
         let (sink, sent) = StubHeartbeatSink::new();
-        let scheduler = HeartbeatScheduler::new(
-            sink,
-            zwift_relay::WorldTimer::new(),
-            12345,
-            99,
-            10,
-        );
+        let scheduler =
+            HeartbeatScheduler::new(sink, zwift_relay::WorldTimer::new(), 12345, 99, 10);
 
         for _ in 0..3 {
             scheduler.send_one().await.expect("send_one");
@@ -3278,15 +3291,10 @@ mod tests {
         let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
         let tcp = StubTcpFactory::ok(counter.clone());
 
-        let runtime = RelayRuntime::start_with_deps_and_writer(
-            &cfg,
-            Arc::clone(&writer),
-            auth,
-            session,
-            tcp,
-        )
-        .await
-        .expect("start_with_deps_and_writer must succeed");
+        let runtime =
+            RelayRuntime::start_with_deps_and_writer(&cfg, Arc::clone(&writer), auth, session, tcp)
+                .await
+                .expect("start_with_deps_and_writer must succeed");
 
         runtime.shutdown();
         let _ = runtime.join().await;
@@ -3363,15 +3371,10 @@ mod tests {
         let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
         let tcp = StubTcpFactory::ok(counter.clone());
 
-        let runtime = RelayRuntime::start_with_deps_and_writer(
-            &cfg,
-            Arc::clone(&writer),
-            auth,
-            session,
-            tcp,
-        )
-        .await
-        .expect("start_with_deps_and_writer must succeed");
+        let runtime =
+            RelayRuntime::start_with_deps_and_writer(&cfg, Arc::clone(&writer), auth, session, tcp)
+                .await
+                .expect("start_with_deps_and_writer must succeed");
 
         runtime.shutdown();
         let _ = runtime.join().await;
@@ -3383,8 +3386,7 @@ mod tests {
         );
 
         drop(writer);
-        let reader =
-            zwift_relay::capture::CaptureReader::open(path.path()).expect("reader");
+        let reader = zwift_relay::capture::CaptureReader::open(path.path()).expect("reader");
         let count = reader.count();
         assert_eq!(count, 3, "shutdown must drain every accepted UDP record");
     }
@@ -3403,8 +3405,18 @@ mod tests {
         }
     }
 
-    fn pool(realm: i32, course_id: i32, use_first_in_bounds: bool, servers: Vec<UdpServerEntry>) -> UdpServerPool {
-        UdpServerPool { realm, course_id, use_first_in_bounds, servers }
+    fn pool(
+        realm: i32,
+        course_id: i32,
+        use_first_in_bounds: bool,
+        servers: Vec<UdpServerEntry>,
+    ) -> UdpServerPool {
+        UdpServerPool {
+            realm,
+            course_id,
+            use_first_in_bounds,
+            servers,
+        }
     }
 
     #[test]
@@ -3412,10 +3424,15 @@ mod tests {
         // With `use_first_in_bounds = true`, the first server
         // whose bounding box contains `(x, y)` is returned, even
         // when a later server is also in bounds.
-        let pool_value = pool(0, 1, true, vec![
-            entry("10.0.0.1:3025", 0.0, 100.0, 0.0, 100.0),  // index 0, contains (50, 50)
-            entry("10.0.0.2:3025", 25.0, 75.0, 25.0, 75.0),  // index 1, also contains (50, 50)
-        ]);
+        let pool_value = pool(
+            0,
+            1,
+            true,
+            vec![
+                entry("10.0.0.1:3025", 0.0, 100.0, 0.0, 100.0), // index 0, contains (50, 50)
+                entry("10.0.0.2:3025", 25.0, 75.0, 25.0, 75.0), // index 1, also contains (50, 50)
+            ],
+        );
         let best = find_best_udp_server(&pool_value, 50.0, 50.0);
         assert_eq!(
             best.map(|s| s.addr.to_string()),
@@ -3430,10 +3447,15 @@ mod tests {
         // No bounding box contains the query; the result is the
         // server whose bound centre minimises the Euclidean
         // distance.
-        let pool_value = pool(0, 1, true, vec![
-            entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0),     // centre (5, 5)
-            entry("10.0.0.2:3025", 100.0, 110.0, 100.0, 110.0), // centre (105, 105)
-        ]);
+        let pool_value = pool(
+            0,
+            1,
+            true,
+            vec![
+                entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0), // centre (5, 5)
+                entry("10.0.0.2:3025", 100.0, 110.0, 100.0, 110.0), // centre (105, 105)
+            ],
+        );
         let best = find_best_udp_server(&pool_value, 50.0, 50.0);
         assert_eq!(
             best.map(|s| s.addr.to_string()),
@@ -3447,10 +3469,15 @@ mod tests {
     fn find_best_min_euclidean_when_first_in_bounds_disabled() {
         // With `use_first_in_bounds = false`, the result is
         // min-Euclidean regardless of bounds containment.
-        let pool_value = pool(0, 1, false, vec![
-            entry("10.0.0.1:3025", 0.0, 100.0, 0.0, 100.0),  // centre (50, 50), contains (50, 50)
-            entry("10.0.0.2:3025", 49.0, 51.0, 49.0, 51.0),  // centre (50, 50)
-        ]);
+        let pool_value = pool(
+            0,
+            1,
+            false,
+            vec![
+                entry("10.0.0.1:3025", 0.0, 100.0, 0.0, 100.0), // centre (50, 50), contains (50, 50)
+                entry("10.0.0.2:3025", 49.0, 51.0, 49.0, 51.0), // centre (50, 50)
+            ],
+        );
         let best = find_best_udp_server(&pool_value, 50.0, 50.0);
         assert!(
             best.is_some(),
@@ -3474,12 +3501,18 @@ mod tests {
         // Two consecutive updates for the same `(realm, courseId)`;
         // the second wins.
         let mut router = UdpPoolRouter::new();
-        router.apply_pool_update(pool(0, 1, true, vec![
-            entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0),
-        ]));
-        router.apply_pool_update(pool(0, 1, true, vec![
-            entry("10.0.0.2:3025", 0.0, 10.0, 0.0, 10.0),
-        ]));
+        router.apply_pool_update(pool(
+            0,
+            1,
+            true,
+            vec![entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0)],
+        ));
+        router.apply_pool_update(pool(
+            0,
+            1,
+            true,
+            vec![entry("10.0.0.2:3025", 0.0, 10.0, 0.0, 10.0)],
+        ));
         let p = router.pool_for(0, 1).expect("pool present");
         assert_eq!(p.servers.len(), 1);
         assert_eq!(p.servers[0].addr.to_string(), "10.0.0.2:3025");
@@ -3490,12 +3523,18 @@ mod tests {
         // Updates for `(0, 1)` and `(0, 2)` are stored
         // independently.
         let mut router = UdpPoolRouter::new();
-        router.apply_pool_update(pool(0, 1, true, vec![
-            entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0),
-        ]));
-        router.apply_pool_update(pool(0, 2, true, vec![
-            entry("10.0.0.2:3025", 0.0, 10.0, 0.0, 10.0),
-        ]));
+        router.apply_pool_update(pool(
+            0,
+            1,
+            true,
+            vec![entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0)],
+        ));
+        router.apply_pool_update(pool(
+            0,
+            2,
+            true,
+            vec![entry("10.0.0.2:3025", 0.0, 10.0, 0.0, 10.0)],
+        ));
         let p1 = router.pool_for(0, 1).expect("pool 1");
         let p2 = router.pool_for(0, 2).expect("pool 2");
         assert_eq!(p1.servers[0].addr.to_string(), "10.0.0.1:3025");
@@ -3560,8 +3599,15 @@ mod tests {
         runtime.observe_watched_player_state(0, 1, 75.0, 75.0);
 
         let swaps = drain_pool_swaps(&mut events_rx);
-        assert_eq!(swaps.len(), 2, "expected two PoolSwap events; got {swaps:?}");
-        assert_eq!(swaps[0].0, None, "first swap must come from no current server");
+        assert_eq!(
+            swaps.len(),
+            2,
+            "expected two PoolSwap events; got {swaps:?}"
+        );
+        assert_eq!(
+            swaps[0].0, None,
+            "first swap must come from no current server"
+        );
         assert_eq!(swaps[0].1.to_string(), "10.0.0.1:3025");
         assert_eq!(swaps[1].0, Some("10.0.0.1:3025".parse().unwrap()));
         assert_eq!(swaps[1].1.to_string(), "10.0.0.2:3025");
@@ -3615,7 +3661,11 @@ mod tests {
         runtime.observe_watched_player_state(0, 2, 50.0, 50.0);
 
         let swaps = drain_pool_swaps(&mut events_rx);
-        assert_eq!(swaps.len(), 2, "expected two PoolSwap events on course change; got {swaps:?}");
+        assert_eq!(
+            swaps.len(),
+            2,
+            "expected two PoolSwap events on course change; got {swaps:?}"
+        );
         assert_eq!(swaps[0].1.to_string(), "10.0.0.1:3025");
         assert_eq!(swaps[1].1.to_string(), "10.0.0.2:3025");
 
@@ -3784,13 +3834,10 @@ mod tests {
         };
         runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
 
-        let event = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            events_rx.recv(),
-        )
-        .await
-        .expect("event must arrive within timeout")
-        .expect("broadcast must deliver event");
+        let event = tokio::time::timeout(std::time::Duration::from_millis(500), events_rx.recv())
+            .await
+            .expect("event must arrive within timeout")
+            .expect("broadcast must deliver event");
 
         match event {
             GameEvent::PlayerState {
@@ -3821,8 +3868,7 @@ mod tests {
         let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
         let tcp = StubTcpFactory::ok(counter.clone());
 
-        let (game_events_tx, mut game_events_rx) =
-            tokio::sync::broadcast::channel::<GameEvent>(64);
+        let (game_events_tx, mut game_events_rx) = tokio::sync::broadcast::channel::<GameEvent>(64);
 
         let runtime = RelayRuntime::start_with_deps_and_events_tx(
             &cfg,
@@ -3874,7 +3920,9 @@ mod tests {
         let auth = StubAuth::ok(counter.clone());
         let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
         let tcp = StubTcpFactory::ok(counter.clone());
-        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await.unwrap();
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .unwrap();
 
         // The runtime must seed watched_state from cfg.watched_athlete_id at startup.
         let watched_id = runtime.inner.watched_state.lock().unwrap().athlete_id;
@@ -3897,7 +3945,9 @@ mod tests {
         let auth = StubAuth::ok(counter.clone());
         let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
         let tcp = StubTcpFactory::ok(counter.clone());
-        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp).await.unwrap();
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .unwrap();
 
         let watched_id = runtime.inner.watched_state.lock().unwrap().athlete_id;
         assert_eq!(

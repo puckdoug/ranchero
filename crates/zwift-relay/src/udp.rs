@@ -426,13 +426,10 @@ impl<T: UdpTransport> UdpChannel<T> {
             let iv_seqno = send.iv_seqno;
             let world_time = state.world_time.unwrap_or(0);
             let cts = zwift_proto::ClientToServer {
-                server_realm: 1,
                 player_id: self.athlete_id,
                 world_time: state.world_time,
                 seqno: Some(app_seqno),
-                state,
-                last_update: 0,
-                last_player_update: 0,
+                state: Some(state),
                 ..Default::default()
             };
             let proto_bytes = cts.encode_to_vec();
@@ -511,13 +508,10 @@ impl<T: UdpTransport> UdpChannel<T> {
 
 fn build_hello(athlete_id: i64, app_seqno: u32) -> zwift_proto::ClientToServer {
     zwift_proto::ClientToServer {
-        server_realm: 1,
+        server_realm: Some(1),
         player_id: athlete_id,
         world_time: Some(0),
         seqno: Some(app_seqno),
-        state: zwift_proto::PlayerState::default(),
-        last_update: 0,
-        last_player_update: 0,
         ..Default::default()
     }
 }

@@ -15,13 +15,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use prost::Message;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
 use zwift_proto::{ClientToServer, PlayerState, ServerToClient};
 use zwift_relay::udp::{ChannelEvent, UdpChannel, UdpChannelConfig, UdpTransport};
 use zwift_relay::{
-    ChannelType, DeviceType, Header, HeaderFlags, RelaySession, RelayIv, TcpServer, WorldTimer,
-    decode_header, decrypt, encrypt, parse_udp_plaintext,
+    decode_header, decrypt, encrypt, parse_udp_plaintext, ChannelType, DeviceType, Header,
+    HeaderFlags, RelayIv, RelaySession, TcpServer, WorldTimer,
 };
 
 // --- mock transport ------------------------------------------------
@@ -209,11 +209,7 @@ async fn establish_subsequent_hellos_carry_relay_conn_seqno_flags() {
     // Check three consecutive hellos — iter 1 already passes, iters 2 and 3
     // currently fail (red state for §M1).
     for expected_iv_seqno in 0..3u32 {
-        let bytes = handle
-            .outbound_receiver
-            .recv()
-            .await
-            .expect("hello sent");
+        let bytes = handle.outbound_receiver.recv().await.expect("hello sent");
         let (header, _cts) = parse_outbound(&bytes);
         let iter = expected_iv_seqno + 1;
         assert!(
@@ -266,7 +262,7 @@ async fn establish_hello_payload_athlete_id_realm_one_world_time_zero() {
     let bytes = handle.outbound_receiver.recv().await.expect("first hello");
     let (_header, cts) = parse_outbound(&bytes);
     assert_eq!(cts.player_id, TEST_ATHLETE_ID);
-    assert_eq!(cts.server_realm, 1);
+    assert_eq!(cts.server_realm, Some(1));
     assert_eq!(cts.world_time, Some(0));
 
     task.abort();
@@ -331,9 +327,10 @@ async fn establish_converges_after_six_replies_and_emits_established() {
 
     // Spawn the establish task and concurrently script tightly-spaced
     // replies as each hello arrives.
-    let task = tokio::spawn(async move {
-        UdpChannel::establish(transport, &session, clock, config).await
-    });
+    let task =
+        tokio::spawn(
+            async move { UdpChannel::establish(transport, &session, clock, config).await },
+        );
 
     // 6 hellos → 6 replies. Latencies vary slightly so the SNTP filter
     // can converge (all-equal latencies fail sauce's `> 4 valid` check
@@ -350,10 +347,7 @@ async fn establish_converges_after_six_replies_and_emits_established() {
         handle.inbound_sender.send(reply).expect("script reply");
     }
 
-    let (_channel, mut events) = task
-        .await
-        .expect("establish task")
-        .expect("sync converges");
+    let (_channel, mut events) = task.await.expect("establish task").expect("sync converges");
     let first = events.recv().await.expect("first event");
     assert!(matches!(first, ChannelEvent::Established { .. }));
 }
@@ -367,9 +361,10 @@ async fn recv_loop_emits_inbound_event_per_decoded_packet() {
     let config = test_config();
     let clock = WorldTimer::new();
 
-    let task = tokio::spawn(async move {
-        UdpChannel::establish(transport, &session, clock, config).await
-    });
+    let task =
+        tokio::spawn(
+            async move { UdpChannel::establish(transport, &session, clock, config).await },
+        );
 
     // Drive sync to convergence first.
     for i in 0..6u32 {
@@ -414,9 +409,10 @@ async fn recv_loop_decryption_failure_emits_recv_error() {
     let config = test_config();
     let clock = WorldTimer::new();
 
-    let task = tokio::spawn(async move {
-        UdpChannel::establish(transport, &session, clock, config).await
-    });
+    let task =
+        tokio::spawn(
+            async move { UdpChannel::establish(transport, &session, clock, config).await },
+        );
 
     // Establish first.
     for i in 0..6u32 {
@@ -455,9 +451,10 @@ async fn watchdog_fires_after_silence() {
     };
     let clock = WorldTimer::new();
 
-    let task = tokio::spawn(async move {
-        UdpChannel::establish(transport, &session, clock, config).await
-    });
+    let task =
+        tokio::spawn(
+            async move { UdpChannel::establish(transport, &session, clock, config).await },
+        );
 
     for i in 0..6u32 {
         let hello = handle.outbound_receiver.recv().await.expect("hello");
@@ -471,11 +468,10 @@ async fn watchdog_fires_after_silence() {
 
     // No more replies; after watchdog_timeout the channel must emit
     // Timeout (not shut down — supervisor decides).
-    let next =
-        tokio::time::timeout(Duration::from_millis(500), events.recv())
-            .await
-            .expect("event arrives within budget")
-            .expect("event");
+    let next = tokio::time::timeout(Duration::from_millis(500), events.recv())
+        .await
+        .expect("event arrives within budget")
+        .expect("event");
     assert!(matches!(next, ChannelEvent::Timeout), "got {next:?}");
 }
 
@@ -488,9 +484,10 @@ async fn send_player_state_emits_packet_with_seqno_flag_only() {
     let config = test_config();
     let clock = WorldTimer::new();
 
-    let task = tokio::spawn(async move {
-        UdpChannel::establish(transport, &session, clock, config).await
-    });
+    let task =
+        tokio::spawn(
+            async move { UdpChannel::establish(transport, &session, clock, config).await },
+        );
 
     // Establish.
     for i in 0..6u32 {
@@ -519,7 +516,7 @@ async fn send_player_state_emits_packet_with_seqno_flag_only() {
     assert!(!header.flags.contains(HeaderFlags::RELAY_ID));
     assert!(!header.flags.contains(HeaderFlags::CONN_ID));
     assert!(header.flags.contains(HeaderFlags::SEQNO));
-    assert_eq!(cts.state.power, Some(250));
+    assert_eq!(cts.state.unwrap().power, Some(250));
 }
 
 // --- 11. shutdown --------------------------------------------------
@@ -531,9 +528,10 @@ async fn shutdown_stops_recv_loop_and_emits_shutdown_event() {
     let config = test_config();
     let clock = WorldTimer::new();
 
-    let task = tokio::spawn(async move {
-        UdpChannel::establish(transport, &session, clock, config).await
-    });
+    let task =
+        tokio::spawn(
+            async move { UdpChannel::establish(transport, &session, clock, config).await },
+        );
 
     for i in 0..6u32 {
         let hello = handle.outbound_receiver.recv().await.expect("hello");
@@ -579,9 +577,10 @@ async fn udp_channel_with_capture_records_inbound_packets() {
     config.capture = Some(writer.clone());
     let clock = WorldTimer::new();
 
-    let task = tokio::spawn(async move {
-        UdpChannel::establish(transport, &session, clock, config).await
-    });
+    let task =
+        tokio::spawn(
+            async move { UdpChannel::establish(transport, &session, clock, config).await },
+        );
 
     // Drive sync to convergence with 6 replies.
     for i in 0..6u32 {
@@ -628,9 +627,10 @@ async fn udp_channel_with_capture_records_outbound_player_state() {
     config.capture = Some(writer.clone());
     let clock = WorldTimer::new();
 
-    let task = tokio::spawn(async move {
-        UdpChannel::establish(transport, &session, clock, config).await
-    });
+    let task =
+        tokio::spawn(
+            async move { UdpChannel::establish(transport, &session, clock, config).await },
+        );
 
     for i in 0..6u32 {
         let hello = handle.outbound_receiver.recv().await.expect("hello");
@@ -675,7 +675,7 @@ async fn udp_channel_with_capture_records_outbound_player_state() {
     let last = outbound.last().expect("at least one");
     let (_header, decoded) = parse_outbound(&last.payload);
     assert_eq!(decoded.player_id, TEST_ATHLETE_ID);
-    assert_eq!(decoded.state.power, Some(104));
+    assert_eq!(decoded.state.unwrap().power, Some(104));
 }
 
 // ==========================================================================
@@ -723,9 +723,14 @@ async fn udp_hello_send_records_encrypted_datagram() {
         .filter(|r| r.direction == Direction::Outbound && r.transport == TransportKind::Udp)
         .collect();
 
-    assert_eq!(outbound.len(), 1, "expected exactly one outbound capture from one hello");
     assert_eq!(
-        outbound[0].payload, first_hello_wire,
+        outbound.len(),
+        1,
+        "expected exactly one outbound capture from one hello"
+    );
+    assert_eq!(
+        outbound[0].payload,
+        first_hello_wire,
         "Phase 2a red state: hello outbound capture must hold the encrypted wire bytes \
          sent to transport.send() (header + ciphertext + tag), not proto_bytes; \
          expected {} bytes, captured {} bytes",
@@ -758,7 +763,10 @@ async fn udp_hello_recv_records_raw_datagram_pre_decrypt() {
     let (_h, cts) = parse_outbound(&first_hello);
     let ack = cts.seqno.expect("seqno");
     let raw_reply = build_inbound(0, ack, 1_000_000);
-    handle.inbound_sender.send(raw_reply.clone()).expect("script reply");
+    handle
+        .inbound_sender
+        .send(raw_reply.clone())
+        .expect("script reply");
 
     // Give the channel time to process the reply, then abort.
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -776,7 +784,8 @@ async fn udp_hello_recv_records_raw_datagram_pre_decrypt() {
 
     assert_eq!(inbound.len(), 1, "expected exactly one inbound capture");
     assert_eq!(
-        inbound[0].payload, raw_reply,
+        inbound[0].payload,
+        raw_reply,
         "Phase 2a red state: hello inbound capture must hold the raw datagram bytes \
          as returned from transport.recv() (header + ciphertext + tag), not \
          post-decryption plaintext; expected {} bytes, captured {} bytes",
@@ -823,7 +832,11 @@ async fn udp_steady_state_send_records_encrypted_datagram() {
         ..Default::default()
     };
     channel.send_player_state(state).await.expect("send");
-    let wire = handle.outbound_receiver.recv().await.expect("steady-state wire");
+    let wire = handle
+        .outbound_receiver
+        .recv()
+        .await
+        .expect("steady-state wire");
 
     channel.shutdown_and_wait().await;
     drop(channel);
@@ -845,7 +858,8 @@ async fn udp_steady_state_send_records_encrypted_datagram() {
     );
     let steady = outbound.last().expect("at least one");
     assert_eq!(
-        steady.payload, wire,
+        steady.payload,
+        wire,
         "Phase 2a red state: steady-state outbound capture must hold the encrypted \
          wire bytes sent to transport.send() (header + ciphertext + tag), not \
          proto_bytes; expected {} bytes, captured {} bytes",
@@ -888,7 +902,10 @@ async fn udp_steady_state_recv_records_raw_datagram_pre_decrypt() {
 
     // Script one steady-state inbound packet (recv_iv_seqno = 6 after 6 hellos).
     let raw_packet = build_inbound(6, 100, 2_000_000);
-    handle.inbound_sender.send(raw_packet.clone()).expect("steady-state inbound");
+    handle
+        .inbound_sender
+        .send(raw_packet.clone())
+        .expect("steady-state inbound");
 
     let ev = tokio::time::timeout(Duration::from_millis(500), events.recv())
         .await
@@ -916,7 +933,8 @@ async fn udp_steady_state_recv_records_raw_datagram_pre_decrypt() {
     );
     let steady = inbound.last().expect("at least one");
     assert_eq!(
-        steady.payload, raw_packet,
+        steady.payload,
+        raw_packet,
         "Phase 2a red state: steady-state inbound capture must hold the raw datagram \
          bytes from transport.recv() (header + ciphertext + tag), not post-decryption \
          plaintext; expected {} bytes, captured {} bytes",
@@ -1107,14 +1125,10 @@ async fn udp_steady_state_recv_emits_relay_udp_message_recv_with_fields() {
 /// = the server's own outgoing seqno) at `None`. This mirrors what
 /// Zwift's real UDP server does — sauce's hello-ack matcher
 /// (`zwift.mjs:1351`) reads `packet.ackSeqno`, not `packet.seqno`.
-fn build_inbound_ack_at_tag_5(
-    recv_iv_seqno: u32,
-    ack_seqno: u32,
-    world_time_ms: i64,
-) -> Vec<u8> {
+fn build_inbound_ack_at_tag_5(recv_iv_seqno: u32, ack_seqno: u32, world_time_ms: i64) -> Vec<u8> {
     let stc = ServerToClient {
-        seqno: None,                      // tag 4 — server's own seqno (unused)
-        stc_f5: Some(ack_seqno as i32),   // tag 5 — sauce's `ackSeqno`
+        seqno: None,                    // tag 4 — server's own seqno (unused)
+        stc_f5: Some(ack_seqno as i32), // tag 5 — sauce's `ackSeqno`
         world_time: Some(world_time_ms),
         ..Default::default()
     };
@@ -1204,9 +1218,18 @@ async fn udp_recv_trace_player_count_uses_states_tag_8_not_player_states_tag_28(
     // trace must report `player_count=3`, NOT `player_count=0`.
     let stc = ServerToClient {
         states: vec![
-            PlayerState { id: Some(101), ..Default::default() },
-            PlayerState { id: Some(102), ..Default::default() },
-            PlayerState { id: Some(103), ..Default::default() },
+            PlayerState {
+                id: Some(101),
+                ..Default::default()
+            },
+            PlayerState {
+                id: Some(102),
+                ..Default::default()
+            },
+            PlayerState {
+                id: Some(103),
+                ..Default::default()
+            },
         ],
         player_states: vec![], // tag 28, deliberately empty
         seqno: None,
@@ -1254,4 +1277,134 @@ async fn udp_recv_trace_player_count_uses_states_tag_8_not_player_states_tag_28(
     // `states`) can bleed `player_count=0` events into this traced_test's
     // log scope under parallel test execution. The positive assertion
     // above is the actual contract.
+}
+
+// ---------------------------------------------------------------------------
+// Batch E — Ea red-state test (STEP-12.14 §N1/§N12/§C11)
+// ---------------------------------------------------------------------------
+
+/// Walk raw protobuf bytes and return every top-level field tag number in
+/// encounter order.
+fn proto_field_tags(mut bytes: &[u8]) -> Vec<u32> {
+    fn read_varint(b: &[u8]) -> (u64, usize) {
+        let mut v = 0u64;
+        let mut s = 0u32;
+        for (i, &byte) in b.iter().enumerate() {
+            v |= ((byte & 0x7F) as u64) << s;
+            s += 7;
+            if byte & 0x80 == 0 {
+                return (v, i + 1);
+            }
+        }
+        (v, b.len())
+    }
+    let mut tags = Vec::new();
+    while !bytes.is_empty() {
+        let (key, n) = read_varint(bytes);
+        if n == 0 {
+            break;
+        }
+        bytes = &bytes[n..];
+        tags.push((key >> 3) as u32);
+        match key & 0x7 {
+            0 => {
+                let (_, n) = read_varint(bytes);
+                if n == 0 {
+                    break;
+                }
+                bytes = &bytes[n..];
+            }
+            1 => {
+                if bytes.len() < 8 {
+                    break;
+                }
+                bytes = &bytes[8..];
+            }
+            2 => {
+                let (len, n) = read_varint(bytes);
+                if n == 0 {
+                    break;
+                }
+                let skip = n + len as usize;
+                if bytes.len() < skip {
+                    break;
+                }
+                bytes = &bytes[skip..];
+            }
+            5 => {
+                if bytes.len() < 4 {
+                    break;
+                }
+                bytes = &bytes[4..];
+            }
+            _ => break,
+        }
+    }
+    tags
+}
+
+/// Return the raw proto bytes from an outbound UDP packet (same decrypt
+/// path as `parse_outbound` but without the final proto decode step).
+fn parse_outbound_proto_bytes(bytes: &[u8]) -> Vec<u8> {
+    let parsed = decode_header(bytes).expect("header decodes");
+    let aad = &bytes[..parsed.consumed];
+    let cipher = &bytes[parsed.consumed..];
+    let conn_id = parsed.header.conn_id.unwrap_or(TEST_CONN_ID);
+    let iv_seqno = parsed.header.seqno.unwrap_or(0);
+    let iv = RelayIv {
+        device: DeviceType::Relay,
+        channel: ChannelType::UdpClient,
+        conn_id,
+        seqno: iv_seqno,
+    };
+    let plaintext = decrypt(&TEST_AES_KEY, &iv.to_bytes(), aad, cipher).expect("decrypt outbound");
+    let envelope = parse_udp_plaintext(&plaintext).expect("parse [version|proto] envelope");
+    envelope.proto_bytes.to_vec()
+}
+
+/// The UDP hello `ClientToServer` body must contain exactly four wire fields:
+/// tag 1 (`server_realm = 1`), tag 2 (`player_id` = athleteId), tag 3
+/// (`world_time = 0`), tag 4 (`seqno`).  No other tags should appear.
+///
+/// Sauce's `sendHello` constructs the packet with only those four fields.
+/// Our proto marks `state` (tag 7), `last_update` (tag 10), and
+/// `last_player_update` (tag 12) as `required`, so prost unconditionally
+/// emits them even at zero / default values.  After Eb changes them to
+/// `optional` and the hello builder omits them, this test turns green.
+/// (STEP-12.14 §N1/§N12)
+///
+/// Red state: tags 7, 10, and 12 appear in the wire bytes alongside the
+/// expected four, making the tag set larger than {1, 2, 3, 4}.
+#[tokio::test]
+async fn udp_hello_wire_bytes_match_sauce_minimal_form() {
+    let (transport, mut handle) = MockUdpTransport::new();
+    let session = test_session();
+    let config = test_config(); // max_hellos = 6; we abort after reading the first
+
+    let task = tokio::spawn(async move {
+        UdpChannel::establish(transport, &session, WorldTimer::new(), config).await
+    });
+
+    // The hello is sent before the ack-wait begins, so it arrives quickly.
+    let hello_wire = handle
+        .outbound_receiver
+        .recv()
+        .await
+        .expect("first UDP hello must be sent");
+
+    task.abort();
+    let _ = task.await;
+
+    let proto_bytes = parse_outbound_proto_bytes(&hello_wire);
+    let tags = proto_field_tags(&proto_bytes);
+    let tag_set: std::collections::BTreeSet<u32> = tags.into_iter().collect();
+    let expected: std::collections::BTreeSet<u32> = [1, 2, 3, 4].into_iter().collect();
+
+    assert_eq!(
+        tag_set, expected,
+        "Batch E §N1/§N12: UDP hello ClientToServer must encode exactly \
+         {{1=server_realm, 2=player_id, 3=world_time, 4=seqno}}; \
+         sauce's sendHello includes no other fields. \
+         Got tags: {tag_set:?}",
+    );
 }

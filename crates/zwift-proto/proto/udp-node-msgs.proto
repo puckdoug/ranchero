@@ -62,7 +62,7 @@ message WorldAttribute {
 	optional int64 rel_id = 10;        //WAT_PPI: pace partner smth; WAT_SPA: to_player_id; WAT_RH: route_id? ...
 	optional int32 importance = 11;    //not read by game??? WAT_B_ACT:1000; WAT_NM:50000; WAT_RH:5000000; ... 75000 ?
 	optional int64 wa_f12 = 12;        //not r/w by game? Not in package when testing
-	optional int32 wa_f13 = 13;        //not r/w by game? 
+	optional int32 wa_f13 = 13;        //not r/w by game?
 	optional int64 timestamp = 14;     //not written by game? (from server) looks like "The Current Epoch Unix Timestamp" in Microseconds
 	optional int32 wa_f15 = 15;        //6, not r/w by game?
 	optional int64 wa_f16 = 16;        //not r/w by game? stored as bool
@@ -171,18 +171,22 @@ message PlayerState {
 }
 
 message ClientToServer {
-	required int64 server_realm = 1; //UdpClient::sendDisconnectedClientToServer: -1. Otherwise g_CurrentServerRealmID (RealmID or 0 if not connected yet)
+	// [ranchero: Batch E patch] Changed from required to optional to match live-game wire parity.
+	optional int64 server_realm = 1; //UdpClient::sendDisconnectedClientToServer: -1. Otherwise g_CurrentServerRealmID (RealmID or 0 if not connected yet)
 	required int64 player_id = 2;
 	optional int64 world_time = 3;
 	optional uint32 seqno = 4;
 	optional uint32 cts_f5 = 5;
 	optional int64 cts_f6 = 6;
-	required PlayerState state = 7;
+	// [ranchero: Batch E patch] Changed from required to optional.
+	optional PlayerState state = 7;
 	optional bool cts_f8 = 8;
 	optional bool cts_f9 = 9;
-	required int64 last_update = 10;
+	// [ranchero: Batch E patch] Changed from required to optional.
+	optional int64 last_update = 10;
 	optional bool cts_f11 = 11;
-	required int64 last_player_update = 12;
+	// [ranchero: Batch E patch] Changed from required to optional.
+	optional int64 last_player_update = 12;
 	optional int64 larg_wa_time = 13; //TcpClient::sayHello: LargestWorldAttributeTimestamp
 	optional bool cts_f14 = 14;
 	repeated int64 subsSegments = 15; //subscribed segment ids? TcpClient::sayHello, TcpClient::sendSubscribeToSegment
