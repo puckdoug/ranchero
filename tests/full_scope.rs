@@ -83,6 +83,7 @@ fn lib_config(
     password: &str,
     log_file: PathBuf,
     pidfile: PathBuf,
+    watched_athlete_id: Option<u64>,
 ) -> ResolvedConfig {
     ResolvedConfig {
         main_email: None,
@@ -105,7 +106,7 @@ fn lib_config(
             api_base:  UNROUTABLE_ZWIFT_BASE.to_string(),
         },
         relay_enabled: true,
-        watched_athlete_id: None,
+        watched_athlete_id,
     }
 }
 
@@ -144,7 +145,9 @@ impl DaemonHarness {
              [daemon]\n\
              pidfile = \"{}\"\n\
              [keyring]\n\
-             service = \"{TEST_KEYRING_SERVICE}\"\n",
+             service = \"{TEST_KEYRING_SERVICE}\"\n\
+             [zwift]\n\
+             watched_athlete_id = 12345\n",
             log_file.display(),
             pidfile.display(),
         );
@@ -348,6 +351,7 @@ async fn relay_runtime_start_does_not_panic_with_unimplemented() {
         "not-a-real-password",
         dir.path().join("ranchero.log"),
         dir.path().join("ranchero.pid"),
+        Some(12345),
     );
 
     let join = tokio::task::spawn(async move {
@@ -397,6 +401,7 @@ async fn relay_runtime_start_with_capture_path_creates_capture_file() {
         "not-a-real-password",
         dir.path().join("ranchero.log"),
         dir.path().join("ranchero.pid"),
+        Some(12345),
     );
     let capture_for_start = capture.clone();
 
@@ -446,6 +451,7 @@ async fn relay_runtime_start_uses_zwift_endpoints_from_resolved_config() {
         "not-a-real-password",
         dir.path().join("ranchero.log"),
         dir.path().join("ranchero.pid"),
+        Some(12345),
     );
     // Confirm the helper actually pinned the override; a future
     // edit to `lib_config` that drops it would otherwise let this

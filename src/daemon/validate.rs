@@ -5,25 +5,51 @@ use zwift_relay::capture::CaptureWriter;
 
 use crate::config::ResolvedConfig;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum StartupValidationError {
     MissingEmail,
     MissingPassword,
-    DirectoryNotWritable { label: &'static str, path: PathBuf, reason: String },
-    CaptureOpenFailed { path: PathBuf, reason: String },
+    MissingWatchedAthleteId,
+    DirectoryNotWritable {
+        label: &'static str,
+        path: PathBuf,
+        reason: String,
+    },
+    CaptureOpenFailed {
+        path: PathBuf,
+        reason: String,
+    },
 }
 
 impl fmt::Display for StartupValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingEmail =>
-                write!(f, "missing main account email; set one via `ranchero configure`"),
-            Self::MissingPassword =>
-                write!(f, "missing main account password; set one via `ranchero configure`"),
-            Self::DirectoryNotWritable { label, path, reason } =>
-                write!(f, "{label} directory is not writable ({}): {reason}", path.display()),
-            Self::CaptureOpenFailed { path, reason } =>
-                write!(f, "capture file cannot be opened ({}): {reason}", path.display()),
+            Self::MissingEmail => write!(
+                f,
+                "missing main account email; set one via `ranchero configure`"
+            ),
+            Self::MissingPassword => write!(
+                f,
+                "missing main account password; set one via `ranchero configure`"
+            ),
+            Self::MissingWatchedAthleteId => write!(
+                f,
+                "missing watched athlete ID; set one via `ranchero configure`"
+            ),
+            Self::DirectoryNotWritable {
+                label,
+                path,
+                reason,
+            } => write!(
+                f,
+                "{label} directory is not writable ({}): {reason}",
+                path.display()
+            ),
+            Self::CaptureOpenFailed { path, reason } => write!(
+                f,
+                "capture file cannot be opened ({}): {reason}",
+                path.display()
+            ),
         }
     }
 }
@@ -46,7 +72,11 @@ impl fmt::Display for StartupValidationErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "startup validation failed:")?;
         for err in &self.0 {
-            write!(f, "\n  - {err}")?;
+            write!(
+                f,
+                "
+  - {err}"
+            )?;
         }
         Ok(())
     }
@@ -72,6 +102,9 @@ pub fn validate_startup(
         }
         if cfg.monitor_password.is_none() {
             errors.push(StartupValidationError::MissingPassword);
+        }
+        if cfg.watched_athlete_id.is_none() {
+            errors.push(StartupValidationError::MissingWatchedAthleteId);
         }
     }
 
@@ -149,6 +182,7 @@ mod tests {
         monitor_password: Option<&str>,
         pidfile: PathBuf,
         log_file: PathBuf,
+        watched_athlete_id: Option<u64>,
     ) -> ResolvedConfig {
         ResolvedConfig {
             main_email: main_email.map(str::to_owned),
@@ -168,7 +202,7 @@ mod tests {
                 api_base: "https://us-or-rly101.zwift.com".to_string(),
             },
             relay_enabled,
-            watched_athlete_id: None,
+            watched_athlete_id,
         }
     }
 
@@ -180,11 +214,21 @@ mod tests {
     }
 
     fn has_missing_email(errs: &StartupValidationErrors) -> bool {
-        errs.0.iter().any(|e| matches!(e, StartupValidationError::MissingEmail))
+        errs.0
+            .iter()
+            .any(|e| matches!(e, StartupValidationError::MissingEmail))
     }
 
     fn has_missing_password(errs: &StartupValidationErrors) -> bool {
-        errs.0.iter().any(|e| matches!(e, StartupValidationError::MissingPassword))
+        errs.0
+            .iter()
+            .any(|e| matches!(e, StartupValidationError::MissingPassword))
+    }
+
+    fn has_missing_watched_athlete(errs: &StartupValidationErrors) -> bool {
+        errs.0
+            .iter()
+            .any(|e| matches!(e, StartupValidationError::MissingWatchedAthleteId))
     }
 
     fn has_not_writable(errs: &StartupValidationErrors, expected_label: &str) -> bool {
@@ -197,49 +241,100 @@ mod tests {
     #[test]
     fn validate_relay_enabled_no_email_returns_missing_email() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, None, None, None, Some("secret"), pidfile, log_file);
+        let cfg = make_config(
+            true,
+            None,
+            None,
+            None,
+            Some("secret"),
+            pidfile,
+            log_file,
+            Some(12345),
+        );
         let err = validate_startup(&cfg, None).expect_err("should fail with missing email");
         assert!(has_missing_email(&err), "expected MissingEmail in errors");
-        assert!(!has_missing_password(&err), "expected no MissingPassword, password is set");
+        assert!(
+            !has_missing_password(&err),
+            "expected no MissingPassword, password is set"
+        );
     }
 
     // S-1b
     #[test]
     fn validate_relay_enabled_no_password_returns_missing_password() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, None, None, Some("monitor@example.com"), None, pidfile, log_file);
+        let cfg = make_config(
+            true,
+            None,
+            None,
+            Some("monitor@example.com"),
+            None,
+            pidfile,
+            log_file,
+            Some(12345),
+        );
         let err = validate_startup(&cfg, None).expect_err("should fail with missing password");
-        assert!(has_missing_password(&err), "expected MissingPassword in errors");
-        assert!(!has_missing_email(&err), "expected no MissingEmail, email is set");
+        assert!(
+            has_missing_password(&err),
+            "expected MissingPassword in errors"
+        );
+        assert!(
+            !has_missing_email(&err),
+            "expected no MissingEmail, email is set"
+        );
     }
 
     // S-1c
     #[test]
     fn validate_relay_enabled_both_missing_returns_both_errors() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, None, None, None, None, pidfile, log_file);
+        let cfg = make_config(true, None, None, None, None, pidfile, log_file, Some(12345));
         let err = validate_startup(&cfg, None).expect_err("should fail with both missing");
         assert!(has_missing_email(&err), "expected MissingEmail");
         assert!(has_missing_password(&err), "expected MissingPassword");
-        let email_pos = err.0.iter().position(|e| matches!(e, StartupValidationError::MissingEmail));
-        let pw_pos = err.0.iter().position(|e| matches!(e, StartupValidationError::MissingPassword));
-        assert!(email_pos < pw_pos, "MissingEmail should precede MissingPassword");
+        let email_pos = err
+            .0
+            .iter()
+            .position(|e| matches!(e, StartupValidationError::MissingEmail));
+        let pw_pos = err
+            .0
+            .iter()
+            .position(|e| matches!(e, StartupValidationError::MissingPassword));
+        assert!(
+            email_pos < pw_pos,
+            "MissingEmail should precede MissingPassword"
+        );
     }
 
     // S-1d
     #[test]
     fn validate_relay_disabled_skips_credential_check() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
-        assert!(validate_startup(&cfg, None).is_ok(), "relay disabled should skip credential check");
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
+        assert!(
+            validate_startup(&cfg, None).is_ok(),
+            "relay disabled should skip credential check"
+        );
     }
 
     // S-1e
     #[test]
     fn validate_relay_enabled_both_present_is_ok() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(true, None, None, Some("monitor@example.com"), Some("secret"), pidfile, log_file);
-        assert!(validate_startup(&cfg, None).is_ok(), "both credentials present should be ok");
+        let cfg = make_config(
+            true,
+            None,
+            None,
+            Some("monitor@example.com"),
+            Some("secret"),
+            pidfile,
+            log_file,
+            Some(12345),
+        );
+        assert!(
+            validate_startup(&cfg, None).is_ok(),
+            "both credentials present should be ok"
+        );
     }
 
     // S-2a
@@ -248,17 +343,23 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let pidfile = dir.path().join("nonexistent_subdir").join("ranchero.pid");
         let log_file = dir.path().join("ranchero.log");
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
         let err = validate_startup(&cfg, None).expect_err("missing pidfile dir should fail");
-        assert!(has_not_writable(&err, "pidfile"), "expected DirectoryNotWritable for pidfile");
+        assert!(
+            has_not_writable(&err, "pidfile"),
+            "expected DirectoryNotWritable for pidfile"
+        );
     }
 
     // S-2b
     #[test]
     fn validate_pidfile_dir_writable_is_ok() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
-        assert!(validate_startup(&cfg, None).is_ok(), "writable pidfile dir should be ok");
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
+        assert!(
+            validate_startup(&cfg, None).is_ok(),
+            "writable pidfile dir should be ok"
+        );
     }
 
     // S-3a
@@ -267,34 +368,44 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let pidfile = dir.path().join("ranchero.pid");
         let log_file = dir.path().join("nonexistent_subdir").join("ranchero.log");
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
         let err = validate_startup(&cfg, None).expect_err("missing log dir should fail");
-        assert!(has_not_writable(&err, "log file"), "expected DirectoryNotWritable for log file");
+        assert!(
+            has_not_writable(&err, "log file"),
+            "expected DirectoryNotWritable for log file"
+        );
     }
 
     // S-3b
     #[test]
     fn validate_log_dir_writable_is_ok() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
-        assert!(validate_startup(&cfg, None).is_ok(), "writable log dir should be ok");
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
+        assert!(
+            validate_startup(&cfg, None).is_ok(),
+            "writable log dir should be ok"
+        );
     }
 
     // S-4a
     #[test]
     fn validate_capture_dir_missing_returns_error() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
         let capture = PathBuf::from("/nonexistent/path/that/cannot/exist/capture.bin");
-        let err = validate_startup(&cfg, Some(&capture)).expect_err("missing capture dir should fail");
-        assert!(has_not_writable(&err, "capture file"), "expected DirectoryNotWritable for capture file");
+        let err =
+            validate_startup(&cfg, Some(&capture)).expect_err("missing capture dir should fail");
+        assert!(
+            has_not_writable(&err, "capture file"),
+            "expected DirectoryNotWritable for capture file"
+        );
     }
 
     // S-4b
     #[test]
     fn validate_capture_none_skips_check() {
         let (_dir, pidfile, log_file) = writable_paths();
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
         let result = validate_startup(&cfg, None);
         if let Err(ref errs) = result {
             assert!(
@@ -311,8 +422,11 @@ mod tests {
         let pidfile = dir.path().join("ranchero.pid");
         let log_file = dir.path().join("ranchero.log");
         let capture = dir.path().join("capture.bin");
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
-        assert!(validate_startup(&cfg, Some(&capture)).is_ok(), "writable capture dir should be ok");
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
+        assert!(
+            validate_startup(&cfg, Some(&capture)).is_ok(),
+            "writable capture dir should be ok"
+        );
     }
 
     // S-4d
@@ -322,13 +436,13 @@ mod tests {
         let pidfile = dir.path().join("ranchero.pid");
         let log_file = dir.path().join("ranchero.log");
         let capture = dir.path().join("capture.bin");
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
 
-        let artifacts: StartupArtifacts =
-            validate_startup(&cfg, Some(&capture))
-                .expect("S-4d: validate_startup must succeed with a writable capture path");
+        let artifacts: StartupArtifacts = validate_startup(&cfg, Some(&capture))
+            .expect("S-4d: validate_startup must succeed with a writable capture path");
 
-        let _file = artifacts.capture_file
+        let _file = artifacts
+            .capture_file
             .expect("S-4d: capture_file must be Some when a capture path is provided");
 
         let bytes = std::fs::read(&capture).expect("S-4d: capture file must be created on disk");
@@ -354,11 +468,10 @@ mod tests {
         let capture_dir = dir.path().join("capture.dir");
         std::fs::create_dir_all(&capture_dir).unwrap();
 
-        let cfg = make_config(false, None, None, None, None, pidfile, log_file);
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
 
-        validate_startup(&cfg, Some(&capture_dir)).expect_err(
-            "S-4e: validate_startup must fail when the capture path is a directory",
-        );
+        validate_startup(&cfg, Some(&capture_dir))
+            .expect_err("S-4e: validate_startup must fail when the capture path is a directory");
     }
 
     // S-1f: Defect 11 — relay enabled, monitor email absent → error even if main email is set.
@@ -367,15 +480,19 @@ mod tests {
         let (_dir, pidfile, log_file) = writable_paths();
         let cfg = make_config(
             true,
-            Some("main@example.com"), Some("main-pass"),
-            None, Some("monitor-pass"),
-            pidfile, log_file,
+            Some("main@example.com"),
+            Some("main-pass"),
+            None,
+            Some("monitor-pass"),
+            pidfile,
+            log_file,
+            Some(12345),
         );
-        let err = validate_startup(&cfg, None)
-            .expect_err("missing monitor email should fail validation");
+        let err =
+            validate_startup(&cfg, None).expect_err("missing monitor email should fail validation");
         assert!(
             has_missing_email(&err),
-            "Defect 11 red state: expected MissingEmail for absent monitor email; \
+            "Defect 11 red state: expected MissingEmail for absent monitor email;
              currently only checks the main account email",
         );
     }
@@ -386,15 +503,19 @@ mod tests {
         let (_dir, pidfile, log_file) = writable_paths();
         let cfg = make_config(
             true,
-            Some("main@example.com"), Some("main-pass"),
-            Some("monitor@example.com"), None,
-            pidfile, log_file,
+            Some("main@example.com"),
+            Some("main-pass"),
+            Some("monitor@example.com"),
+            None,
+            pidfile,
+            log_file,
+            Some(12345),
         );
         let err = validate_startup(&cfg, None)
             .expect_err("missing monitor password should fail validation");
         assert!(
             has_missing_password(&err),
-            "Defect 11 red state: expected MissingPassword for absent monitor password; \
+            "Defect 11 red state: expected MissingPassword for absent monitor password;
              currently only checks the main account password",
         );
     }
@@ -406,14 +527,104 @@ mod tests {
         let (_dir, pidfile, log_file) = writable_paths();
         let cfg = make_config(
             true,
-            None, None,
-            Some("monitor@example.com"), Some("monitor-pass"),
-            pidfile, log_file,
+            None,
+            None,
+            Some("monitor@example.com"),
+            Some("monitor-pass"),
+            pidfile,
+            log_file,
+            Some(12345),
         );
         assert!(
             validate_startup(&cfg, None).is_ok(),
-            "Defect 11 red state: monitor credentials alone must be sufficient; \
+            "Defect 11 red state: monitor credentials alone must be sufficient;
              currently fails because the main account credentials are absent",
+        );
+    }
+
+    // S-5a
+    #[test]
+    fn validate_relay_enabled_no_watched_athlete_id_returns_error() {
+        let (_dir, pidfile, log_file) = writable_paths();
+        let cfg = make_config(
+            true,
+            None,
+            None,
+            Some("monitor@example.com"),
+            Some("secret"),
+            pidfile,
+            log_file,
+            None,
+        );
+        let err =
+            validate_startup(&cfg, None).expect_err("should fail with missing watched athlete id");
+        assert!(
+            has_missing_watched_athlete(&err),
+            "expected MissingWatchedAthleteId in errors"
+        );
+    }
+
+    // S-5b
+    #[test]
+    fn validate_relay_disabled_skips_watched_athlete_check() {
+        let (_dir, pidfile, log_file) = writable_paths();
+        let cfg = make_config(false, None, None, None, None, pidfile, log_file, None);
+        assert!(
+            validate_startup(&cfg, None).is_ok(),
+            "relay disabled should skip watched athlete check"
+        );
+    }
+
+    // S-5c
+    #[test]
+    fn validate_relay_enabled_watched_athlete_set_is_ok() {
+        let (_dir, pidfile, log_file) = writable_paths();
+        let cfg = make_config(
+            true,
+            None,
+            None,
+            Some("monitor@example.com"),
+            Some("secret"),
+            pidfile,
+            log_file,
+            Some(12345),
+        );
+        assert!(
+            validate_startup(&cfg, None).is_ok(),
+            "all three present should be ok"
+        );
+    }
+
+    // S-5d
+    #[test]
+    fn validate_emits_all_missing_relay_fields_together() {
+        let (_dir, pidfile, log_file) = writable_paths();
+        let cfg = make_config(true, None, None, None, None, pidfile, log_file, None);
+        let err = validate_startup(&cfg, None).expect_err("should fail with all missing");
+        assert!(has_missing_email(&err), "expected MissingEmail");
+        assert!(has_missing_password(&err), "expected MissingPassword");
+        assert!(
+            has_missing_watched_athlete(&err),
+            "expected MissingWatchedAthleteId"
+        );
+
+        let email_pos = err
+            .0
+            .iter()
+            .position(|e| matches!(e, StartupValidationError::MissingEmail));
+        let pw_pos = err
+            .0
+            .iter()
+            .position(|e| matches!(e, StartupValidationError::MissingPassword));
+        let athlete_pos = err
+            .0
+            .iter()
+            .position(|e| matches!(e, StartupValidationError::MissingWatchedAthleteId));
+
+        assert!(email_pos < pw_pos, "Email should precede Password");
+        assert!(
+            pw_pos < athlete_pos,
+            "Password should precede WatchedAthleteId"
         );
     }
 }

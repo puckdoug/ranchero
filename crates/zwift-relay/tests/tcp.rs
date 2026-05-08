@@ -12,7 +12,7 @@ use std::time::Duration;
 use prost::Message;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Instant;
-use zwift_proto::{ClientToServer, PlayerState, ServerToClient};
+use zwift_proto::{ClientToServer, ServerToClient};
 use zwift_relay::{
     decode_header, decrypt, encrypt, frame_tcp, next_tcp_frame, parse_tcp_plaintext, ChannelType,
     DeviceType, Header, HeaderFlags, RelayIv, RelaySession, TcpChannel, TcpChannelConfig,
