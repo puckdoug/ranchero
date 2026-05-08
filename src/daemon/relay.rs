@@ -3305,6 +3305,79 @@ mod tests {
         );
     }
 
+    // STEP-12.15 Phase 4a — Tests for F4: gate heartbeat on `suspended`.
+    // ----------------------------------------------------------------
+    // These two tests reference the NOT-YET-EXISTING 6-argument form of
+    // `HeartbeatScheduler::new` (the `suspended: Arc<AtomicBool>` last
+    // arg). They will fail to compile until Phase 4b adds that parameter.
+
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_skips_send_when_suspended_flag_is_set() {
+        let (sink, sent) = StubHeartbeatSink::new();
+        let suspended = Arc::new(AtomicBool::new(true));
+        let scheduler = HeartbeatScheduler::new(
+            sink,
+            zwift_relay::WorldTimer::new(),
+            12345,
+            99,
+            10,
+            Arc::clone(&suspended),
+        )
+        .with_interval(std::time::Duration::from_secs(1));
+
+        // Advance past two full intervals; both ticks are gated by the flag.
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(2_500),
+            scheduler.run(),
+        )
+        .await;
+
+        let count = sent.lock().unwrap().len();
+        assert_eq!(
+            count, 0,
+            "STEP-12.15 F4: heartbeat must send nothing when suspended flag is set; \
+             got {count} sends",
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_resumes_send_when_suspended_clears() {
+        let (sink, sent) = StubHeartbeatSink::new();
+        let suspended = Arc::new(AtomicBool::new(true));
+        let scheduler = HeartbeatScheduler::new(
+            sink,
+            zwift_relay::WorldTimer::new(),
+            12345,
+            99,
+            10,
+            Arc::clone(&suspended),
+        )
+        .with_interval(std::time::Duration::from_secs(1));
+
+        let handle = tokio::spawn(async move { scheduler.run().await });
+
+        // Advance past the first interval while suspended — no send.
+        tokio::time::advance(std::time::Duration::from_millis(1_500)).await;
+        tokio::task::yield_now().await;
+
+        // Clear the flag before the second tick.
+        suspended.store(false, Ordering::SeqCst);
+
+        // Advance past the second interval — one send expected.
+        tokio::time::advance(std::time::Duration::from_millis(1_500)).await;
+        tokio::task::yield_now().await;
+
+        handle.abort();
+        let _ = handle.await;
+
+        let count = sent.lock().unwrap().len();
+        assert_eq!(
+            count, 1,
+            "STEP-12.15 F4: heartbeat must resume sending once the suspended flag \
+             is cleared; expected 1 send, got {count}",
+        );
+    }
+
     #[tokio::test]
     #[tracing_test::traced_test]
     async fn udp_channel_subscriber_does_not_double_log_inbound() {

@@ -320,7 +320,7 @@ None of these depend on each other; they can land in any order.
 
 ### Phase 4 — F4: gate heartbeat on `suspended`
 
-- [ ] **4a** — Tests for F4 in `src/daemon/relay.rs`'s `tests`
+- [x] **4a** — Tests for F4 in `src/daemon/relay.rs`'s `tests`
       module (alongside the existing `HeartbeatScheduler` tests
       around `src/daemon/relay.rs:3180`):
   - `heartbeat_skips_send_when_suspended_flag_is_set` — set
