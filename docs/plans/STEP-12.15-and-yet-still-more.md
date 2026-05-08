@@ -330,18 +330,27 @@ None of these depend on each other; they can land in any order.
   - `heartbeat_resumes_send_when_suspended_clears` — flag
     set, then cleared between ticks; assert one send after
     the clear.
-- [ ] **4b** — Implementation for F4:
-  - Extend `HeartbeatScheduler` (`src/daemon/relay.rs:658-666`)
-    with a `suspended: Arc<AtomicBool>` field; update
-    `HeartbeatScheduler::new` (`:671-687`) to take it as the
-    last argument.
-  - In `HeartbeatScheduler::run`'s tick loop
-    (`:735-769`), add `if self.suspended.load(…) { continue; }`
-    before `send_one`. The trace event should still fire so
-    the operator can see the gate engaging.
-  - Update the call site at `src/daemon/relay.rs:1756-1762` to
-    pass `Arc::clone(&inner.suspended)` (or wrap the field in
-    its own `Arc` if the existing layout makes that awkward).
+- [x] **4b** — Implementation for F4:
+  - Changed `RuntimeInner.suspended` from `AtomicBool` to
+    `Arc<AtomicBool>` so the Arc can be cheaply shared with
+    `HeartbeatScheduler`. All existing callers that do
+    `.swap()`/`.load()` on the field continue to work via
+    Deref.
+  - Extended `HeartbeatScheduler` with a
+    `suspended: Arc<AtomicBool>` field; updated `new` to take
+    it as the 6th argument.
+  - In `HeartbeatScheduler::run`'s tick loop, added a
+    `if self.suspended.load(Relaxed) { continue; }` gate
+    before `send_one`. A `relay.heartbeat.tick_suspended`
+    trace event fires on each skipped tick so operators can
+    observe the gate engaging.
+  - Updated the call site (`start_all_inner` step 10) to
+    pre-clone `Arc::clone(&inner.suspended)` outside the
+    closure and pass it in.
+  - Updated the 3 existing `HeartbeatScheduler::new` calls
+    in `src/daemon/relay.rs` tests and the 2 in
+    `tests/relay_runtime.rs` to pass
+    `Arc::new(AtomicBool::new(false))`.
 
 ### Phase 5 — F5: implement `logout` and `leave` HTTP calls
 

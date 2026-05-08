@@ -1405,8 +1405,15 @@ async fn heartbeat_tick_emits_debug_event_per_interval() {
     let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let sink = CountingHeartbeatSink { count: Arc::clone(&count) };
     let scheduler = Arc::new(
-        HeartbeatScheduler::new(sink, WorldTimer::new(), 12345, 99, 10)
-            .with_interval(std::time::Duration::from_millis(30)),
+        HeartbeatScheduler::new(
+            sink,
+            WorldTimer::new(),
+            12345,
+            99,
+            10,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .with_interval(std::time::Duration::from_millis(30)),
     );
     let s2 = Arc::clone(&scheduler);
     let handle = tokio::spawn(async move {
@@ -1503,8 +1510,15 @@ async fn start_all_inner_writes_udp_outbound_to_capture_file() {
 #[tracing_test::traced_test]
 async fn heartbeat_send_failure_emits_warn() {
     let scheduler = Arc::new(
-        HeartbeatScheduler::new(FailingHeartbeatSink, WorldTimer::new(), 12345, 99, 10)
-            .with_interval(std::time::Duration::from_millis(30)),
+        HeartbeatScheduler::new(
+            FailingHeartbeatSink,
+            WorldTimer::new(),
+            12345,
+            99,
+            10,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .with_interval(std::time::Duration::from_millis(30)),
     );
     let s2 = Arc::clone(&scheduler);
     let handle = tokio::spawn(async move {

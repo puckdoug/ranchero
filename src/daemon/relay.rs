@@ -481,8 +481,10 @@ struct RuntimeInner {
     /// inbound self-state for >15 s. The state-refresher sets this
     /// when it detects the idle threshold has been crossed; the
     /// recv-loop clears it on the next inbound self-state for the
-    /// watched athlete. (STEP-12.14 §L2)
-    suspended: AtomicBool,
+    /// watched athlete. Shared with `HeartbeatScheduler` so the
+    /// scheduler can gate ticks on this flag. (STEP-12.14 §L2 /
+    /// STEP-12.15 §F4)
+    suspended: Arc<AtomicBool>,
     /// Virtual-clock instant of the most recent inbound self-state
     /// (an STC `state` whose `id` matches the watched athlete). Read
     /// by the state-refresher to compute idle age. Initialised at
@@ -690,17 +692,21 @@ pub struct HeartbeatScheduler<T: HeartbeatSink> {
     athlete_id: i64,
     watching_rider_id: i64,
     course_id: i32,
+    suspended: Arc<AtomicBool>,
 }
 
 impl<T: HeartbeatSink> HeartbeatScheduler<T> {
     /// Build a scheduler. The default interval is 1 Hz; tests
-    /// may override with `with_interval`.
+    /// may override with `with_interval`. `suspended` is the
+    /// shared flag from `RuntimeInner`; ticks are skipped while
+    /// it is true. (STEP-12.15 §F4)
     pub fn new(
         sink: T,
         world_timer: zwift_relay::WorldTimer,
         athlete_id: i64,
         watching_rider_id: i64,
         course_id: i32,
+        suspended: Arc<AtomicBool>,
     ) -> Self {
         Self {
             sink,
@@ -710,6 +716,7 @@ impl<T: HeartbeatSink> HeartbeatScheduler<T> {
             athlete_id,
             watching_rider_id,
             course_id,
+            suspended,
         }
     }
 
@@ -769,6 +776,17 @@ impl<T: HeartbeatSink> HeartbeatScheduler<T> {
         ticker.tick().await;
         loop {
             ticker.tick().await;
+            // Gate on the suspend flag; emit a trace event so
+            // operators can observe the scheduler being gated.
+            // (STEP-12.14 §Cb / STEP-12.15 §F4)
+            if self.suspended.load(Ordering::Relaxed) {
+                tracing::trace!(
+                    target: "ranchero::relay",
+                    interval_ms,
+                    "relay.heartbeat.tick_suspended",
+                );
+                continue;
+            }
             match self.send_one().await {
                 Ok(()) => {
                     tracing::debug!(
@@ -1541,7 +1559,7 @@ impl RelayRuntime {
             watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
             last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
-            suspended: AtomicBool::new(false),
+            suspended: Arc::new(AtomicBool::new(false)),
             last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
         });
@@ -1915,6 +1933,7 @@ impl RelayRuntime {
         let udp_channel = Arc::new(udp_channel);
         let heartbeat_abort = {
             let udp_for_heartbeat = Arc::clone(&udp_channel);
+            let heartbeat_suspended = Arc::clone(&inner.suspended);
             let handle = tokio::spawn(async move {
                 let sink = UdpHeartbeatSink(udp_for_heartbeat);
                 let scheduler = HeartbeatScheduler::new(
@@ -1923,6 +1942,7 @@ impl RelayRuntime {
                     athlete_id,
                     watched_id_i64,
                     course_id,
+                    heartbeat_suspended,
                 );
                 scheduler.run().await;
             });
@@ -2129,7 +2149,7 @@ impl RelayRuntime {
             watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
             last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
-            suspended: AtomicBool::new(false),
+            suspended: Arc::new(AtomicBool::new(false)),
             last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
         });
@@ -3247,8 +3267,14 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn heartbeat_emits_at_one_hz() {
         let (sink, sent) = StubHeartbeatSink::new();
-        let scheduler =
-            HeartbeatScheduler::new(sink, zwift_relay::WorldTimer::new(), 12345, 99, 10);
+        let scheduler = HeartbeatScheduler::new(
+            sink,
+            zwift_relay::WorldTimer::new(),
+            12345,
+            99,
+            10,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         let _ =
             tokio::time::timeout(std::time::Duration::from_millis(5_500), scheduler.run()).await;
@@ -3263,8 +3289,14 @@ mod tests {
     #[tokio::test]
     async fn heartbeat_increments_seqno_per_send() {
         let (sink, sent) = StubHeartbeatSink::new();
-        let scheduler =
-            HeartbeatScheduler::new(sink, zwift_relay::WorldTimer::new(), 12345, 99, 10);
+        let scheduler = HeartbeatScheduler::new(
+            sink,
+            zwift_relay::WorldTimer::new(),
+            12345,
+            99,
+            10,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         for _ in 0..3 {
             scheduler.send_one().await.expect("send_one");
@@ -3282,7 +3314,14 @@ mod tests {
     async fn heartbeat_world_time_tracks_world_timer() {
         let (sink, sent) = StubHeartbeatSink::new();
         let world_timer = zwift_relay::WorldTimer::new();
-        let scheduler = HeartbeatScheduler::new(sink, world_timer.clone(), 12345, 99, 10);
+        let scheduler = HeartbeatScheduler::new(
+            sink,
+            world_timer.clone(),
+            12345,
+            99,
+            10,
+            Arc::new(AtomicBool::new(false)),
+        );
 
         scheduler.send_one().await.expect("send_one #1");
         let first_time = sent.lock().unwrap().last().unwrap().world_time;
