@@ -798,6 +798,62 @@ impl ZwiftAuth {
             body: retry_bytes.to_vec(),
         })
     }
+    /// POST `/api/users/logout` to close the server-side session.
+    /// Best-effort: the caller should log and discard `Err` rather than
+    /// propagating it. (STEP-12.15 §F5 / STEP-12.14 §N9)
+    pub async fn logout(&self) -> Result<()> {
+        self.post_empty("/api/users/logout").await
+    }
+
+    /// POST `/relay/worlds/1/leave` to deregister from the relay world.
+    /// Best-effort: the caller should log and discard `Err` rather than
+    /// propagating it. (STEP-12.15 §F5 / STEP-12.14 §N9)
+    pub async fn leave(&self) -> Result<()> {
+        self.post_empty("/relay/worlds/1/leave").await
+    }
+
+    /// Issue a bodyless POST to `{api_base}{urn}` with the standard
+    /// `Authorization`, `Source`, `Platform`, and `User-Agent` headers.
+    /// Returns `Err(Error::Status { … })` on any non-success response.
+    async fn post_empty(&self, urn: &str) -> Result<()> {
+        let url = format!("{}{}", self.inner.config.api_base, urn);
+        let bearer = self.bearer().await?;
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "POST",
+            urn,
+            body_size = 0,
+            "relay.auth.http.request",
+        );
+        let resp = self
+            .inner
+            .http
+            .post(&url)
+            .bearer_auth(&bearer)
+            .header("Source", &self.inner.config.source)
+            .header("Platform", &self.inner.config.platform)
+            .header("User-Agent", &self.inner.config.user_agent)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body_bytes = resp.bytes().await?;
+        tracing::debug!(
+            target: "ranchero::relay",
+            method = "POST",
+            urn,
+            status = status.as_u16(),
+            body_size = body_bytes.len(),
+            "relay.auth.http.response",
+        );
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&body_bytes).into_owned(),
+            })
+        }
+    }
 }
 
 impl Inner {

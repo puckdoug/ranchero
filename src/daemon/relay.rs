@@ -665,6 +665,11 @@ pub struct RelayRuntime {
     /// `start_all_inner`. `None` on the older start paths.
     /// (STEP-12.14 §L1 / §L2)
     state_refresher_abort: Option<tokio::task::AbortHandle>,
+    /// Auth handle retained for the best-effort `logout()` + `leave()`
+    /// calls issued by `shutdown()`. Only the production `start_with_writer`
+    /// path sets this; test paths that use stub auth leave it `None`.
+    /// (STEP-12.15 §F5 / STEP-12.14 §N9)
+    shutdown_auth: Option<Arc<zwift_api::ZwiftAuth>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,17 +1274,21 @@ impl RelayRuntime {
             tracing::info!(target: "ranchero::relay", "relay.capture.opened");
         }
 
-        Self::start_with_retry(
+        let mut runtime = Self::start_with_retry(
             cfg,
             None,
             capture_writer,
             Arc::new(DefaultAuthLogin::new(auth.clone())),
-            Arc::new(DefaultSessionSupervisorFactory::new(auth, session_config)),
+            Arc::new(DefaultSessionSupervisorFactory::new(auth.clone(), session_config)),
             Arc::new(DefaultTcpTransportFactory),
             Arc::new(DefaultUdpTransportFactory),
             game_events_tx,
         )
-        .await
+        .await?;
+        // Retain the auth handle so shutdown() can issue the best-effort
+        // logout + leave HTTP calls. (STEP-12.15 §F5 / STEP-12.14 §N9)
+        runtime.shutdown_auth = Some(auth);
+        Ok(runtime)
     }
 
     /// The dependency-injected entry point used by tests. Performs
@@ -2016,6 +2025,7 @@ impl RelayRuntime {
             heartbeat_abort: Some(heartbeat_abort),
             supervisor_event_abort: Some(supervisor_event_abort),
             state_refresher_abort: Some(state_refresher_abort),
+            shutdown_auth: None,
         })
     }
 
@@ -2181,6 +2191,7 @@ impl RelayRuntime {
             heartbeat_abort: None,
             supervisor_event_abort: None,
             state_refresher_abort: None,
+            shutdown_auth: None,
         })
     }
 
@@ -2281,11 +2292,35 @@ impl RelayRuntime {
     /// (STEP-12.14 §N9), then signals the recv-loop and aborts background
     /// tasks. Idempotent.
     pub fn shutdown(&self) {
-        // N9: best-effort logout + leave. The actual HTTP calls are added
-        // once `AuthLogin` gains `logout()` / `leave()` methods; for now the
-        // trace events mark the intent so operators see clean-shutdown probes.
+        // N9 / STEP-12.15 §F5: emit intent trace events so operators and tests
+        // can observe the clean-shutdown sequence unconditionally. On the
+        // production path (`start_with_writer`), also spawn fire-and-forget
+        // tasks to issue the actual HTTP calls; failures log a warning but
+        // do not affect the rest of the shutdown sequence.
         tracing::info!(target: "ranchero::relay", "relay.runtime.logout");
         tracing::info!(target: "ranchero::relay", "relay.runtime.leave");
+        if let Some(auth) = &self.shutdown_auth {
+            let auth_for_logout = Arc::clone(auth);
+            tokio::spawn(async move {
+                if let Err(e) = auth_for_logout.logout().await {
+                    tracing::warn!(
+                        target: "ranchero::relay",
+                        error = %e,
+                        "relay.runtime.logout_failed",
+                    );
+                }
+            });
+            let auth_for_leave = Arc::clone(auth);
+            tokio::spawn(async move {
+                if let Err(e) = auth_for_leave.leave().await {
+                    tracing::warn!(
+                        target: "ranchero::relay",
+                        error = %e,
+                        "relay.runtime.leave_failed",
+                    );
+                }
+            });
+        }
         self.shutdown.notify_one();
         if let Some(h) = &self.heartbeat_abort {
             h.abort();

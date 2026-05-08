@@ -362,15 +362,24 @@ None of these depend on each other; they can land in any order.
     against `/relay/worlds/1/leave`.
   - `logout_failure_does_not_panic` — server returns 500;
     the call returns `Err` cleanly.
-- [ ] **5b** — Implementation for F5:
-  - Add `ZwiftAuth::logout()` and `ZwiftAuth::leave()` in
-    `crates/zwift-api/src/lib.rs` mirroring `do_refresh`'s
-    header set (`:840-870` region).
-  - In `RelayRuntime::shutdown`
-    (`src/daemon/relay.rs:2196-2212`), invoke both via
-    best-effort `tokio::spawn` calls before `notify_one`.
-    Failures log a `relay.runtime.logout_failed` /
-    `relay.runtime.leave_failed` warning and continue.
+- [x] **5b** — Implementation for F5:
+  - Added `ZwiftAuth::logout()`, `ZwiftAuth::leave()`, and a
+    private `ZwiftAuth::post_empty()` helper in
+    `crates/zwift-api/src/lib.rs`. `post_empty` sends a bodyless
+    POST with the standard Bearer/Source/Platform/User-Agent
+    header set and returns `Err` on non-2xx status.
+  - Added `RelayRuntime::shutdown_auth: Option<Arc<ZwiftAuth>>`
+    field; `start_with_writer` clones the auth into it after the
+    retry loop resolves.
+  - Refactored `RelayRuntime::shutdown`
+    (`src/daemon/relay.rs`): `relay.runtime.logout` and
+    `relay.runtime.leave` trace events fire unconditionally (intent
+    markers for the test path and production alike); `logout()` /
+    `leave()` HTTP calls are spawned as fire-and-forget
+    `tokio::spawn` tasks only when `shutdown_auth` is set
+    (production path). Failures emit
+    `relay.runtime.logout_failed` / `relay.runtime.leave_failed`
+    warnings and do not affect the rest of shutdown.
 
 ## 4. Out of scope
 
