@@ -354,7 +354,7 @@ None of these depend on each other; they can land in any order.
 
 ### Phase 5 — F5: implement `logout` and `leave` HTTP calls
 
-- [ ] **5a** — Tests for F5 in `crates/zwift-api/tests/auth.rs`:
+- [x] **5a** — Tests for F5 in `crates/zwift-api/tests/auth.rs`:
   - `logout_posts_to_users_logout_with_bearer` — wiremock
     expects POST `/api/users/logout` with `Authorization`,
     `Source`, `Platform`, `User-Agent`.

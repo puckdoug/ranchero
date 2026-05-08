@@ -1429,3 +1429,111 @@ async fn get_player_state_returns_none_on_404() {
          athlete not in a game is a normal condition, not an error",
     );
 }
+
+// --- STEP-12.15 Phase 5a — logout() and leave() -------------------
+//
+// These three tests reference the NOT-YET-EXISTING `ZwiftAuth::logout`
+// and `ZwiftAuth::leave` methods. They will fail to compile until
+// Phase 5b adds those methods.
+
+#[tokio::test]
+async fn logout_posts_to_users_logout_with_bearer() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/users/logout"))
+        .and(header("authorization", "Bearer ATOK"))
+        .and(header("source", DEFAULT_SOURCE))
+        .and(header("platform", "OSX"))
+        .and(header("user-agent", DEFAULT_USER_AGENT))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+
+    auth.logout()
+        .await
+        .expect("STEP-12.15 F5: logout must POST to /api/users/logout and return Ok");
+}
+
+#[tokio::test]
+async fn leave_posts_to_relay_worlds_1_leave_with_bearer() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/relay/worlds/1/leave"))
+        .and(header("authorization", "Bearer ATOK"))
+        .and(header("source", DEFAULT_SOURCE))
+        .and(header("platform", "OSX"))
+        .and(header("user-agent", DEFAULT_USER_AGENT))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+
+    auth.leave()
+        .await
+        .expect("STEP-12.15 F5: leave must POST to /relay/worlds/1/leave and return Ok");
+}
+
+#[tokio::test]
+async fn logout_failure_does_not_panic() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/users/logout"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    auth.login("alice", "hunter2").await.expect("login");
+
+    let result = auth.logout().await;
+    assert!(
+        result.is_err(),
+        "STEP-12.15 F5: logout must return Err on a 500 response, not panic",
+    );
+}
