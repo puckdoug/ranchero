@@ -3606,3 +3606,240 @@ async fn tcp_hello_wire_bytes_omit_realm() {
          sauce's TcpClient::sayHello carries no realm. Tags present: {tags:?}",
     );
 }
+
+// ==========================================================================
+// Phase 3a — Tests for F3
+// ==========================================================================
+
+static MOCK_SERVERS_SPAWNED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+fn ensure_mock_tcp_and_udp() {
+    MOCK_SERVERS_SPAWNED.get_or_init(|| {
+        tokio::spawn(async move {
+            let _udp = tokio::net::UdpSocket::bind("127.0.0.1:3024").await.ok();
+            if let Ok(tcp) = tokio::net::TcpListener::bind("127.0.0.1:3025").await {
+                loop {
+                    if let Ok((mut stream, _)) = tcp.accept().await {
+                        use tokio::io::AsyncWriteExt;
+                        let _ = stream.write_all(&default_udp_config_push()).await;
+                    }
+                }
+            }
+        });
+    });
+}
+
+fn mock_login_response(relay_id: u32) -> Vec<u8> {
+    use prost::Message;
+    let resp = zwift_proto::LoginResponse {
+        session_state: "ok".to_string(),
+        info: zwift_proto::PerSessionInfo {
+            relay_url: "https://us-or-rly101.zwift.com".to_string(),
+            apis: None,
+            time: Some(1_700_000_000_000),
+            nodes: Some(zwift_proto::TcpConfig {
+                nodes: vec![zwift_proto::TcpAddress {
+                    ip: Some("127.0.0.1".to_string()),
+                    port: Some(3025),
+                    lb_realm: Some(0),
+                    lb_course: Some(0),
+                }],
+            }),
+            ..Default::default()
+        },
+        relay_session_id: Some(relay_id),
+        expiration: Some(0), // forces 3-second refresh
+        ..Default::default()
+    };
+    resp.encode_to_vec()
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn start_with_writer_subscribes_to_real_supervisor_events() {
+    use wiremock::{MockServer, Mock, ResponseTemplate};
+    use wiremock::matchers::{method, path};
+
+    let server = MockServer::start().await;
+
+    // Auth token
+    Mock::given(method("POST"))
+        .and(path(zwift_api::TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "ATOK",
+            "refresh_token": "RTOK",
+            "expires_in": 600,
+            "refresh_expires_in": 2400,
+            "token_type": "Bearer",
+        })))
+        .mount(&server)
+        .await;
+
+    // Profile
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 12345})))
+        .mount(&server)
+        .await;
+
+    // Course gate check
+    use prost::Message;
+    Mock::given(method("GET"))
+        .and(path("/relay/worlds/1/players/54321"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(
+            zwift_proto::PlayerState {
+                world: Some(1),
+                ..Default::default()
+            }.encode_to_vec()
+        ))
+        .mount(&server)
+        .await;
+
+    // Session Login
+    let login_resp = mock_login_response(42);
+    Mock::given(method("POST"))
+        .and(path(zwift_relay::LOGIN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(login_resp))
+        .mount(&server)
+        .await;
+
+    // Refresh
+    let refresh_resp = zwift_proto::RelaySessionRefreshResponse {
+        relay_session_id: 42,
+        expiration: 0,
+    }.encode_to_vec();
+
+    Mock::given(method("POST"))
+        .and(path(zwift_relay::SESSION_REFRESH_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(refresh_resp))
+        .mount(&server)
+        .await;
+
+    ensure_mock_tcp_and_udp();
+    let mut cfg = make_config("monitor@example.com", "pass");
+    cfg.zwift_endpoints.auth_base = server.uri();
+    cfg.zwift_endpoints.api_base = server.uri();
+
+    let task = tokio::spawn(async move {
+        // TCP will fail because nothing is listening on 127.0.0.1:3025.
+        // It enters the L5 retry loop, allowing the supervisor to run in the background.
+        let _ = RelayRuntime::start_with_writer(&cfg, None).await;
+    });
+
+    // Wait 4.5 seconds for the supervisor to settle and refresh.
+    tokio::time::sleep(std::time::Duration::from_millis(4500)).await;
+    task.abort();
+    let _ = task.await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.session.refreshed",
+        ),
+        "STEP-12.15 F3: start_with_writer must subscribe to real supervisor events; \
+         expected relay.session.refreshed in trace after synthetic refresh"
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn start_with_writer_records_fresh_manifest_on_supervisor_relogin() {
+    use wiremock::{MockServer, Mock, ResponseTemplate};
+    use wiremock::matchers::{method, path};
+
+    let server = MockServer::start().await;
+
+    // Auth token
+    Mock::given(method("POST"))
+        .and(path(zwift_api::TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "ATOK",
+            "refresh_token": "RTOK",
+            "expires_in": 600,
+            "refresh_expires_in": 2400,
+            "token_type": "Bearer",
+        })))
+        .mount(&server)
+        .await;
+
+    // Profile
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 12345})))
+        .mount(&server)
+        .await;
+
+    // Course gate check
+    use prost::Message;
+    Mock::given(method("GET"))
+        .and(path("/relay/worlds/1/players/54321"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(
+            zwift_proto::PlayerState {
+                world: Some(1),
+                ..Default::default()
+            }.encode_to_vec()
+        ))
+        .mount(&server)
+        .await;
+
+    // Initial Login
+    let login_resp_1 = mock_login_response(42);
+
+    // Fallback Login
+    let login_resp_2 = mock_login_response(99);
+
+    // Mock mapping for Login
+    Mock::given(method("POST"))
+        .and(path(zwift_relay::LOGIN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(login_resp_1))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path(zwift_relay::LOGIN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(login_resp_2))
+        .mount(&server)
+        .await;
+
+    // Refresh fails
+    Mock::given(method("POST"))
+        .and(path(zwift_relay::SESSION_REFRESH_PATH))
+        .respond_with(ResponseTemplate::new(500).set_body_string("nope"))
+        .mount(&server)
+        .await;
+
+    ensure_mock_tcp_and_udp();
+    let mut cfg = make_config("monitor@example.com", "pass");
+    cfg.zwift_endpoints.auth_base = server.uri();
+    cfg.zwift_endpoints.api_base = server.uri();
+
+    let path = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = zwift_relay::capture::CaptureWriter::open(path.path())
+        .await
+        .expect("open writer");
+    let writer = std::sync::Arc::new(writer);
+
+    let task = tokio::spawn(async move {
+        let _ = RelayRuntime::start_with_writer(&cfg, Some(writer)).await;
+    });
+
+    // Wait 4.5 seconds for refresh to fail and trigger re-login.
+    tokio::time::sleep(std::time::Duration::from_millis(4500)).await;
+    task.abort();
+    let _ = task.await;
+
+    let mut reader = zwift_relay::capture::CaptureReader::open(path.path()).expect("reader");
+    let mut manifest_count = 0;
+    while let Some(item) = reader.next_item() {
+        if matches!(item.expect("decode"), zwift_relay::capture::CaptureItem::Manifest(_)) {
+            manifest_count += 1;
+        }
+    }
+
+    assert!(
+        manifest_count >= 2,
+        "STEP-12.15 F3: a SessionEvent::LoggedIn with a fresh AES key must write \
+         a new SessionManifest to the capture file. Expected >= 2 manifests, got {manifest_count}"
+    );
+}

@@ -2238,6 +2238,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tracing-test",
+ "wiremock",
  "zwift-api",
  "zwift-proto",
  "zwift-relay",

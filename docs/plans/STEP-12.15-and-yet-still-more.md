@@ -282,7 +282,7 @@ None of these depend on each other; they can land in any order.
 
 ### Phase 3 — F3: wire real `RelaySessionSupervisor` into production path
 
-- [ ] **3a** — Tests for F3 in `tests/relay_runtime.rs`:
+- [x] **3a** — Tests for F3 in `tests/relay_runtime.rs`:
   - `start_with_writer_subscribes_to_real_supervisor_events` —
     drive a `RelaySessionSupervisor` stub-equivalent (or the
     real supervisor against a wiremock token endpoint) and
