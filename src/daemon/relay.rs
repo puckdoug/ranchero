@@ -131,6 +131,33 @@ pub fn next_udp_conn_id() -> u16 {
     (UDP_CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed) % 0xffff) as u16
 }
 
+/// RAII guard that aborts a tokio task when dropped, unless explicitly
+/// `release()`d. Used in `start_all_inner` to ensure that early-return
+/// `?` paths between the supervisor-event handler spawn and the final
+/// `Self` construction do not leak the spawned task.
+struct AbortOnDrop {
+    handle: Option<tokio::task::AbortHandle>,
+}
+
+impl AbortOnDrop {
+    fn new(handle: tokio::task::AbortHandle) -> Self {
+        Self { handle: Some(handle) }
+    }
+
+    /// Take ownership of the abort handle without aborting the task.
+    fn release(mut self) -> tokio::task::AbortHandle {
+        self.handle.take().expect("released only once")
+    }
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if let Some(h) = self.handle.take() {
+            h.abort();
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum RelayRuntimeError {
     #[error("missing monitor account email; configure via `ranchero configure`")]
@@ -1534,12 +1561,143 @@ impl RelayRuntime {
                 None
             };
 
-        // 5. Pick the first TCP server and connect.
+        // 4.7. Pre-compute per-session state used by both the TCP
+        //     channel config and the supervisor-event handler. The TCP
+        //     `conn_id` is u16 on the wire but the capture-format
+        //     manifest field is u32, so widen once here and reuse the
+        //     widened value. (STEP-12.15 §F3)
         let server = &session.tcp_servers[0];
-        // Clone the chosen IP so the supervisor-event handler (step 11)
-        // can announce it when a re-login arrives with a shuffled server list.
-        // (STEP-12.14 §L4)
+        // Clone the chosen IP so the supervisor-event handler can
+        // announce it when a re-login arrives with a shuffled server
+        // list. (STEP-12.14 §L4)
         let chosen_tcp_ip = server.ip.clone();
+        let conn_id_u16 = next_tcp_conn_id();
+        let session_conn_id: u32 = conn_id_u16.into();
+        let session_aes_key = session.aes_key;
+
+        // Write the per-session manifest before any frame records so a
+        // `--capture` reader sees `Manifest -> Frame -> Frame -> …`
+        // (STEP-12.12 §6b).
+        if let Some(writer) = capture_writer.as_ref() {
+            writer.record_session_manifest(manifest_from_session(&session, session_conn_id));
+        }
+
+        // 4.8. Spawn the supervisor-event handler now, before the TCP
+        //     connect, so it drains LoggedIn / Refreshed events even
+        //     when subsequent steps (TCP connect, udp_config wait)
+        //     hang or take a while. The receiver was subscribed at
+        //     step 3 above so no events are missed. The abort handle
+        //     is wrapped in `AbortOnDrop` so any `?` early-return
+        //     between here and the `Self` construction aborts the
+        //     handler. (STEP-12.15 §F3)
+        let pinned_ip_for_supervisor = chosen_tcp_ip.clone();
+        let supervisor_event_guard = {
+            let mut rx = supervisor_events;
+            let writer_for_supervisor = capture_writer.clone();
+            let handle = tokio::spawn(async move {
+                // Track the current AES key so subsequent Refreshed
+                // events after a re-login persist a manifest with the
+                // up-to-date key, not the initial one.
+                let mut current_aes_key = session_aes_key;
+                loop {
+                    match rx.recv().await {
+                        Ok(zwift_relay::SessionEvent::LoggedIn(new_session)) => {
+                            // Under N14 (approach A), a re-login with a new AES key
+                            // means channels need to be recreated. Emit the
+                            // appropriate trace events so operators and tests can
+                            // observe the transition. (STEP-12.14 §N14 / §L4)
+                            if new_session.aes_key != current_aes_key {
+                                tracing::info!(
+                                    target: "ranchero::relay",
+                                    "relay.runtime.channels_recreated",
+                                );
+                                if new_session
+                                    .tcp_servers
+                                    .iter()
+                                    .any(|s| s.ip == pinned_ip_for_supervisor)
+                                {
+                                    tracing::info!(
+                                        target: "ranchero::relay",
+                                        ip = %pinned_ip_for_supervisor,
+                                        "relay.runtime.tcp_server_pinned",
+                                    );
+                                }
+                                current_aes_key = new_session.aes_key;
+                            }
+                            tracing::info!(
+                                target: "ranchero::relay",
+                                "relay.session.logged_in",
+                            );
+                            // Re-login rotates the AES key; persist the
+                            // new manifest so the capture stays decryptable.
+                            if let Some(writer) = writer_for_supervisor.as_ref() {
+                                writer.record_session_manifest(manifest_from_session(
+                                    &new_session,
+                                    session_conn_id,
+                                ));
+                            }
+                        }
+                        Ok(zwift_relay::SessionEvent::Refreshed {
+                            relay_id,
+                            new_expires_at,
+                        }) => {
+                            tracing::info!(
+                                target: "ranchero::relay",
+                                relay_id,
+                                "relay.session.refreshed",
+                            );
+                            // Refresh keeps the AES key but extends the
+                            // expiration; persist a fresh manifest so the
+                            // reader sees the current relay_id and ttl.
+                            if let Some(writer) = writer_for_supervisor.as_ref() {
+                                let now_unix = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap_or_default();
+                                let remaining = new_expires_at
+                                    .saturating_duration_since(tokio::time::Instant::now());
+                                writer.record_session_manifest(
+                                    zwift_relay::capture::SessionManifest {
+                                        aes_key: current_aes_key,
+                                        device_type: 1,
+                                        channel_type: 0,
+                                        send_iv_seqno_tcp: 0,
+                                        recv_iv_seqno_tcp: 0,
+                                        send_iv_seqno_udp: 0,
+                                        recv_iv_seqno_udp: 0,
+                                        relay_id,
+                                        conn_id: session_conn_id,
+                                        expires_at_unix_ns: (now_unix + remaining).as_nanos()
+                                            as u64,
+                                    },
+                                );
+                            }
+                        }
+                        Ok(zwift_relay::SessionEvent::RefreshFailed(error)) => {
+                            tracing::warn!(
+                                target: "ranchero::relay",
+                                %error,
+                                "relay.session.refresh_failed",
+                            );
+                        }
+                        Ok(zwift_relay::SessionEvent::LoginFailed { attempt, error }) => {
+                            tracing::warn!(
+                                target: "ranchero::relay",
+                                attempt,
+                                %error,
+                                "relay.session.login_failed",
+                            );
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+            let abort = handle.abort_handle();
+            drop(handle);
+            AbortOnDrop::new(abort)
+        };
+
+        // 5. Pick the first TCP server and connect.
         let addr_str = format!("{}:{}", server.ip, zwift_relay::TCP_PORT_SECURE);
         let addr: std::net::SocketAddr = addr_str
             .parse()
@@ -1553,24 +1711,10 @@ impl RelayRuntime {
         // 6. Establish the TCP channel and wait for Established.
         let tcp_config = zwift_relay::TcpChannelConfig {
             athlete_id,
-            conn_id: next_tcp_conn_id(),
+            conn_id: conn_id_u16,
             watchdog_timeout: zwift_relay::CHANNEL_TIMEOUT,
             capture: capture_writer.clone(),
         };
-        // Stash the canonical conn_id + AES key for the per-session
-        // manifest; the supervisor-event handler reuses both when a
-        // refresh / re-login lands. The TCP `conn_id` is u16 on the
-        // wire but the capture-format manifest field is u32, so widen
-        // once here and reuse the widened value.
-        let session_conn_id: u32 = tcp_config.conn_id.into();
-        let session_aes_key = session.aes_key;
-
-        // Write the per-session manifest before any frame records so a
-        // `--capture` reader sees `Manifest -> Frame -> Frame -> …`
-        // (STEP-12.12 §6b).
-        if let Some(writer) = capture_writer.as_ref() {
-            writer.record_session_manifest(manifest_from_session(&session, session_conn_id));
-        }
 
         let (channel, mut events_rx) =
             zwift_relay::TcpChannel::establish(transport, &session, tcp_config.clone())
@@ -1788,110 +1932,9 @@ impl RelayRuntime {
         };
         tracing::info!(target: "ranchero::relay", "relay.heartbeat.started");
 
-        // 11. Subscribe to session-supervisor events. (Defect 7)
-        // Capture the chosen IP so the handler can detect server pinning when
-        // a re-login event arrives with a different (possibly shuffled) session.
-        let pinned_ip_for_supervisor = chosen_tcp_ip.clone();
-        let supervisor_event_abort = {
-            let mut rx = supervisor_events;
-            let writer_for_supervisor = capture_writer.clone();
-            let handle = tokio::spawn(async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(zwift_relay::SessionEvent::LoggedIn(new_session)) => {
-                            // Under N14 (approach A), a re-login with a new AES key
-                            // means channels need to be recreated. Emit the
-                            // appropriate trace events so operators and tests can
-                            // observe the transition. (STEP-12.14 §N14 / §L4)
-                            if new_session.aes_key != session_aes_key {
-                                tracing::info!(
-                                    target: "ranchero::relay",
-                                    "relay.runtime.channels_recreated",
-                                );
-                                if new_session
-                                    .tcp_servers
-                                    .iter()
-                                    .any(|s| s.ip == pinned_ip_for_supervisor)
-                                {
-                                    tracing::info!(
-                                        target: "ranchero::relay",
-                                        ip = %pinned_ip_for_supervisor,
-                                        "relay.runtime.tcp_server_pinned",
-                                    );
-                                }
-                            }
-                            tracing::info!(
-                                target: "ranchero::relay",
-                                "relay.session.logged_in",
-                            );
-                            // Re-login rotates the AES key; persist the
-                            // new manifest so the capture stays decryptable.
-                            if let Some(writer) = writer_for_supervisor.as_ref() {
-                                writer.record_session_manifest(manifest_from_session(
-                                    &new_session,
-                                    session_conn_id,
-                                ));
-                            }
-                        }
-                        Ok(zwift_relay::SessionEvent::Refreshed {
-                            relay_id,
-                            new_expires_at,
-                        }) => {
-                            tracing::info!(
-                                target: "ranchero::relay",
-                                relay_id,
-                                "relay.session.refreshed",
-                            );
-                            // Refresh keeps the AES key but extends the
-                            // expiration; persist a fresh manifest so the
-                            // reader sees the current relay_id and ttl.
-                            if let Some(writer) = writer_for_supervisor.as_ref() {
-                                let now_unix = SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .unwrap_or_default();
-                                let remaining = new_expires_at
-                                    .saturating_duration_since(tokio::time::Instant::now());
-                                writer.record_session_manifest(
-                                    zwift_relay::capture::SessionManifest {
-                                        aes_key: session_aes_key,
-                                        device_type: 1,
-                                        channel_type: 0,
-                                        send_iv_seqno_tcp: 0,
-                                        recv_iv_seqno_tcp: 0,
-                                        send_iv_seqno_udp: 0,
-                                        recv_iv_seqno_udp: 0,
-                                        relay_id,
-                                        conn_id: session_conn_id,
-                                        expires_at_unix_ns: (now_unix + remaining).as_nanos()
-                                            as u64,
-                                    },
-                                );
-                            }
-                        }
-                        Ok(zwift_relay::SessionEvent::RefreshFailed(error)) => {
-                            tracing::warn!(
-                                target: "ranchero::relay",
-                                %error,
-                                "relay.session.refresh_failed",
-                            );
-                        }
-                        Ok(zwift_relay::SessionEvent::LoginFailed { attempt, error }) => {
-                            tracing::warn!(
-                                target: "ranchero::relay",
-                                attempt,
-                                %error,
-                                "relay.session.login_failed",
-                            );
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            });
-            let abort = handle.abort_handle();
-            drop(handle);
-            abort
-        };
+        // 11. (The supervisor-event handler was spawned earlier, at
+        //     step 4.8, before the TCP connect, so it can drain
+        //     LoggedIn / Refreshed events even when steps 5-9 hang.)
 
         // 12. Set up the event broadcast and spawn the recv-loop.
         let (events_tx, recv_rx) =
@@ -1937,6 +1980,10 @@ impl RelayRuntime {
             drop(handle);
             abort
         };
+
+        // The supervisor-event handler is now owned by `Self`; release
+        // the drop-guard so its destructor does not abort the task.
+        let supervisor_event_abort = supervisor_event_guard.release();
 
         Ok(Self {
             join_handle,
@@ -2316,29 +2363,31 @@ impl TcpTransportFactory for DefaultTcpTransportFactory {
 /// (single-shot, no supervisor). In the red state this returns a
 /// pre-loaded session and a dead event channel; the real supervisor
 /// implementation lands with Defect 7 green state.
+/// Production [`SessionSupervisorHandle`] backed by the real
+/// `RelaySessionSupervisor`.
+#[derive(Clone)]
 pub struct DefaultSessionSupervisorHandle {
-    session: zwift_relay::RelaySession,
+    supervisor: Arc<zwift_relay::RelaySessionSupervisor>,
 }
 
 impl SessionSupervisorHandle for DefaultSessionSupervisorHandle {
     fn current(&self) -> impl std::future::Future<Output = zwift_relay::RelaySession> + Send {
-        let s = self.session.clone();
-        async move { s }
+        let sv = Arc::clone(&self.supervisor);
+        async move { sv.current().await }
     }
 
     fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<zwift_relay::SessionEvent> {
-        let (_, rx) = tokio::sync::broadcast::channel(1);
-        rx
+        self.supervisor.events()
     }
 
-    fn shutdown(&self) {}
+    fn shutdown(&self) {
+        self.supervisor.shutdown();
+    }
 }
 
-/// Production [`SessionSupervisorFactory`]. In the red state this
-/// delegates to `zwift_relay::login` (the same single-shot function
-/// `DefaultSessionLogin` used) and wraps the result in
-/// `DefaultSessionSupervisorHandle`. The real supervisor call lands
-/// with Defect 7 green state.
+/// Production [`SessionSupervisorFactory`]. Calls
+/// `RelaySessionSupervisor::start` to obtain a live supervisor that
+/// handles periodic token refresh and reconnects.
 pub struct DefaultSessionSupervisorFactory {
     auth: Arc<zwift_api::ZwiftAuth>,
     config: zwift_relay::RelaySessionConfig,
@@ -2359,10 +2408,12 @@ impl SessionSupervisorFactory for DefaultSessionSupervisorFactory {
         let auth = Arc::clone(&self.auth);
         let config = self.config.clone();
         async move {
-            let session = zwift_relay::login(&auth, &config)
+            let supervisor = zwift_relay::RelaySessionSupervisor::start((*auth).clone(), config)
                 .await
                 .map_err(RelayRuntimeError::Session)?;
-            Ok(DefaultSessionSupervisorHandle { session })
+            Ok(DefaultSessionSupervisorHandle {
+                supervisor: Arc::new(supervisor),
+            })
         }
     }
 }

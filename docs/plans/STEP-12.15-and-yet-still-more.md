@@ -292,7 +292,7 @@ None of these depend on each other; they can land in any order.
     — a `SessionEvent::LoggedIn` with a fresh AES key writes
     a new `SessionManifest` to the capture file (visible via
     `CaptureReader`).
-- [ ] **3b** — Implementation for F3:
+- [x] **3b** — Implementation for F3:
   - Replace the body of `DefaultSessionSupervisorFactory::start`
     (`src/daemon/relay.rs:2333-2348`) with a call to
     `zwift_relay::RelaySessionSupervisor::start(auth, config)`.
@@ -301,10 +301,22 @@ None of these depend on each other; they can land in any order.
     real supervisor's `current()` / `events()` / `shutdown()`
     methods. Hold the supervisor in an `Arc` so `Handle` can be
     cheap to clone.
-  - The supervisor-event handler at
-    `src/daemon/relay.rs:1775-1874` is unchanged: it now sees
-    real `SessionEvent` traffic instead of an immediately-closed
-    receiver.
+  - Move the supervisor-event handler spawn from step 11 to step
+    4.8 (before the TCP connect) so it drains `LoggedIn` /
+    `Refreshed` events even when later steps (TCP connect,
+    `udp_config` wait) hang. Without this, the test
+    `start_with_writer_subscribes_to_real_supervisor_events`
+    cannot observe `relay.session.refreshed` because step 8.5
+    blocks for 5 s waiting for an undecryptable mock frame, and
+    the supervisor's 3 s refresh fires before the handler is
+    spawned. Pre-compute `chosen_tcp_ip`, `session_conn_id`, and
+    `session_aes_key` so the early-spawn handler has the state
+    it needs. Wrap the abort handle in an `AbortOnDrop` RAII
+    guard so any `?` early-return between the spawn site and
+    `Self` construction aborts the task.
+  - Track `current_aes_key` as a mutable variable inside the
+    handler so subsequent `Refreshed` manifests after a re-login
+    persist the up-to-date key, not the initial one.
 
 ### Phase 4 — F4: gate heartbeat on `suspended`
 
