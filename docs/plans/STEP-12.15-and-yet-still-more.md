@@ -25,19 +25,19 @@ that ideal.
 Spot-checks against the live tree confirm the C-block and M-block
 landed:
 
-| Item | Citation |
-| ---- | -------- |
-| **C5** UDP port 3024 hardcoded | `src/daemon/relay.rs:67-83` (`pick_initial_udp_target`) |
-| **N10** ack-seqno reads tag 5 (`stc_f5`) | `crates/zwift-relay/src/udp.rs:316` |
-| **N11** `player_count` from `stc.states` | `crates/zwift-relay/src/udp.rs:611-612` |
-| **N2** split TCP/UDP `connId` counters | `src/daemon/relay.rs:121-132` |
-| **C1** generic `lb_course=0` pool selection | `src/daemon/relay.rs:1644-1646` |
-| **C2 / R1** course gate via `get_player_state(watched_id)` | `src/daemon/relay.rs:1462-1486`; `crates/zwift-api/src/lib.rs:456-478` |
-| **C3** post-establish "I'm watching" send | `src/daemon/relay.rs:1727-1748` |
-| **C4 + N13 + R2** heartbeat content + shared `WorldTimer` | `src/daemon/relay.rs:1706-1707`, `:703-722` |
-| **C6 / C7 / C8 / N3 / N4** HTTP impersonation | `crates/zwift-api/src/lib.rs:46-47, :307-309, :612-619, :848-850` |
-| **M1** UDP hello header consistency | `crates/zwift-relay/src/udp.rs:519-525` |
-| **M2 / L3 / N6 / N7** `last_world_update_ts` tracked + threaded into TCP hello | `src/daemon/relay.rs:2448-2469`, `:1600-1614` |
+| Item                                                                           | Citation                                                               |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| **C5** UDP port 3024 hardcoded                                                 | `src/daemon/relay.rs:67-83` (`pick_initial_udp_target`)                |
+| **N10** ack-seqno reads tag 5 (`stc_f5`)                                       | `crates/zwift-relay/src/udp.rs:316`                                    |
+| **N11** `player_count` from `stc.states`                                       | `crates/zwift-relay/src/udp.rs:611-612`                                |
+| **N2** split TCP/UDP `connId` counters                                         | `src/daemon/relay.rs:121-132`                                          |
+| **C1** generic `lb_course=0` pool selection                                    | `src/daemon/relay.rs:1644-1646`                                        |
+| **C2 / R1** course gate via `get_player_state(watched_id)`                     | `src/daemon/relay.rs:1462-1486`; `crates/zwift-api/src/lib.rs:456-478` |
+| **C3** post-establish "I'm watching" send                                      | `src/daemon/relay.rs:1727-1748`                                        |
+| **C4 + N13 + R2** heartbeat content + shared `WorldTimer`                      | `src/daemon/relay.rs:1706-1707`, `:703-722`                            |
+| **C6 / C7 / C8 / N3 / N4** HTTP impersonation                                  | `crates/zwift-api/src/lib.rs:46-47, :307-309, :612-619, :848-850`      |
+| **M1** UDP hello header consistency                                            | `crates/zwift-relay/src/udp.rs:519-525`                                |
+| **M2 / L3 / N6 / N7** `last_world_update_ts` tracked + threaded into TCP hello | `src/daemon/relay.rs:2448-2469`, `:1600-1614`                          |
 
 `cargo test --workspace` is green at the start of this review.
 
@@ -52,7 +52,7 @@ fix's expected scope.
 **Symptom.** If `[zwift] watched_athlete_id` is not set in the
 config, `start_all_inner` returns
 `RelayRuntimeError::NoWatchedAthlete` (`src/daemon/relay.rs:1462-1464`)
-*after* the double-fork has completed. The parent process has
+_after_ the double-fork has completed. The parent process has
 already exited 0, so your shell sees `ranchero started (pid N)` and
 no error. A subsequent `ranchero status` reports "not running"; the
 actual cause is only visible in the daemon's log file.
@@ -84,6 +84,7 @@ daemon at startup. The L5 work in STEP-12.14 (exponential backoff,
 `1.2^attempt`, capped at 5 min, up to 50 retries) never runs.
 
 **Citation.**
+
 - The retry wrapper exists at `src/daemon/relay.rs:1306-1370`
   (`start_with_all_deps`).
 - The production entry point is `RelayRuntime::start_with_writer`
@@ -97,6 +98,7 @@ succeeds is unaffected. The defect surfaces on transient network
 failures, mid-run reconnects, or DNS hiccups.
 
 **Scope.** Either:
+
 - (a) Move the retry loop's body into a small helper used by both
   `start_with_writer` and `start_with_all_deps`; or
 - (b) Delete `start_with_writer`'s direct call site and route
@@ -118,6 +120,7 @@ across reconnects (L4), and log re-login transitions (N14) is
 subscribing to a dead `broadcast::channel` and never fires.
 
 **Citation.**
+
 - `DefaultSessionSupervisorFactory::start` at
   `src/daemon/relay.rs:2333-2348` calls `zwift_relay::login` once
   and wraps the result in `DefaultSessionSupervisorHandle`.
@@ -155,6 +158,7 @@ regardless. STEP-12.14 batch C said "gate heartbeat ticks on
 suspended == false" (Cb).
 
 **Citation.**
+
 - `HeartbeatScheduler` at `src/daemon/relay.rs:658-770` owns
   `world_timer`, `athlete_id`, `watching_rider_id`, `course_id`
   and an interval ticker. It holds no reference to
@@ -184,6 +188,7 @@ for up to 90 minutes. STEP-12.14 N9 said the daemon should issue
 shutdown.
 
 **Citation.**
+
 - `RelayRuntime::shutdown` at `src/daemon/relay.rs:2196-2212`
   emits `relay.runtime.logout` and `relay.runtime.leave` trace
   records but issues no HTTP traffic.
@@ -232,7 +237,7 @@ None of these depend on each other; they can land in any order.
 
 ### Phase 1 — F1: pre-flight `watched_athlete_id` check
 
-- [ ] **1a** — Tests for F1 in `src/daemon/validate.rs`'s `tests`
+- [x] **1a** — Tests for F1 in `src/daemon/validate.rs`'s `tests`
       module (parallel to `S-1a`–`S-1h`):
   - `validate_relay_enabled_no_watched_athlete_id_returns_error` —
     relay enabled, both monitor credentials present,
@@ -245,7 +250,7 @@ None of these depend on each other; they can land in any order.
   - `validate_emits_all_missing_relay_fields_together` — relay
     enabled, all three of email/password/watched-athlete missing →
     error contains all three variants in declaration order.
-- [ ] **1b** — Implementation for F1:
+- [x] **1b** — Implementation for F1:
   - Extend `StartupValidationError` with a
     `MissingWatchedAthleteId` variant and matching `Display`
     arm at `src/daemon/validate.rs:8-29`.
@@ -256,7 +261,7 @@ None of these depend on each other; they can land in any order.
 
 ### Phase 2 — F2: wire L5 retry into production path
 
-- [ ] **2a** — Tests for F2 in `tests/relay_runtime.rs`:
+- [x] **2a** — Tests for F2 in `tests/relay_runtime.rs`:
   - `start_with_writer_retries_on_transient_tcp_connect` — a
     TCP factory that fails the first connect with
     `io::ErrorKind::ConnectionRefused` and succeeds on the
@@ -265,7 +270,7 @@ None of these depend on each other; they can land in any order.
   - `start_with_writer_propagates_permanent_errors_immediately` —
     a missing-credential failure surfaces without a retry
     delay.
-- [ ] **2b** — Implementation for F2:
+- [x] **2b** — Implementation for F2:
   - Extract the retry loop body from
     `start_with_all_deps` (`src/daemon/relay.rs:1306-1370`)
     into a private helper that takes the same
@@ -375,6 +380,7 @@ ranchero follow output.cap output.cap
 ```
 
 Confirm:
+
 - `ranchero status` reports "running" during the sleep.
 - `output.cap` contains a `SessionManifest` followed by at least
   one outbound TCP record, one outbound UDP record (the

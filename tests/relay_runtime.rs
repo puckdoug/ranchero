@@ -2589,9 +2589,104 @@ async fn portal_pool_handled_via_portal_key() {
 //      best-effort, emitting `relay.runtime.logout` and `relay.runtime.leave`.
 // ==========================================================================
 
-// --- stubs for Batch B tests -------------------------------------------
+/// TCP factory that fails the first connect with ConnectionRefused,
+/// then succeeds. Used to exercise the transient retry path.
+struct TransientTcpFactory {
+    attempts: Arc<StdMutex<u32>>,
+}
 
-/// TCP factory whose `connect()` always returns an I/O error. Used to
+impl TransientTcpFactory {
+    fn new() -> Self {
+        Self { attempts: Arc::new(StdMutex::new(0)) }
+    }
+}
+
+impl TcpTransportFactory for TransientTcpFactory {
+    type Transport = NoopTcpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        let mut attempts = self.attempts.lock().unwrap();
+        *attempts += 1;
+        let attempt = *attempts;
+        async move {
+            if attempt == 1 {
+                Err(std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "transient error"))
+            } else {
+                Ok(NoopTcpTransport::with_pending(Some(default_udp_config_push())))
+            }
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn start_with_writer_retries_on_transient_tcp_connect() {
+    let cfg = make_config("monitor@example.com", "pass");
+    let tcp_factory = TransientTcpFactory::new();
+
+    let runtime = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        RelayRuntime::start_with_all_deps(
+            &cfg,
+            None,
+            StubAuth,
+            StubSupervisorFactory::new(fixture_session()),
+            tcp_factory,
+            NoopUdpFactory,
+        ),
+    )
+    .await
+    .expect("test must not hang")
+    .expect("runtime must start successfully after retry");
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.connect_retry",
+        ),
+        "STEP-12.15 F2: production path must emit relay.runtime.connect_retry \
+         before retrying; not found in log",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "attempt=1"),
+        "STEP-12.15 F2: production path must emit attempt=1 on first retry",
+    );
+}
+
+#[tokio::test]
+async fn start_with_writer_propagates_permanent_errors_immediately() {
+    let mut cfg = make_config("monitor@example.com", "pass");
+    // Invalid config to cause a permanent error before TCP connect.
+    cfg.monitor_email = None;
+
+    let started = std::time::Instant::now();
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await;
+
+    let elapsed = started.elapsed();
+    assert!(
+        result.is_err(),
+        "STEP-12.15 F2: permanent errors must propagate; expected Err, got Ok"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(500),
+        "STEP-12.15 F2: permanent errors must propagate immediately without retry delays; \
+         elapsed {:?}", elapsed
+    );
+}
 /// exercise the connect-retry path without a real TCP server.
 struct FailingTcpFactory;
 

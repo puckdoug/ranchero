@@ -1141,6 +1141,70 @@ impl RelayRuntime {
     /// sequence. Emits `relay.capture.opened` on success and, on the error
     /// path, flushes the writer (which causes the writer task itself to
     /// emit `relay.capture.writer.closed`) before propagating.
+    async fn start_with_retry<A, SF, F, U>(
+        cfg: &ResolvedConfig,
+        capture_path: Option<PathBuf>,
+        capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
+        auth: Arc<A>,
+        sf: Arc<SF>,
+        tcp_factory: Arc<F>,
+        udp_factory: Arc<U>,
+        game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    ) -> Result<Self, RelayRuntimeError>
+    where
+        A: AuthLogin,
+        SF: SessionSupervisorFactory,
+        F: TcpTransportFactory,
+        U: UdpTransportFactory,
+    {
+        let mut last_error: Option<RelayRuntimeError> = None;
+        for attempt in 0..=50u32 {
+            if attempt > 0 {
+                let backoff_ms = backoff_ms_for(attempt);
+                tracing::info!(
+                    target: "ranchero::relay",
+                    attempt,
+                    backoff_ms,
+                    "relay.runtime.connect_retry",
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+            }
+            match Self::start_all_inner(
+                cfg,
+                capture_path.clone(),
+                capture_writer.clone(),
+                Arc::clone(&auth),
+                Arc::clone(&sf),
+                Arc::clone(&tcp_factory),
+                Arc::clone(&udp_factory),
+                game_events_tx.clone(),
+            )
+            .await
+            {
+                Ok(runtime) => return Ok(runtime),
+                // Only retry on transient connect failures. Permanent
+                // errors (missing config, missing watched athlete, bad
+                // credentials, etc.) must propagate immediately so the
+                // operator sees the cause; otherwise this loop would
+                // sleep for hours before surfacing a user-visible error.
+                // (STEP-12.14 §L5)
+                Err(e @ RelayRuntimeError::TcpConnect(_)) => last_error = Some(e),
+                Err(e) => {
+                    if let Some(writer) = &capture_writer {
+                        let _ = writer.flush_and_close().await;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        let err = last_error.unwrap();
+        if let Some(writer) = capture_writer {
+            let _ = writer.flush_and_close().await;
+        }
+        Err(err)
+    }
+
     pub async fn start_with_writer(
         cfg: &ResolvedConfig,
         capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
@@ -1160,29 +1224,17 @@ impl RelayRuntime {
             tracing::info!(target: "ranchero::relay", "relay.capture.opened");
         }
 
-        match Self::start_all_inner(
+        Self::start_with_retry(
             cfg,
             None,
-            capture_writer.clone(),
-            DefaultAuthLogin::new(auth.clone()),
-            DefaultSessionSupervisorFactory::new(auth, session_config),
-            DefaultTcpTransportFactory,
-            DefaultUdpTransportFactory,
+            capture_writer,
+            Arc::new(DefaultAuthLogin::new(auth.clone())),
+            Arc::new(DefaultSessionSupervisorFactory::new(auth, session_config)),
+            Arc::new(DefaultTcpTransportFactory),
+            Arc::new(DefaultUdpTransportFactory),
             game_events_tx,
         )
         .await
-        {
-            Ok(this) => Ok(this),
-            Err(e) => {
-                if let Some(writer) = capture_writer {
-                    // The writer task emits `relay.capture.writer.closed`
-                    // on its own when `flush_and_close` drains the queue
-                    // (STEP-12.12 §3b); no duplicate daemon-side line.
-                    let _ = writer.flush_and_close().await;
-                }
-                Err(e)
-            }
-        }
     }
 
     /// The dependency-injected entry point used by tests. Performs
@@ -1324,49 +1376,17 @@ impl RelayRuntime {
         U: UdpTransportFactory,
     {
         let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
-        // Wrap in Arc so each retry gets a fresh clone without requiring
-        // the factories to implement Clone themselves.
-        let auth = std::sync::Arc::new(auth);
-        let sf = std::sync::Arc::new(sf);
-        let tcp_factory = std::sync::Arc::new(tcp_factory);
-        let udp_factory = std::sync::Arc::new(udp_factory);
-
-        let mut last_error: Option<RelayRuntimeError> = None;
-        for attempt in 0..=50u32 {
-            if attempt > 0 {
-                let backoff_ms = backoff_ms_for(attempt);
-                tracing::info!(
-                    target: "ranchero::relay",
-                    attempt,
-                    backoff_ms,
-                    "relay.runtime.connect_retry",
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-            }
-            match Self::start_all_inner(
-                cfg,
-                capture_path.clone(),
-                None,
-                std::sync::Arc::clone(&auth),
-                std::sync::Arc::clone(&sf),
-                std::sync::Arc::clone(&tcp_factory),
-                std::sync::Arc::clone(&udp_factory),
-                game_events_tx.clone(),
-            )
-            .await
-            {
-                Ok(runtime) => return Ok(runtime),
-                // Only retry on transient connect failures. Permanent
-                // errors (missing config, missing watched athlete, bad
-                // credentials, etc.) must propagate immediately so the
-                // operator sees the cause; otherwise this loop would
-                // sleep for hours before surfacing a user-visible error.
-                // (STEP-12.14 §L5)
-                Err(e @ RelayRuntimeError::TcpConnect(_)) => last_error = Some(e),
-                Err(e) => return Err(e),
-            }
-        }
-        Err(last_error.unwrap())
+        Self::start_with_retry(
+            cfg,
+            capture_path,
+            None,
+            Arc::new(auth),
+            Arc::new(sf),
+            Arc::new(tcp_factory),
+            Arc::new(udp_factory),
+            game_events_tx,
+        )
+        .await
     }
 
     /// Variant of [`Self::start_with_all_deps`] that pre-opens a
