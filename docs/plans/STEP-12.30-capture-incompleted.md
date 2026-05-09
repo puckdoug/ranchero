@@ -22,7 +22,7 @@
 
 ### Phase 4 — Print Manifest records in `follow` output
 
-- [ ] 4a — Failing test: `follow_output_includes_manifest_summary`
+- [x] 4a — Failing test: `follow_output_includes_manifest_summary`
 - [ ] 4b — Print manifest summary line in `print_follow_to`
 
 ### Phase 5 — Decode HTTP record payloads in `follow` output

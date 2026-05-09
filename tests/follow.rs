@@ -309,3 +309,32 @@ fn follow_subcommand_has_no_decode_flag() {
         the parse succeeded but should have failed with an unknown-argument error",
     );
 }
+
+// --- STEP-12.30 Phase 4a: follow must print a summary line for Manifest records ---
+
+#[tokio::test]
+async fn follow_output_includes_manifest_summary() {
+    let relay_id: u32 = 0xDEAD_BEEF;
+    let manifest = SessionManifest {
+        relay_id,
+        conn_id: 7,
+        ..test_manifest([0xABu8; 16], 7)
+    };
+    // Manifest only — no frame records; the summary line must still appear.
+    let path = write_capture_with_manifest(manifest, vec![]).await;
+
+    let (result, out) = run_follow(path.path(), Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains("Manifest"),
+        "STEP-12.30 Phase 4a: follow must print a summary line for each \
+         Manifest record; output did not contain \"Manifest\":\n{text}",
+    );
+    assert!(
+        text.contains(&relay_id.to_string()),
+        "STEP-12.30 Phase 4a: the Manifest summary line must include relay_id \
+         ({relay_id}); not found in output:\n{text}",
+    );
+}
