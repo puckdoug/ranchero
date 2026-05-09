@@ -107,6 +107,11 @@ fn emit_state_change(
 
 use crate::config::ResolvedConfig;
 
+/// Combined handshake budget for both the TCP Established wait and the
+/// udp_config push wait.  Matches sauce4zwift's single 30 s race in
+/// `activateSession()` (zwift.mjs:1888).  (STEP-12.16 §F8 Phase 5b)
+pub(crate) const HANDSHAKE_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// Compute the exponential back-off delay for a connect-retry attempt.
 /// Returns milliseconds: `1000 × 1.2^attempt`, capped at 5 min (300 000 ms).
 /// (STEP-12.14 §L5)
@@ -1263,13 +1268,13 @@ impl RelayRuntime {
             .await
             {
                 Ok(runtime) => return Ok(runtime),
-                // Only retry on transient connect failures. Permanent
-                // errors (missing config, missing watched athlete, bad
-                // credentials, etc.) must propagate immediately so the
-                // operator sees the cause; otherwise this loop would
-                // sleep for hours before surfacing a user-visible error.
-                // (STEP-12.14 §L5)
-                Err(e @ RelayRuntimeError::TcpConnect(_)) => last_error = Some(e),
+                // Retry on transient connect failures and handshake
+                // timeouts.  Permanent errors (missing config, bad
+                // credentials, etc.) propagate immediately.
+                // (STEP-12.14 §L5 / STEP-12.16 §F8)
+                Err(e @ RelayRuntimeError::TcpConnect(_))
+                | Err(e @ RelayRuntimeError::NoUdpConfig(_))
+                | Err(e @ RelayRuntimeError::EstablishedTimeout(_)) => last_error = Some(e),
                 Err(e) => {
                     if let Some(writer) = &capture_writer {
                         let _ = writer.flush_and_close().await;
@@ -1804,8 +1809,12 @@ impl RelayRuntime {
             RuntimeState::SessionLoggedIn,
         );
 
-        let established_deadline = std::time::Duration::from_secs(5);
-        match tokio::time::timeout(established_deadline, events_rx.recv()).await {
+        // Combined 30 s budget for Established + udp_config (sauce §1888).
+        let handshake_budget_start = tokio::time::Instant::now();
+        let handshake_deadline = handshake_budget_start + HANDSHAKE_BUDGET;
+        let established_remaining =
+            handshake_deadline.saturating_duration_since(tokio::time::Instant::now());
+        match tokio::time::timeout(established_remaining, events_rx.recv()).await {
             Ok(Ok(zwift_relay::TcpChannelEvent::Established)) => {
                 tracing::info!(target: "ranchero::relay", addr = %addr, "relay.tcp.established");
                 emit_state_change(
@@ -1822,7 +1831,21 @@ impl RelayRuntime {
                 )));
             }
             Ok(Err(_)) | Err(_) => {
-                return Err(RelayRuntimeError::EstablishedTimeout(established_deadline));
+                let elapsed_ms =
+                    handshake_budget_start.elapsed().as_millis() as u64;
+                tracing::warn!(
+                    target: "ranchero::relay",
+                    phase = "established",
+                    elapsed_ms,
+                    "relay.tcp.handshake.timeout",
+                );
+                tracing::info!(
+                    target: "ranchero::relay",
+                    delay_ms = backoff_ms_for(0),
+                    reason = "handshake_timeout",
+                    "relay.tcp.reconnect.scheduled",
+                );
+                return Err(RelayRuntimeError::EstablishedTimeout(HANDSHAKE_BUDGET));
             }
         }
 
@@ -1873,15 +1896,27 @@ impl RelayRuntime {
                 //      is for TCP only, and the UDP target arrives over the TCP
                 //      stream after the hello. See STEP-12.13 §D3 for the
                 //      full rationale.
-                let udp_config_deadline = std::time::Duration::from_secs(5);
+                // Use what remains of the shared 30 s handshake budget.
                 let udp_addr = {
                     let mut picked: Option<std::net::SocketAddr> = None;
-                    let deadline = tokio::time::Instant::now() + udp_config_deadline;
                     while picked.is_none() {
                         let remaining =
-                            deadline.saturating_duration_since(tokio::time::Instant::now());
+                            handshake_deadline.saturating_duration_since(tokio::time::Instant::now());
                         if remaining.is_zero() {
-                            return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
+                            let elapsed_ms = handshake_budget_start.elapsed().as_millis() as u64;
+                            tracing::warn!(
+                                target: "ranchero::relay",
+                                phase = "udp_config",
+                                elapsed_ms,
+                                "relay.tcp.handshake.timeout",
+                            );
+                            tracing::info!(
+                                target: "ranchero::relay",
+                                delay_ms = backoff_ms_for(0),
+                                reason = "handshake_timeout",
+                                "relay.tcp.reconnect.scheduled",
+                            );
+                            return Err(RelayRuntimeError::NoUdpConfig(HANDSHAKE_BUDGET));
                         }
                         match tokio::time::timeout(remaining, events_rx.recv()).await {
                             Ok(Ok(zwift_relay::TcpChannelEvent::Inbound(stc))) => {
@@ -1928,7 +1963,21 @@ impl RelayRuntime {
                             }
                             Ok(Ok(_)) => continue,
                             Ok(Err(_)) | Err(_) => {
-                                return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
+                                let elapsed_ms =
+                                    handshake_budget_start.elapsed().as_millis() as u64;
+                                tracing::warn!(
+                                    target: "ranchero::relay",
+                                    phase = "udp_config",
+                                    elapsed_ms,
+                                    "relay.tcp.handshake.timeout",
+                                );
+                                tracing::info!(
+                                    target: "ranchero::relay",
+                                    delay_ms = backoff_ms_for(0),
+                                    reason = "handshake_timeout",
+                                    "relay.tcp.reconnect.scheduled",
+                                );
+                                return Err(RelayRuntimeError::NoUdpConfig(HANDSHAKE_BUDGET));
                             }
                         }
                     }

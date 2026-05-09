@@ -341,23 +341,23 @@ and a new "bring UDP up now" helper.
     unconditionally by TcpChannel), so a separate "Established delay"
     test is not meaningful — all four tests exercise the udp_config
     wait, which IS controllable via the transport.
-- [ ] **5b** — Implementation:
-  - Replace the 5 s deadline at `:1763` and 5 s deadline at
-    `:1818` with a single 30 s budget covering both gates,
-    matching sauce's `activateSession()` race semantics. Hoist
-    the budget to a `HANDSHAKE_BUDGET` constant near the top of
-    the file for test injection.
-  - On expiry, do not return a fatal error; route into the F7
-    reconnect path via the shared shutdown signal.
-  - **Logging contract**:
-    - On expiry, emit `relay.tcp.handshake.timeout` (warn) with
-      `phase` ("established" | "udp_config") and
-      `elapsed_ms` before transitioning to the reconnect path.
-      This preserves visibility now that the formerly-fatal
-      `EstablishedTimeout` and `NoUdpConfig` errors no longer
-      reach the orchestrator.
-    - The subsequent reconnect emits the Phase 4 lifecycle
-      traces.
+- [x] **5b** — Implementation:
+  - `pub(crate) const HANDSHAKE_BUDGET: Duration = Duration::from_secs(30)`
+    added near the top of `relay.rs`.
+  - Established wait in `start_all_inner`: replaced `5s` with
+    `HANDSHAKE_BUDGET`; on timeout emits `relay.tcp.handshake.timeout
+    phase="established"` and `relay.tcp.reconnect.scheduled
+    reason="handshake_timeout"`, then returns `EstablishedTimeout(HANDSHAKE_BUDGET)`.
+  - UDP-config wait: replaced standalone `udp_config_deadline = 5s` with
+    the remaining portion of `handshake_deadline` (shared with the
+    Established wait); both timeout branches emit
+    `relay.tcp.handshake.timeout phase="udp_config"` and
+    `relay.tcp.reconnect.scheduled reason="handshake_timeout"` before
+    returning `NoUdpConfig(HANDSHAKE_BUDGET)`.
+  - `start_with_retry`: added `NoUdpConfig(_)` and `EstablishedTimeout(_)`
+    to the retryable error set so a handshake timeout triggers a
+    retry/reconnect rather than a fatal exit.
+  - Full suite green (`cargo test --workspace`).
 
 ### Phase 6 — Trace-event audit (new lifecycle events)
 
