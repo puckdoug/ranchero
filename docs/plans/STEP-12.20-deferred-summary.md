@@ -1,6 +1,6 @@
 # STEP-12.20 — Deferred and out-of-scope item summary
 
-**Generated:** 2026-05-09. **Updated:** 2026-05-09 — every previously-missing item has been assigned a future home; STEP-20 was extended to cover items that did not fit any earlier numbered step.
+**Generated:** 2026-05-09. **Updated:** 2026-05-09 — every previously-missing item has been assigned a future home; STEP-20 was extended to cover items that did not fit any earlier numbered step. Item #69 (STEP-12.17 auth-failure response-body diagnostics) added when STEP-12.17 was expanded to fix the `Accept: application/json` defect; the two adjacent diagnostic improvements were parked under STEP-20 §20.16.
 
 Survey of every "Deferred" or "Out of scope" item declared across past plans, classified by current state.
 
@@ -18,9 +18,9 @@ Implementation evidence cites concrete file and line references in `src/` or `cr
 
 - 19 implemented.
 - 4 implemented (partial); completion tracked under STEP-20 §20.14.
-- 45 deferred to a numbered future plan, of which:
+- 46 deferred to a numbered future plan, of which:
   - 9 to STEPs 13-19 (the data, stats, persistence, web, formatter, and compatibility-test stack) — these were already scheduled before this audit.
-  - 36 to STEP-20 — of which 2 (items 44, 45) were already at §20.3 before this audit, and 34 were newly assigned during this audit so that no item is left unscheduled.
+  - 37 to STEP-20 — of which 2 (items 44, 45) were already at §20.3 before this audit, 34 were newly assigned during this audit so that no item is left unscheduled, and 1 (item 69) was added when STEP-12.17 was expanded.
 
 There are no items in the "missing" state after this update.
 
@@ -96,6 +96,7 @@ There are no items in the "missing" state after this update.
 | 66 | Changing the state refresher's cadence | STEP-12.16 | deferred until STEP-20 §20.15 (acknowledged out of scope) |
 | 67 | Reuse of resume code path for mid-ride course transitions | STEP-12.16 | deferred until STEP-20 §20.13 |
 | 68 | Reconnecting at the auth or session layer beyond F3 / F4 | STEP-12.16 | deferred until STEP-20 §20.12 |
+| 69 | Auth-failure response-body diagnostics (Content-Type trace, body prefix in error) | STEP-12.17 | deferred until STEP-20 §20.16 |
 
 ## Detail
 
@@ -371,6 +372,10 @@ The resume logic only handles "first course on entering a game". A search for co
 
 No additional reconnect plumbing. **Deferred until STEP-20 §20.12.**
 
+### 69 — Auth-failure response-body diagnostics (STEP-12.17)
+
+The `get_profile_me` BadSchema trace at `crates/zwift-api/src/lib.rs:389-397` records only `status` and `variant="BadSchema"`; the response Content-Type and a body prefix are not captured. The `Error::AuthFailedBadSchema` variant message at `crates/zwift-api/src/lib.rs:73-74` renders as `"authentication failed: unexpected response shape: expected value at line 1 column 1"` — the serde decode-error string buries the actionable "body is not JSON" signal. The header fix landed inside STEP-12.17; the two diagnostic improvements were kept out and parked for the next time a 200-with-wrong-body failure recurs. **Deferred until STEP-20 §20.16.**
+
 ## Items newly assigned to STEP-20 in this audit
 
 The original audit (earlier in the day) classified 34 items as "missing": neither implemented nor scheduled. STEP-20 was extended on 2026-05-09 to cover all of them. The grouping below shows which item went into which new STEP-20 subsection:
@@ -413,3 +418,4 @@ None of the missing items fit naturally inside STEPs 13-19 — those steps are a
   - §20.13 — item 67 (mid-ride course transitions).
   - §20.14 — items 47, 51, 53, 63 (partial-implementation completion).
   - §20.15 — item 66 (state-refresher cadence).
+  - §20.16 — item 69 (auth-failure response-body diagnostics).

@@ -550,6 +550,52 @@ scenario justifies it. If the scenario appears, the change is
 mechanical: thread two `Duration` fields through
 `ResolvedConfig` into the state-refresher.
 
+### 20.16 — Auth-failure response-body diagnostics (from STEP-12.17)
+
+**Where it came from.** STEP-12.17 fixed the missing
+`Accept: application/json` header on `get_profile_me`, which had
+caused a real-account smoke run to fail with
+`relay.auth.profile.failed status=200 variant="BadSchema"`. The
+incident exposed two diagnostic shortcomings that turned a single
+header omission into a hard-to-investigate failure:
+
+- The `BadSchema` trace records only `status` and
+  `variant="BadSchema"`; the response Content-Type — the most
+  diagnostic field for "200 but wrong body type" — is not
+  captured.
+- The `Error::AuthFailedBadSchema` message
+  (`crates/zwift-api/src/lib.rs:73-74`) renders as
+  `"authentication failed: unexpected response shape: expected
+  value at line 1 column 1"` once the serde error is appended.
+  The serde "line 1 column 1" string buries the actionable
+  signal (which is "the body is not JSON at all").
+
+**Current resolution.** Both diagnostic improvements were noted
+during STEP-12.17 but kept out of the in-plan fix on the principle
+that the immediate fix (adding the missing header) is the smallest
+change that makes the smoke pass. The diagnostics make the *next*
+failure of the same class self-diagnosing; the smoke does not need
+them today.
+
+**Why this might come back.** Any future failure where a Zwift
+endpoint returns a 200 with an unexpected body type — server
+rolling out a new content type, an account-flagged response, an
+intermediate proxy reformatting bodies — produces the same opaque
+`BadSchema` error today. The first time that recurs, this entry
+becomes the cheapest path to a self-diagnosing trace and a
+self-explanatory error message.
+
+**Decision rule.** Implement when (a) a second `BadSchema`
+incident happens on a different endpoint or under different
+conditions, and reading `relay.auth.profile.failed` traces is no
+longer enough to identify the cause; or (b) the operator-facing
+error message at the daemon-exit boundary is rewritten for any
+other reason, at which point folding the body prefix in costs
+nothing. The change is local: one extra `tracing` field on the
+BadSchema branch in `get_profile_me`, and one extra argument to
+the `AuthFailedBadSchema` error variant carrying a body-prefix
+slice.
+
 ---
 
 ## How to use this file
