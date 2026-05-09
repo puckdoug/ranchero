@@ -2,6 +2,29 @@
 
 **Status:** open (2026-05-09). Findings and implementation plan.
 
+## 0. Progress checklist
+
+### Phase 1 — Fix `follow`: decrypt frames; remove `--decode` flag
+- [x] 1a — Failing tests: `follow_decrypts_outbound_tcp_frame`, `follow_decrypts_inbound_tcp_frame`, `follow_subcommand_has_no_decode_flag`
+- [ ] 1b — Implement decryption in `print_follow_to`; remove `decode` parameter and `--decode` CLI flag
+
+### Phase 2 — Wire `CaptureSink`; extend capture format to v3 with content-type field
+- [ ] 2a — Failing test: `login_http_exchange_appears_in_capture`
+- [ ] 2b — Bump capture format to v3; add `ContentType` enum and `content_type` byte to record header
+- [ ] 2c — Add `CaptureContentType` enum to `zwift-api`; extend `CaptureSink::record()`; update all `record_outbound`/`record_inbound` call sites
+- [ ] 2d — Implement `HttpCaptureSink` in daemon; call `set_capture_sink` at construction and re-login sites
+
+### Phase 3 — Fix `post_empty()` capture calls
+- [ ] 3 — Add `record_outbound`/`record_inbound` calls in `post_empty()`
+
+### Phase 4 — Print Manifest records in `follow` output
+- [ ] 4a — Failing test: `follow_output_includes_manifest_summary`
+- [ ] 4b — Print manifest summary line in `print_follow_to`
+
+### Phase 5 — Decode HTTP record payloads in `follow` output
+- [ ] 5a — Failing tests: `follow_http_json_payload_is_pretty_printed`, `follow_http_urlencoded_payload_is_displayed`, `follow_http_protobuf_payload_is_decoded`, `follow_http_empty_payload_prints_empty_marker`
+- [ ] 5b — Dispatch on `record.content_type` to JSON / URL-encoded / protobuf / fallback decoders
+
 ## 1. Observed symptom
 
 Running `ranchero start --capture output.cap` followed by

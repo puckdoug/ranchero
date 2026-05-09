@@ -27,8 +27,11 @@ use tempfile::NamedTempFile;
 
 use ranchero::cli::print_follow_to;
 
+use zwift_relay::{
+    ChannelType, DeviceType, Header, HeaderFlags, RelayIv, encrypt, frame_tcp, tcp_plaintext,
+};
 use zwift_relay::capture::{
-    CaptureRecord, CaptureWriter, Direction, TransportKind,
+    CaptureRecord, CaptureWriter, Direction, SessionManifest, TransportKind,
 };
 
 // --- helpers ------------------------------------------------------
@@ -209,5 +212,150 @@ async fn follow_returns_error_for_bad_magic() {
     assert!(
         result.is_err(),
         "follow must return an error for a malformed capture file",
+    );
+}
+
+// --- STEP-12.30 Phase 1a: follow must decrypt encrypted frames --------
+
+/// Write a manifest followed by frame records into a capture file.
+async fn write_capture_with_manifest(
+    manifest: SessionManifest,
+    records: Vec<CaptureRecord>,
+) -> NamedTempFile {
+    let path = NamedTempFile::new().expect("tempfile");
+    let writer = CaptureWriter::open(path.path()).await.expect("open writer");
+    writer.record_session_manifest(manifest);
+    for record in records {
+        writer.record(record);
+    }
+    writer.flush_and_close().await.expect("close writer");
+    path
+}
+
+/// Build an outbound TCP capture payload as written by `tcp.rs`:
+/// `[BE u16 size][header_bytes][ciphertext||tag4]`.
+fn make_outbound_tcp_frame(
+    aes_key: &[u8; 16],
+    conn_id: u16,
+    seqno: u32,
+    hello: bool,
+    proto_bytes: &[u8],
+) -> Vec<u8> {
+    let plaintext = tcp_plaintext(proto_bytes, hello);
+    let header = Header { flags: HeaderFlags::empty(), relay_id: None, conn_id: None, seqno: None };
+    let header_bytes = header.encode();
+    let iv = RelayIv { device: DeviceType::Relay, channel: ChannelType::TcpClient, conn_id, seqno };
+    let ciphertext = encrypt(aes_key, &iv.to_bytes(), &header_bytes, &plaintext);
+    frame_tcp(&header_bytes, &ciphertext)
+}
+
+/// Build an inbound TCP capture payload as written by `tcp.rs`:
+/// `[header_bytes][ciphertext||tag4]` — no 2-byte length prefix.
+/// The server's plaintext is raw proto bytes; it does not use the
+/// `[TCP_VERSION][hello_byte]` envelope that the client adds to its
+/// outbound frames.
+fn make_inbound_tcp_frame(
+    aes_key: &[u8; 16],
+    conn_id: u16,
+    seqno: u32,
+    proto_bytes: &[u8],
+) -> Vec<u8> {
+    let header = Header { flags: HeaderFlags::empty(), relay_id: None, conn_id: None, seqno: None };
+    let header_bytes = header.encode();
+    let iv = RelayIv { device: DeviceType::Relay, channel: ChannelType::TcpServer, conn_id, seqno };
+    let ciphertext = encrypt(aes_key, &iv.to_bytes(), &header_bytes, proto_bytes);
+    let mut frame = header_bytes;
+    frame.extend_from_slice(&ciphertext);
+    frame
+}
+
+/// Build a `SessionManifest` suitable for a single-session test.
+fn test_manifest(aes_key: [u8; 16], conn_id: u32) -> SessionManifest {
+    SessionManifest {
+        aes_key,
+        device_type: DeviceType::Relay as u16 as u8,
+        channel_type: ChannelType::TcpClient as u16 as u8,
+        send_iv_seqno_tcp: 0,
+        recv_iv_seqno_tcp: 0,
+        send_iv_seqno_udp: 0,
+        recv_iv_seqno_udp: 0,
+        relay_id: 42,
+        conn_id,
+        expires_at_unix_ns: 9_999_999_999_999_999_999,
+    }
+}
+
+#[tokio::test]
+async fn follow_decrypts_outbound_tcp_frame() {
+    let aes_key = [1u8; 16];
+    let conn_id: u16 = 99;
+
+    let cts = zwift_proto::ClientToServer { seqno: Some(7), ..Default::default() };
+    let proto_bytes = cts.encode_to_vec();
+    let payload = make_outbound_tcp_frame(&aes_key, conn_id, 0, false, &proto_bytes);
+
+    let record = CaptureRecord {
+        ts_unix_ns: 1_700_000_000_000_000_000,
+        direction: Direction::Outbound,
+        transport: TransportKind::Tcp,
+        hello: false,
+        payload,
+    };
+
+    let path = write_capture_with_manifest(
+        test_manifest(aes_key, conn_id as u32),
+        vec![record],
+    ).await;
+
+    let (result, out) = run_follow(path.path(), true, Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains("ClientToServer"),
+        "STEP-12.30: follow must decrypt the manifest key and decode outbound TCP frames as ClientToServer; got:\n{text}",
+    );
+}
+
+#[tokio::test]
+async fn follow_decrypts_inbound_tcp_frame() {
+    let aes_key = [2u8; 16];
+    let conn_id: u16 = 77;
+
+    let stc = zwift_proto::ServerToClient { seqno: Some(42), world_time: Some(1_000_000), ..Default::default() };
+    let proto_bytes = stc.encode_to_vec();
+    let payload = make_inbound_tcp_frame(&aes_key, conn_id, 0, &proto_bytes);
+
+    let record = CaptureRecord {
+        ts_unix_ns: 1_700_000_000_000_000_000,
+        direction: Direction::Inbound,
+        transport: TransportKind::Tcp,
+        hello: false,
+        payload,
+    };
+
+    let path = write_capture_with_manifest(
+        test_manifest(aes_key, conn_id as u32),
+        vec![record],
+    ).await;
+
+    let (result, out) = run_follow(path.path(), true, Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains("ServerToClient"),
+        "STEP-12.30: follow must decrypt the manifest key and decode inbound TCP frames as ServerToClient; got:\n{text}",
+    );
+}
+
+#[test]
+fn follow_subcommand_has_no_decode_flag() {
+    use ranchero::cli::parse_from;
+    let result = parse_from(["ranchero", "follow", "--decode", "foo.cap"]);
+    assert!(
+        result.is_err(),
+        "STEP-12.30: `--decode` flag must be removed from `ranchero follow`; \
+        the parse succeeded but should have failed with an unknown-argument error",
     );
 }
