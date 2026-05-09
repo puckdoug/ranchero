@@ -88,21 +88,11 @@ fn parses_replay_with_verbose() {
 fn parses_follow_subcommand() {
     let cli = parse(&["ranchero", "follow", "/tmp/x.cap"]);
     match cli.command {
-        Command::Follow { ref path, decode, idle_timeout } => {
+        Command::Follow { ref path, idle_timeout } => {
             assert_eq!(path, std::path::Path::new("/tmp/x.cap"));
-            assert!(!decode, "decode defaults to false");
             assert!(idle_timeout.is_none(), "idle_timeout defaults to None");
         }
         other => panic!("expected Follow, got {other:?}"),
-    }
-}
-
-#[test]
-fn parses_follow_with_decode() {
-    let cli = parse(&["ranchero", "follow", "/tmp/x.cap", "--decode"]);
-    match cli.command {
-        Command::Follow { decode, .. } => assert!(decode),
-        other => panic!("expected Follow {{ decode: true }}, got {other:?}"),
     }
 }
 

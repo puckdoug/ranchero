@@ -6,7 +6,7 @@
 
 ### Phase 1 — Fix `follow`: decrypt frames; remove `--decode` flag
 - [x] 1a — Failing tests: `follow_decrypts_outbound_tcp_frame`, `follow_decrypts_inbound_tcp_frame`, `follow_subcommand_has_no_decode_flag`
-- [ ] 1b — Implement decryption in `print_follow_to`; remove `decode` parameter and `--decode` CLI flag
+- [x] 1b — Implement decryption in `print_follow_to`; remove `decode` parameter and `--decode` CLI flag
 
 ### Phase 2 — Wire `CaptureSink`; extend capture format to v3 with content-type field
 - [ ] 2a — Failing test: `login_http_exchange_appears_in_capture`
