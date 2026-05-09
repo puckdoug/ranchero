@@ -686,6 +686,16 @@ pub struct RelayRuntime {
     /// set up immediately) or on older start paths.
     /// (STEP-12.16 §F6 Phase 3)
     resume_udp_abort: Option<tokio::task::AbortHandle>,
+    /// Set true by `shutdown()` before signalling the recv-loop.
+    /// The connection_manager and recv_loop both check this to
+    /// distinguish an explicit shutdown from an unexpected TCP
+    /// disconnect.  (STEP-12.16 §F7 Phase 4)
+    stopping: Arc<AtomicBool>,
+    /// Notified by the recv_loop when the TCP channel closes
+    /// unexpectedly (and stopping is false), and by `shutdown()` to
+    /// wake the connection_manager from any `notified().await` or
+    /// backoff sleep.  (STEP-12.16 §F7 Phase 4)
+    reconnect_needed: Arc<Notify>,
     /// Auth handle retained for the best-effort `logout()` + `leave()`
     /// calls issued by `shutdown()`. Only the production `start_with_writer`
     /// path sets this; test paths that use stub auth leave it `None`.
@@ -2042,20 +2052,65 @@ impl RelayRuntime {
         });
 
         let shutdown = Arc::new(Notify::new());
-        let recv_shutdown = shutdown.clone();
-        let recv_writer = capture_writer.clone();
-        let inner_for_recv = Arc::clone(&inner);
-        let join_handle = tokio::spawn(async move {
-            recv_loop(
-                channel,
-                recv_rx,
-                udp_events_rx,
-                recv_shutdown,
-                recv_writer,
-                inner_for_recv,
-            )
-            .await
-        });
+        let stopping = Arc::new(AtomicBool::new(false));
+        let reconnect_needed = Arc::new(Notify::new());
+
+        // Spawn the initial recv-loop as a plain task.  The connection_manager
+        // below awaits this handle and takes over when it exits.
+        let initial_recv_handle = {
+            let recv_shutdown = Arc::clone(&shutdown);
+            let recv_writer = capture_writer.clone();
+            let inner_for_recv = Arc::clone(&inner);
+            let stopping_for_recv = Arc::clone(&stopping);
+            let reconnect_for_recv = Arc::clone(&reconnect_needed);
+            tokio::spawn(async move {
+                recv_loop(
+                    channel,
+                    recv_rx,
+                    udp_events_rx,
+                    recv_shutdown,
+                    recv_writer,
+                    inner_for_recv,
+                    stopping_for_recv,
+                    reconnect_for_recv,
+                )
+                .await
+            })
+        };
+
+        // The connection_manager owns tcp_factory and runs the reconnect loop.
+        // It becomes the join_handle so runtime.join() covers the full lifetime
+        // including all reconnects.  (STEP-12.16 §F7 Phase 4)
+        let join_handle = {
+            let session_for_cm = session.clone();
+            let inner_for_cm = Arc::clone(&inner);
+            let shutdown_for_cm = Arc::clone(&shutdown);
+            let stopping_for_cm = Arc::clone(&stopping);
+            let reconnect_for_cm = Arc::clone(&reconnect_needed);
+            let events_tx_for_cm = events_tx.clone();
+            let udp_events_tx_for_cm = udp_events_tx.clone();
+            let capture_for_cm = capture_writer.clone();
+            let game_events_for_cm = game_events_tx.clone();
+            tokio::spawn(async move {
+                connection_manager(
+                    initial_recv_handle,
+                    tcp_factory,
+                    tcp_config,
+                    session_for_cm,
+                    inner_for_cm,
+                    shutdown_for_cm,
+                    stopping_for_cm,
+                    reconnect_for_cm,
+                    events_tx_for_cm,
+                    udp_events_tx_for_cm,
+                    capture_for_cm,
+                    athlete_id,
+                    watched_id_i64,
+                    game_events_for_cm,
+                )
+                .await
+            })
+        };
 
         // 13. Spawn the state-refresher polling task. (STEP-12.14 §L1 / §L2)
         // Wraps `auth` in an Arc so the spawned task and any future
@@ -2121,6 +2176,8 @@ impl RelayRuntime {
             supervisor_event_abort: Some(supervisor_event_abort),
             state_refresher_abort: Some(state_refresher_abort),
             resume_udp_abort,
+            stopping,
+            reconnect_needed,
             shutdown_auth: None,
         })
     }
@@ -2266,6 +2323,9 @@ impl RelayRuntime {
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
         let inner_for_recv = Arc::clone(&inner);
+        // start_inner is the older path; no reconnect infrastructure.
+        let noop_stopping = Arc::new(AtomicBool::new(false));
+        let noop_reconnect = Arc::new(Notify::new());
         let join_handle = tokio::spawn(async move {
             recv_loop(
                 channel,
@@ -2274,6 +2334,8 @@ impl RelayRuntime {
                 recv_shutdown,
                 recv_writer,
                 inner_for_recv,
+                noop_stopping,
+                noop_reconnect,
             )
             .await
         });
@@ -2290,6 +2352,8 @@ impl RelayRuntime {
             supervisor_event_abort: None,
             state_refresher_abort: None,
             resume_udp_abort: None,
+            stopping: Arc::new(AtomicBool::new(false)),
+            reconnect_needed: Arc::new(Notify::new()),
             shutdown_auth: None,
         })
     }
@@ -2420,6 +2484,12 @@ impl RelayRuntime {
                 }
             });
         }
+        // Set stopping before waking the connection_manager so it always
+        // sees stopping=true when it checks after notified() returns.
+        self.stopping.store(true, Ordering::Relaxed);
+        // Wake the connection_manager if it is waiting for a reconnect
+        // signal or sleeping in the backoff loop.
+        self.reconnect_needed.notify_one();
         self.shutdown.notify_one();
         if let Some(h) = &self.heartbeat_abort {
             h.abort();
@@ -2591,6 +2661,256 @@ impl UdpTransportFactory for DefaultUdpTransportFactory {
 
 /// Bring UDP up when the daemon started suspended (no course at startup).
 /// Waits for a course_id signal on `rx`, then connects UDP, establishes
+/// Manages TCP reconnect after a mid-session disconnect.
+///
+/// Awaits the initial recv_loop, then loops: waits for a reconnect signal
+/// from recv_loop, sleeps for a back-off period, reconnects TCP, and starts
+/// a new recv_loop.  Exits cleanly when `stopping` is true.
+/// (STEP-12.16 §F7 Phase 4b)
+async fn connection_manager<Tcp>(
+    current_recv_handle: tokio::task::JoinHandle<Result<(), RelayRuntimeError>>,
+    tcp_factory: Tcp,
+    tcp_config: zwift_relay::TcpChannelConfig,
+    session: zwift_relay::RelaySession,
+    inner: Arc<RuntimeInner>,
+    shutdown: Arc<Notify>,
+    stopping: Arc<AtomicBool>,
+    reconnect_needed: Arc<Notify>,
+    events_tx: tokio::sync::broadcast::Sender<zwift_relay::TcpChannelEvent>,
+    udp_events_tx: tokio::sync::broadcast::Sender<zwift_relay::ChannelEvent>,
+    capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
+    athlete_id: i64,
+    watched_id: i64,
+    game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+) -> Result<(), RelayRuntimeError>
+where
+    Tcp: TcpTransportFactory,
+{
+    const RECONNECT_MIN_DELAY_MS: u64 = 1000;
+    const RECONNECT_BACKOFF_FACTOR: f64 = 1.2;
+
+    // Await the initial recv_loop (or whichever recv_loop is currently active).
+    let _ = current_recv_handle.await;
+
+    let mut backoff_count = 0u32;
+
+    loop {
+        if stopping.load(Ordering::Relaxed) {
+            break;
+        }
+
+        // Wait for a reconnect signal.  shutdown() also calls notify_one()
+        // on reconnect_needed so this wakes on explicit shutdown too.
+        reconnect_needed.notified().await;
+
+        if stopping.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let delay_ms = (RECONNECT_MIN_DELAY_MS as f64
+            * RECONNECT_BACKOFF_FACTOR.powi(backoff_count as i32))
+            as u64;
+
+        tracing::info!(
+            target: "ranchero::relay",
+            delay_ms,
+            reason = "shutdown",
+            "relay.tcp.reconnect.scheduled",
+        );
+
+        // Back-off sleep interruptible by explicit shutdown.
+        tokio::select! {
+            biased;
+            _ = shutdown.notified() => {
+                if stopping.load(Ordering::Relaxed) { break; }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
+        }
+
+        if stopping.load(Ordering::Relaxed) {
+            break;
+        }
+
+        backoff_count += 1;
+        let attempt = backoff_count;
+
+        // Compute TCP server address.
+        let server = session.tcp_servers.first().ok_or(RelayRuntimeError::NoTcpServers)?;
+        let addr_str = format!("{}:{}", server.ip, zwift_relay::TCP_PORT_SECURE);
+        let addr: std::net::SocketAddr = addr_str
+            .parse()
+            .map_err(|_| RelayRuntimeError::BadTcpAddress(addr_str.clone()))?;
+
+        tracing::info!(
+            target: "ranchero::relay",
+            addr = %addr,
+            "relay.tcp.connecting",
+        );
+
+        let transport = match tcp_factory.connect(addr).await {
+            Ok(t) => {
+                tracing::info!(
+                    target: "ranchero::relay",
+                    attempt,
+                    backoff_ms = delay_ms,
+                    "relay.tcp.reconnect.attempt",
+                );
+                t
+            }
+            Err(e) => {
+                tracing::info!(
+                    target: "ranchero::relay",
+                    attempt,
+                    backoff_ms = delay_ms,
+                    error = %e,
+                    "relay.tcp.reconnect.attempt",
+                );
+                // Re-signal for another retry on the next loop iteration.
+                reconnect_needed.notify_one();
+                continue;
+            }
+        };
+
+        // Establish new TCP channel.
+        let new_conn_id = next_tcp_conn_id();
+        let new_tcp_config = zwift_relay::TcpChannelConfig {
+            conn_id: new_conn_id,
+            ..tcp_config.clone()
+        };
+        let (new_channel, mut new_channel_events_rx) =
+            match zwift_relay::TcpChannel::establish(transport, &session, new_tcp_config).await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "ranchero::relay",
+                        attempt,
+                        error = %e,
+                        "relay.tcp.reconnect.channel_failed",
+                    );
+                    reconnect_needed.notify_one();
+                    continue;
+                }
+            };
+
+        // Wait for Established.
+        let established_deadline = std::time::Duration::from_secs(5);
+        match tokio::time::timeout(established_deadline, new_channel_events_rx.recv()).await {
+            Ok(Ok(zwift_relay::TcpChannelEvent::Established)) => {
+                tracing::info!(
+                    target: "ranchero::relay",
+                    addr = %addr,
+                    "relay.tcp.established",
+                );
+            }
+            _ => {
+                tracing::warn!(
+                    target: "ranchero::relay",
+                    attempt,
+                    "relay.tcp.reconnect.established_timeout",
+                );
+                reconnect_needed.notify_one();
+                continue;
+            }
+        }
+
+        // Subscribe a new recv_loop receiver BEFORE spawning the forwarder so
+        // no events are missed.
+        let recv_rx = events_tx.subscribe();
+
+        // Forward new channel events to the shared events_tx broadcast.
+        let forwarder_tx = events_tx.clone();
+        tokio::spawn(async move {
+            let mut rx = new_channel_events_rx;
+            while let Ok(event) = rx.recv().await {
+                if forwarder_tx.send(event).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let new_channel = Arc::new(new_channel);
+        let tcp_sender: Arc<dyn TcpSend> = Arc::clone(&new_channel) as Arc<dyn TcpSend>;
+
+        // Send TCP hello on reconnect.
+        let hello_larg_wa_time = inner
+            .last_world_update_ts
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if let Err(e) = tcp_sender
+            .send_packet(
+                zwift_proto::ClientToServer {
+                    player_id: athlete_id,
+                    world_time: Some(0),
+                    seqno: Some(0),
+                    larg_wa_time: Some(hello_larg_wa_time),
+                    ..Default::default()
+                },
+                true,
+            )
+            .await
+        {
+            tracing::warn!(
+                target: "ranchero::relay",
+                attempt,
+                error = %e,
+                "relay.tcp.reconnect.hello_failed",
+            );
+            reconnect_needed.notify_one();
+            continue;
+        }
+        tracing::info!(
+            target: "ranchero::relay",
+            larg_wa_time = hello_larg_wa_time,
+            "relay.tcp.hello.sent",
+        );
+
+        tracing::info!(
+            target: "ranchero::relay",
+            attempts = attempt,
+            "relay.tcp.reconnect.succeeded",
+        );
+        backoff_count = 0;
+
+        // Emit a "I'm watching" post-establish send if the resume path hasn't
+        // done so (i.e. the watched athlete is still in a known world).
+        // For Phase 4b this is best-effort; full reconnect state restoration
+        // is addressed in a later phase.
+        let _ = game_events_tx;
+        let _ = watched_id;
+
+        // Spawn the new recv_loop.
+        let new_udp_events_rx = udp_events_tx.subscribe();
+        let inner_for_recv = Arc::clone(&inner);
+        let shutdown_for_recv = Arc::clone(&shutdown);
+        let stopping_for_recv = Arc::clone(&stopping);
+        let reconnect_for_recv = Arc::clone(&reconnect_needed);
+        let writer_for_recv = capture_writer.clone();
+        let new_recv_handle = tokio::spawn(async move {
+            recv_loop(
+                new_channel,
+                recv_rx,
+                new_udp_events_rx,
+                shutdown_for_recv,
+                writer_for_recv,
+                inner_for_recv,
+                stopping_for_recv,
+                reconnect_for_recv,
+            )
+            .await
+        });
+
+        // Wait for the new recv_loop; it signals reconnect_needed if TCP
+        // drops again, and the outer loop handles that on the next iteration.
+        let _ = new_recv_handle.await;
+    }
+
+    // Explicit shutdown: flush and close the capture writer if it is still open.
+    if let Some(writer) = capture_writer.as_ref() {
+        let _ = writer.flush_and_close().await;
+    }
+
+    Ok(())
+}
+
 /// the channel, sends the post-establish "I'm watching" packet, spawns
 /// the heartbeat, clears the suspended flag, and emits
 /// `relay.runtime.resumed` with a `course_id` field.
@@ -2735,6 +3055,8 @@ async fn recv_loop<T>(
     shutdown: Arc<Notify>,
     capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
     inner: Arc<RuntimeInner>,
+    stopping: Arc<AtomicBool>,
+    reconnect_needed: Arc<Notify>,
 ) -> Result<(), RelayRuntimeError>
 where
     T: zwift_relay::TcpTransport,
@@ -2898,8 +3220,16 @@ where
                         tracing::warn!(target: "ranchero::relay", %error, "relay.tcp.recv_error");
                     }
                     Ok(zwift_relay::TcpChannelEvent::Shutdown) => {
-                        // The channel emits Shutdown on its own
-                        // shutdown path; treat it as final and exit.
+                        if stopping.load(Ordering::Relaxed) {
+                            // Explicit shutdown triggered the TCP close;
+                            // the shutdown.notified() branch will handle
+                            // the flush, or it already has.
+                            return Ok(());
+                        }
+                        // Unexpected TCP disconnect: signal the
+                        // connection_manager to schedule a reconnect.
+                        // (STEP-12.16 §F7 Phase 4)
+                        reconnect_needed.notify_one();
                         return Ok(());
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {

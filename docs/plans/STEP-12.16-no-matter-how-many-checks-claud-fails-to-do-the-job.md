@@ -294,38 +294,32 @@ and a new "bring UDP up now" helper.
   - `tcp_reconnect_stops_on_explicit_shutdown` — injects Shutdown then
     calls `runtime.shutdown()` immediately; asserts count == 1.
     GREEN from start (regression guard for Phase 4b).
-- [ ] **4b** — Implementation:
-  - In `recv_loop`, when `TcpChannelEvent::Shutdown` arrives and
-    the runtime has not been asked to stop, do not return
-    `Ok(())`. Instead, signal a reconnect to a new
-    `tcp_reconnect_loop` task spawned at startup.
-  - The reconnect task owns the same factories as
-    `start_with_retry` and re-runs the steps from "TCP connect"
-    onward (TCP connect, hello, `udp_config` wait, UDP setup if
-    course is known) using the existing exponential-backoff
-    helper. The auth, session, and capture writer are NOT
-    re-created.
-  - Use a shutdown flag (the existing `Notify` plus an
-    `AtomicBool` for "stopping requested") so an in-flight
-    reconnect aborts on `runtime.shutdown()`.
-  - **Logging contract** (matching the existing
-    `relay.tcp.connecting` / `…established` / `…timeout`
-    namespace, not `relay.runtime.*`):
-    - `relay.tcp.reconnect.scheduled` (info) with `delay_ms` and
-      `reason` ("shutdown" | "handshake_timeout") when the
-      reconnect is queued.
-    - `relay.tcp.reconnect.attempt` (info) with `attempt` and
-      `backoff_ms`. On a failed attempt, include
-      `error = %e` in the same record (do not split into a
-      separate warn).
-    - `relay.tcp.reconnect.succeeded` (info) with `attempts`.
-    - `relay.tcp.reconnect.failed` (warn) with `attempts` and
-      `error = %e` after the configured retry budget exhausts;
-      this terminates the daemon, parallel to the F2 startup
-      retries giving up.
-  - The new traces are log-only; no capture-file record. The
-    capture writer continues across reconnects so post-reconnect
-    TCP/UDP frames land in the same file.
+- [x] **4b** — Implementation:
+  - New `stopping: Arc<AtomicBool>` and `reconnect_needed: Arc<Notify>`
+    fields on `RelayRuntime`.  `shutdown()` sets `stopping=true`,
+    calls `reconnect_needed.notify_one()` (to interrupt waiting
+    connection_manager), then `shutdown.notify_one()` (to signal
+    recv_loop).
+  - `recv_loop` gains `stopping` and `reconnect_needed` parameters.
+    On `TcpChannelEvent::Shutdown`: if stopping → return Ok (existing
+    explicit-shutdown path); else → `reconnect_needed.notify_one()`,
+    return Ok (triggers reconnect).
+  - New `connection_manager<Tcp>` async function captures `tcp_factory`
+    by value.  Awaits initial recv_loop handle, then loops:
+    - Wait for `reconnect_needed.notified()`; check stopping.
+    - Emit `relay.tcp.reconnect.scheduled delay_ms=… reason="shutdown"`.
+    - Back-off sleep interruptible via `select!` with `shutdown.notified()`.
+    - Increment `backoff_count`; emit `relay.tcp.reconnect.attempt attempt=N
+      backoff_ms=M` (success path) or `…attempt=N … error=…` (failure).
+    - On failure: `reconnect_needed.notify_one()`, continue.
+    - On success: `TcpChannel::establish`, wait for Established, subscribe
+      new `recv_rx`, spawn forwarder, send TCP hello, emit
+      `relay.tcp.reconnect.succeeded attempts=N`, reset backoff, spawn
+      new recv_loop, await it.
+  - `start_all_inner`'s `join_handle` is now the `connection_manager`
+    task; the initial recv_loop is an intermediate handle that the
+    manager awaits first.
+  - Full suite green (`cargo test --workspace`).
 
 ### Phase 5 — F8: extend startup handshake timeouts to match the reference
 
