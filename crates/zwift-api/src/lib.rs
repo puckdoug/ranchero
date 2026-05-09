@@ -850,6 +850,7 @@ impl ZwiftAuth {
     async fn post_empty(&self, urn: &str) -> Result<()> {
         let url = format!("{}{}", self.inner.config.api_base, urn);
         let bearer = self.bearer().await?;
+        self.inner.record_outbound(CaptureContentType::Empty, &[]);
         tracing::debug!(
             target: "ranchero::relay",
             method = "POST",
@@ -869,6 +870,7 @@ impl ZwiftAuth {
             .await?;
         let status = resp.status();
         let body_bytes = resp.bytes().await?;
+        self.inner.record_inbound(CaptureContentType::Empty, &body_bytes);
         tracing::debug!(
             target: "ranchero::relay",
             method = "POST",
