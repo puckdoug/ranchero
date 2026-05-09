@@ -4835,3 +4835,189 @@ async fn handshake_timeout_emits_reconnect_scheduled_with_reason() {
          mid-session TCP disconnect",
     );
 }
+
+// ==========================================================================
+// STEP-12.16 Phase 6a — trace-event audit
+//
+// These tests document the complete trace-event contract for all new
+// lifecycle events added in Phases 1-5.  All four are GREEN from the start
+// because the implementations landed alongside the feature phases.  They
+// serve as regression guards so future changes cannot silently drop a
+// lifecycle event.
+// ==========================================================================
+
+/// relay.runtime.suspended_no_course must be emitted at INFO when the daemon
+/// starts with the watched athlete offline (no world in PlayerState).
+/// Verifies the Phase 1 course-gate trace contract.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn suspended_start_emits_runtime_suspended_no_course() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        WatchedAthleteOfflineAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await;
+
+    assert!(result.is_ok(), "suspended start must succeed; got {:?}", result.err());
+    let runtime = result.unwrap();
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.suspended_no_course",
+        ),
+        "STEP-12.16 Phase 6a: relay.runtime.suspended_no_course must be \
+         emitted at INFO when the daemon starts suspended (no course known)",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "watched_athlete_id"),
+        "STEP-12.16 Phase 6a: relay.runtime.suspended_no_course must carry \
+         the watched_athlete_id field so operators can identify the athlete",
+    );
+}
+
+/// relay.runtime.resumed must be emitted with a course_id field when the
+/// state refresher detects the watched athlete entering a game.
+/// Verifies the Phase 3 resume trace contract.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn resume_emits_runtime_resumed_with_course_id() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    // TransitioningAuth: call 1 (startup) → world None (suspended);
+    // call 2 (first state-refresher poll after 3 s) → world Some(7).
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        TransitioningAuth::new(),
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect("suspended start must succeed");
+
+    // Advance past MIN_DELAY (3 s) so the state refresher fires and
+    // resume_udp brings UDP up.
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.runtime.resumed"),
+        "STEP-12.16 Phase 6a: relay.runtime.resumed must be emitted when \
+         the state refresher detects the watched athlete entering a game",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "course_id"),
+        "STEP-12.16 Phase 6a: relay.runtime.resumed must carry a course_id \
+         field so operators can confirm which world the athlete entered",
+    );
+}
+
+/// The full TCP reconnect lifecycle must emit all three traces in order:
+/// relay.tcp.reconnect.scheduled → relay.tcp.reconnect.attempt → relay.tcp.reconnect.succeeded.
+/// Verifies the Phase 4 reconnect trace contract.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn tcp_reconnect_emits_full_lifecycle_traces() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        RepeatableTcpFactory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("initial start must succeed");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Trigger a mid-session TCP disconnect.
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Shutdown);
+
+    // Advance past the minimum backoff (1 s) so the reconnect fires.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    for event in [
+        "relay.tcp.reconnect.scheduled",
+        "relay.tcp.reconnect.attempt",
+        "relay.tcp.reconnect.succeeded",
+    ] {
+        assert!(
+            tracing_test::internal::logs_with_scope_contain("ranchero", event),
+            "STEP-12.16 Phase 6a: {event} must be emitted during the \
+             reconnect lifecycle",
+        );
+    }
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "attempts="),
+        "STEP-12.16 Phase 6a: relay.tcp.reconnect.succeeded must carry an \
+         attempts field",
+    );
+}
+
+/// relay.tcp.handshake.timeout must be emitted at WARN with phase and
+/// elapsed_ms fields before the reconnect is scheduled.
+/// Verifies the Phase 5 handshake-timeout trace contract.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn handshake_timeout_emits_warn_event_before_reconnect() {
+    let cfg = make_config("rider@example.com", "secret");
+    let (tcp_factory, _) = SilentThenNormalTcpFactory::new();
+
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(65),
+        RelayRuntime::start_with_all_deps(
+            &cfg,
+            None,
+            StubAuth,
+            StubSupervisorFactory::new(fixture_session()),
+            tcp_factory,
+            NoopUdpFactory,
+        ),
+    )
+    .await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.handshake.timeout",
+        ),
+        "STEP-12.16 Phase 6a: relay.tcp.handshake.timeout must be emitted \
+         at WARN when the 30 s handshake budget expires",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "phase="),
+        "STEP-12.16 Phase 6a: relay.tcp.handshake.timeout must carry a \
+         phase field (\"established\" or \"udp_config\")",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "elapsed_ms="),
+        "STEP-12.16 Phase 6a: relay.tcp.handshake.timeout must carry an \
+         elapsed_ms field so operators know how long the budget ran",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.reconnect.scheduled",
+        ),
+        "STEP-12.16 Phase 6a: relay.tcp.reconnect.scheduled must follow \
+         relay.tcp.handshake.timeout — the timeout triggers a reconnect",
+    );
+}

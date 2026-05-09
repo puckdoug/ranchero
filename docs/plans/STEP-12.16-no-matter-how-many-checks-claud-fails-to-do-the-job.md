@@ -184,7 +184,7 @@ contract; `Nb` is the implementation that makes them pass.
   - `course_id` is now `Option<i32>` throughout `start_all_inner`.
   - UDP-connect, heartbeat spawn, and the post-establish "I'm
     watching" send are all wrapped in `if let Some(course_id_val)
-    = course_id`; `heartbeat_abort` is now
+= course_id`; `heartbeat_abort` is now
     `Option<tokio::task::AbortHandle>` (Phase 2b UDP-deferral
     incorporated here to keep the pre-existing
     `course_gate.rs::start_all_inner_suspends_when_watched_athlete_has_no_course`
@@ -206,7 +206,7 @@ state-refresher, recv-loop, and capture writer all start as today.
     verifies `connected == false` after a suspended start.
   - `suspended_start_does_not_spawn_heartbeat` — `RecordingUdpFactory`
     verifies `written.is_empty()` after a suspended start (heartbeat task
-    not spawned → no UDP packets written).  Negative trace assertion
+    not spawned → no UDP packets written). Negative trace assertion
     avoided: `relay.heartbeat.started` fires in many concurrent tests and
     pollutes the global log buffer.
   - `suspended_start_still_establishes_tcp` — `relay.tcp.established`
@@ -214,7 +214,7 @@ state-refresher, recv-loop, and capture writer all start as today.
 - [x] **2b** — Implementation (incorporated into Phase 1b):
   - UDP-connect block, heartbeat spawn, and the post-establish "I'm
     watching" send are all wrapped in `if let Some(course_id_val) =
-    course_id { ... } else { None }`.
+course_id { ... } else { None }`.
   - `heartbeat_abort` is `Option<tokio::task::AbortHandle>`, `None` when
     suspended.
   - All Phase 2a tests pass; full suite green (`cargo test --workspace`).
@@ -234,12 +234,12 @@ and a new "bring UDP up now" helper.
     state-refresher poll after 3 s) returns `world: Some(7)`.
     `RecordingUdpFactory::connected` must be true after 4 s of
     paused-time advance; `relay.runtime.resumed` and `course_id`
-    must appear in traces.  Currently RED (state refresher does
+    must appear in traces. Currently RED (state refresher does
     not call resume_udp).
   - `recv_loop_self_state_with_world_transitions_out_of_suspended` —
     starts suspended; injects `TcpChannelEvent::Inbound` carrying
     the watched athlete's `PlayerState { id: 54321, world: Some(7)
-    }`.  `RecordingUdpFactory::connected` must be true after 100 ms.
+}`. `RecordingUdpFactory::connected` must be true after 100 ms.
     Currently RED (recv-loop clears suspended flag but does not call
     resume_udp).
   - Negative trace assertion removed from
@@ -286,17 +286,17 @@ and a new "bring UDP up now" helper.
   - `tcp_channel_shutdown_mid_session_triggers_reconnect` — injects
     `TcpChannelEvent::Shutdown` after established; asserts
     `tcp_connect_count == 2` after 2 s and trace contains
-    `relay.tcp.reconnect.scheduled`.  Currently RED (count stays 1).
+    `relay.tcp.reconnect.scheduled`. Currently RED (count stays 1).
   - `tcp_reconnect_increments_attempt_counter_on_repeated_failures` —
     `ReconnectSequenceTcpFactory`; injects Shutdown; asserts count == 3
     and trace contains `relay.tcp.reconnect.attempt attempt=1` and
-    `attempt=2`.  Currently RED (count stays 1).
+    `attempt=2`. Currently RED (count stays 1).
   - `tcp_reconnect_stops_on_explicit_shutdown` — injects Shutdown then
     calls `runtime.shutdown()` immediately; asserts count == 1.
     GREEN from start (regression guard for Phase 4b).
 - [x] **4b** — Implementation:
   - New `stopping: Arc<AtomicBool>` and `reconnect_needed: Arc<Notify>`
-    fields on `RelayRuntime`.  `shutdown()` sets `stopping=true`,
+    fields on `RelayRuntime`. `shutdown()` sets `stopping=true`,
     calls `reconnect_needed.notify_one()` (to interrupt waiting
     connection_manager), then `shutdown.notify_one()` (to signal
     recv_loop).
@@ -305,12 +305,12 @@ and a new "bring UDP up now" helper.
     explicit-shutdown path); else → `reconnect_needed.notify_one()`,
     return Ok (triggers reconnect).
   - New `connection_manager<Tcp>` async function captures `tcp_factory`
-    by value.  Awaits initial recv_loop handle, then loops:
+    by value. Awaits initial recv_loop handle, then loops:
     - Wait for `reconnect_needed.notified()`; check stopping.
     - Emit `relay.tcp.reconnect.scheduled delay_ms=… reason="shutdown"`.
     - Back-off sleep interruptible via `select!` with `shutdown.notified()`.
     - Increment `backoff_count`; emit `relay.tcp.reconnect.attempt attempt=N
-      backoff_ms=M` (success path) or `…attempt=N … error=…` (failure).
+backoff_ms=M` (success path) or `…attempt=N … error=…` (failure).
     - On failure: `reconnect_needed.notify_one()`, continue.
     - On success: `TcpChannel::establish`, wait for Established, subscribe
       new `recv_rx`, spawn forwarder, send TCP hello, emit
@@ -346,8 +346,8 @@ and a new "bring UDP up now" helper.
     added near the top of `relay.rs`.
   - Established wait in `start_all_inner`: replaced `5s` with
     `HANDSHAKE_BUDGET`; on timeout emits `relay.tcp.handshake.timeout
-    phase="established"` and `relay.tcp.reconnect.scheduled
-    reason="handshake_timeout"`, then returns `EstablishedTimeout(HANDSHAKE_BUDGET)`.
+phase="established"` and `relay.tcp.reconnect.scheduled
+reason="handshake_timeout"`, then returns `EstablishedTimeout(HANDSHAKE_BUDGET)`.
   - UDP-config wait: replaced standalone `udp_config_deadline = 5s` with
     the remaining portion of `handshake_deadline` (shared with the
     Established wait); both timeout branches emit
@@ -361,13 +361,13 @@ and a new "bring UDP up now" helper.
 
 ### Phase 6 — Trace-event audit (new lifecycle events)
 
-- [ ] **6a** — Tests:
+- [x] **6a** — Tests:
   - `suspended_start_emits_runtime_suspended_no_course`.
   - `resume_emits_runtime_resumed_with_course_id`.
   - `tcp_reconnect_emits_full_lifecycle_traces` —
     `scheduled` → `attempt` → `succeeded`.
   - `handshake_timeout_emits_warn_event_before_reconnect`.
-- [ ] **6b** — Implementation:
+- [x] **6b** — Implementation:
   - Add `course_id` to the existing `relay.runtime.resumed` trace
     so the operator can confirm which course the daemon resumed
     on.
@@ -454,20 +454,20 @@ once F6-F8 add their own traces.
 
 #### Logging-contract summary for the new STEP-12.16 events
 
-| Event | Level | Target | Phase | Capture |
-| --- | --- | --- | --- | --- |
-| `relay.runtime.suspended_no_course` | info | `ranchero::relay` | 1 | log only |
-| `relay.runtime.resumed` (course_id field added) | info | `ranchero::relay` | 3 | log only |
-| `relay.tcp.reconnect.scheduled` | info | `ranchero::relay` | 4 | log only |
-| `relay.tcp.reconnect.attempt` | info | `ranchero::relay` | 4 | log only |
-| `relay.tcp.reconnect.succeeded` | info | `ranchero::relay` | 4 | log only |
-| `relay.tcp.reconnect.failed` | warn | `ranchero::relay` | 4 | log only |
-| `relay.tcp.handshake.timeout` | warn | `ranchero::relay` | 5 | log only |
-| `relay.runtime.logout_succeeded` | info | `ranchero::relay` | 7 | log only |
-| `relay.runtime.leave_succeeded` | info | `ranchero::relay` | 7 | log only |
-| `relay.heartbeat.suspended` (edge) | info | `ranchero::relay` | 7 | log only |
-| `relay.heartbeat.resumed` (edge) | info | `ranchero::relay` | 7 | log only |
-| `ranchero.startup.validation_failed` | warn | `ranchero::daemon` | 7 | log only |
+| Event                                           | Level | Target             | Phase | Capture  |
+| ----------------------------------------------- | ----- | ------------------ | ----- | -------- |
+| `relay.runtime.suspended_no_course`             | info  | `ranchero::relay`  | 1     | log only |
+| `relay.runtime.resumed` (course_id field added) | info  | `ranchero::relay`  | 3     | log only |
+| `relay.tcp.reconnect.scheduled`                 | info  | `ranchero::relay`  | 4     | log only |
+| `relay.tcp.reconnect.attempt`                   | info  | `ranchero::relay`  | 4     | log only |
+| `relay.tcp.reconnect.succeeded`                 | info  | `ranchero::relay`  | 4     | log only |
+| `relay.tcp.reconnect.failed`                    | warn  | `ranchero::relay`  | 4     | log only |
+| `relay.tcp.handshake.timeout`                   | warn  | `ranchero::relay`  | 5     | log only |
+| `relay.runtime.logout_succeeded`                | info  | `ranchero::relay`  | 7     | log only |
+| `relay.runtime.leave_succeeded`                 | info  | `ranchero::relay`  | 7     | log only |
+| `relay.heartbeat.suspended` (edge)              | info  | `ranchero::relay`  | 7     | log only |
+| `relay.heartbeat.resumed` (edge)                | info  | `ranchero::relay`  | 7     | log only |
+| `ranchero.startup.validation_failed`            | warn  | `ranchero::daemon` | 7     | log only |
 
 All new events are control-plane / lifecycle. None corresponds to
 a wire frame, so none belongs in the capture file. Wire-relevant
