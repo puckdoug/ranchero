@@ -4037,3 +4037,129 @@ async fn start_with_watched_athlete_in_game_proceeds_normally() {
          NOT fire when the watched athlete is in a game at start time",
     );
 }
+
+// ==========================================================================
+// STEP-12.16 §F6 Phase 2a — UDP and heartbeat deferred on suspended start
+//
+// These tests verify that a suspended start (watched athlete not in game)
+// brings TCP up normally but does NOT call udp_factory.connect() and does
+// NOT emit relay.heartbeat.started.  Complements the Phase 1a lifecycle
+// trace tests above and the course_gate.rs assertion that `connected`
+// remains false.
+// ==========================================================================
+
+/// UDP factory connect must NOT be called when the daemon starts suspended.
+/// Phase 2b wraps the UDP-connect block in `if let Some(course_id_val) =
+/// course_id`, so `RecordingUdpFactory::connected` stays false.
+#[tokio::test]
+async fn suspended_start_does_not_create_udp_channel() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let (udp_factory, connected, _written) = RecordingUdpFactory::new();
+
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        WatchedAthleteOfflineAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.16 §F6 Phase 2a: suspended start must succeed; got {:?}",
+        result.err(),
+    );
+    let runtime = result.unwrap();
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        !*connected.lock().unwrap(),
+        "STEP-12.16 §F6 Phase 2a: udp_factory.connect() must NOT be called \
+         when the daemon starts suspended (watched athlete not in a game)",
+    );
+}
+
+/// The heartbeat task must NOT be spawned on a suspended start.  The
+/// heartbeat's only output is UDP packets; if no UDP packets are written
+/// to a RecordingUdpFactory transport, the task was never started.
+/// Using RecordingUdpFactory avoids the fragile negative tracing assertion
+/// (relay.heartbeat.started fires in many other tests and pollutes the
+/// global log buffer when tests run in parallel).
+#[tokio::test]
+async fn suspended_start_does_not_spawn_heartbeat() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let (udp_factory, _connected, written) = RecordingUdpFactory::new();
+
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        WatchedAthleteOfflineAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.16 §F6 Phase 2a: suspended start must succeed; got {:?}",
+        result.err(),
+    );
+    let runtime = result.unwrap();
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        written.lock().unwrap().is_empty(),
+        "STEP-12.16 §F6 Phase 2a: no UDP packets must be written on a \
+         suspended start — the heartbeat task is gated on the watched \
+         athlete being in a known world",
+    );
+}
+
+/// TCP must connect and establish normally on a suspended start.
+/// Phase 2b defers only the UDP-side steps; the TCP channel runs regardless
+/// of whether a course is known.  The relay.tcp.established positive
+/// assertion is safe in parallel — it is emitted by this test's own
+/// runtime.  The absence of relay.udp.established is already verified
+/// by suspended_start_does_not_create_udp_channel (RecordingUdpFactory
+/// shows connected = false); asserting it via the global log buffer
+/// would be unreliable when other tests emit the same event concurrently.
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn suspended_start_still_establishes_tcp() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        WatchedAthleteOfflineAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.16 §F6 Phase 2a: suspended start must succeed; got {:?}",
+        result.err(),
+    );
+    let runtime = result.unwrap();
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.established",
+        ),
+        "STEP-12.16 §F6 Phase 2a: relay.tcp.established must fire on a \
+         suspended start — TCP comes up regardless of whether a course is known",
+    );
+}

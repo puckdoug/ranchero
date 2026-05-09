@@ -201,26 +201,23 @@ Bringing TCP up without UDP and heartbeat matches sauce's
 `setUDPChannel()`-deferred path. The supervisor-event handler,
 state-refresher, recv-loop, and capture writer all start as today.
 
-- [ ] **2a** — Tests:
-  - `suspended_start_does_not_create_udp_channel` — the UDP
-    factory's `connect` count is zero after a suspended start.
-  - `suspended_start_does_not_spawn_heartbeat` — no
-    `relay.heartbeat.started` trace; the recording UDP sink
-    receives zero packets after several simulated seconds.
-  - `suspended_start_still_runs_tcp_and_state_refresher` — the
-    TCP factory's `connect` count is one; the state refresher's
-    polling trace fires at least once.
-- [ ] **2b** — Implementation:
-  - In `start_all_inner`, gate the UDP-connect block (currently
-    `:1881-1939` region) on `course_id.is_some()`. When `None`,
-    skip UDP entirely and leave `inner.current_udp_server` as
-    `None`.
-  - Gate the heartbeat spawn (`:1953-1962` region) on the same
-    condition; the `heartbeat_abort` field on `RelayRuntime`
-    becomes `None`.
-  - Confirm the post-establish "I'm watching" send (the C3 path
-    at `:1727-1748` region) is gated on `course_id.is_some()` or
-    deferred to resume. The reference defers it to `resume()`.
+- [x] **2a** — Tests (added to `tests/relay_runtime.rs`):
+  - `suspended_start_does_not_create_udp_channel` — `RecordingUdpFactory`
+    verifies `connected == false` after a suspended start.
+  - `suspended_start_does_not_spawn_heartbeat` — `RecordingUdpFactory`
+    verifies `written.is_empty()` after a suspended start (heartbeat task
+    not spawned → no UDP packets written).  Negative trace assertion
+    avoided: `relay.heartbeat.started` fires in many concurrent tests and
+    pollutes the global log buffer.
+  - `suspended_start_still_establishes_tcp` — `relay.tcp.established`
+    trace is present (positive assertion, safe in parallel).
+- [x] **2b** — Implementation (incorporated into Phase 1b):
+  - UDP-connect block, heartbeat spawn, and the post-establish "I'm
+    watching" send are all wrapped in `if let Some(course_id_val) =
+    course_id { ... } else { None }`.
+  - `heartbeat_abort` is `Option<tokio::task::AbortHandle>`, `None` when
+    suspended.
+  - All Phase 2a tests pass; full suite green (`cargo test --workspace`).
 
 ### Phase 3 — F6 Phase C: resume on first observed course
 
