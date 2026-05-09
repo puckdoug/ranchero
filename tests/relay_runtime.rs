@@ -4561,3 +4561,277 @@ async fn tcp_reconnect_stops_on_explicit_shutdown() {
          Got {count}",
     );
 }
+
+// ==========================================================================
+// STEP-12.16 §F8 Phase 5a — startup handshake timeout extension to 30 s
+//
+// sauce4zwift (zwift.mjs:1885-1923) wraps the entire session-activation
+// sequence in a single 30 s race.  Ranchero currently has two separate 5 s
+// deadlines: one for TcpChannelEvent::Established (which TcpChannel emits
+// unconditionally, so the deadline never fires in practice) and one for the
+// udp_config push over the TCP stream.
+//
+// Phase 5b replaces both with a single HANDSHAKE_BUDGET constant (30 s).
+// On expiry the daemon must enter the F7 reconnect loop (not return a fatal
+// error), emitting relay.tcp.reconnect.scheduled with reason="handshake_timeout".
+//
+// Tests 1-3 are RED because the current 5 s udp_config deadline fires before
+// the push arrives.  Tests 4-5 are RED because the timeout currently returns
+// a fatal error rather than routing to the reconnect path.
+// ==========================================================================
+
+/// TCP transport that delivers the udp_config push after a configurable delay.
+/// Used to exercise the handshake budget: with `delay > current_deadline` the
+/// startup times out; with `delay < new_budget` it succeeds.
+struct DelayedUdpConfigTransport {
+    delay: std::time::Duration,
+    delivered: StdMutex<bool>,
+}
+
+impl zwift_relay::TcpTransport for DelayedUdpConfigTransport {
+    async fn write_all(&self, _: &[u8]) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    async fn read_chunk(&self) -> std::io::Result<Vec<u8>> {
+        let already = {
+            let mut lock = self.delivered.lock().unwrap();
+            let was = *lock;
+            if !was { *lock = true; }
+            was
+        };
+        if !already {
+            tokio::time::sleep(self.delay).await;
+            return Ok(default_udp_config_push());
+        }
+        std::future::pending::<()>().await;
+        unreachable!()
+    }
+}
+
+struct DelayedUdpConfigTcpFactory {
+    delay: std::time::Duration,
+}
+
+impl TcpTransportFactory for DelayedUdpConfigTcpFactory {
+    type Transport = DelayedUdpConfigTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        let delay = self.delay;
+        async move {
+            Ok(DelayedUdpConfigTransport {
+                delay,
+                delivered: StdMutex::new(false),
+            })
+        }
+    }
+}
+
+/// TCP factory whose first connect is silent (never delivers any frames,
+/// causing a handshake timeout) and whose subsequent connects deliver a
+/// normal udp_config push immediately.  Used by tests 4-5 to verify the
+/// reconnect path after a handshake timeout.
+struct SilentThenNormalTcpFactory {
+    connect_count: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl SilentThenNormalTcpFactory {
+    fn new() -> (Self, Arc<std::sync::atomic::AtomicU32>) {
+        let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        (Self { connect_count: Arc::clone(&count) }, count)
+    }
+}
+
+impl TcpTransportFactory for SilentThenNormalTcpFactory {
+    type Transport = NoopTcpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        let n = self
+            .connect_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        async move {
+            if n == 1 {
+                Ok(NoopTcpTransport::with_pending(None)) // silent — no udp_config push
+            } else {
+                Ok(NoopTcpTransport::with_pending(Some(default_udp_config_push())))
+            }
+        }
+    }
+}
+
+/// When the udp_config push arrives 6 s after TCP connect, startup must
+/// succeed with the new 30 s handshake budget.
+///
+/// RED until Phase 5b: current udp_config_deadline is 5 s, so this
+/// fails with Err(NoUdpConfig(5s)).
+#[tokio::test(start_paused = true)]
+async fn udp_config_within_30s_budget_succeeds() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(35),
+        RelayRuntime::start_with_all_deps(
+            &cfg,
+            None,
+            StubAuth,
+            StubSupervisorFactory::new(fixture_session()),
+            DelayedUdpConfigTcpFactory {
+                delay: std::time::Duration::from_secs(6),
+            },
+            NoopUdpFactory,
+        ),
+    )
+    .await
+    .expect("test must complete within 35 s");
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.16 §F8 Phase 5a: startup must succeed when the udp_config \
+         push arrives 6 s after TCP connect — the 30 s handshake budget must \
+         cover this.  Got: {:?}",
+        result.err(),
+    );
+
+    if let Ok(runtime) = result {
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
+}
+
+/// With the combined 30 s budget, a udp_config push arriving at 25 s must
+/// allow startup to complete successfully.
+///
+/// RED until Phase 5b: current 5 s deadline fires long before 25 s.
+#[tokio::test(start_paused = true)]
+async fn combined_handshake_timeout_is_30_seconds() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(35),
+        RelayRuntime::start_with_all_deps(
+            &cfg,
+            None,
+            StubAuth,
+            StubSupervisorFactory::new(fixture_session()),
+            DelayedUdpConfigTcpFactory {
+                delay: std::time::Duration::from_secs(25),
+            },
+            NoopUdpFactory,
+        ),
+    )
+    .await
+    .expect("test must complete within 35 s");
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.16 §F8 Phase 5a: startup must succeed when the udp_config \
+         push arrives 25 s after TCP connect (within the 30 s combined budget). \
+         Got: {:?}",
+        result.err(),
+    );
+
+    if let Ok(runtime) = result {
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
+}
+
+/// When the handshake budget expires without a udp_config push, the daemon
+/// must route to the F7 reconnect loop rather than exiting with a fatal
+/// error, so the overall start_with_all_deps call succeeds once the
+/// reconnect delivers a valid session.
+///
+/// RED until Phase 5b: current code returns Err(NoUdpConfig) on timeout
+/// and start_with_all_deps propagates this as a fatal error.
+#[tokio::test(start_paused = true)]
+async fn handshake_timeout_triggers_reconnect_not_exit() {
+    let cfg = make_config("rider@example.com", "secret");
+    let (tcp_factory, tcp_connect_count) = SilentThenNormalTcpFactory::new();
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(65),
+        RelayRuntime::start_with_all_deps(
+            &cfg,
+            None,
+            StubAuth,
+            StubSupervisorFactory::new(fixture_session()),
+            tcp_factory,
+            NoopUdpFactory,
+        ),
+    )
+    .await
+    .expect("test must complete within 65 s (30 s budget + reconnect)");
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.16 §F8 Phase 5a: start_with_all_deps must succeed after a \
+         handshake timeout triggers a reconnect; the second connect delivers \
+         a valid session.  Got: {:?}",
+        result.err(),
+    );
+
+    let count = tcp_connect_count.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        count >= 2,
+        "STEP-12.16 §F8 Phase 5a: tcp_factory.connect() must be called at \
+         least twice (silent first attempt + successful reconnect). Got {count}",
+    );
+
+    if let Ok(runtime) = result {
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
+}
+
+/// When the handshake budget expires, the daemon must emit
+/// relay.tcp.reconnect.scheduled with reason="handshake_timeout" before
+/// attempting the reconnect.
+///
+/// RED until Phase 5b: current code returns Err without emitting that trace.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn handshake_timeout_emits_reconnect_scheduled_with_reason() {
+    let cfg = make_config("rider@example.com", "secret");
+    let (tcp_factory, _) = SilentThenNormalTcpFactory::new();
+
+    // With paused time the silent first connect causes the 5 s udp_config
+    // deadline to fire almost instantly (no real wall time passes).
+    // After Phase 5b the 30 s budget fires and the reconnect trace is emitted.
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(65),
+        RelayRuntime::start_with_all_deps(
+            &cfg,
+            None,
+            StubAuth,
+            StubSupervisorFactory::new(fixture_session()),
+            tcp_factory,
+            NoopUdpFactory,
+        ),
+    )
+    .await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.reconnect.scheduled",
+        ),
+        "STEP-12.16 §F8 Phase 5a: relay.tcp.reconnect.scheduled must be \
+         emitted when the 30 s handshake budget expires",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "handshake_timeout",
+        ),
+        "STEP-12.16 §F8 Phase 5a: relay.tcp.reconnect.scheduled must carry \
+         reason=\"handshake_timeout\" to distinguish a timeout from a \
+         mid-session TCP disconnect",
+    );
+}

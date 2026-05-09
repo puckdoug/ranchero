@@ -323,21 +323,24 @@ and a new "bring UDP up now" helper.
 
 ### Phase 5 — F8: extend startup handshake timeouts to match the reference
 
-- [ ] **5a** — Tests:
-  - `tcp_established_waits_at_least_30_seconds_before_timing_out`
-    — TCP factory delays `Established` by 6 s; assert startup
-    succeeds (today this fails after 5 s).
-  - `udp_config_waits_at_least_30_seconds_before_timing_out` —
-    same, with the udp_config push delayed.
-  - `combined_handshake_timeout_is_30_seconds` — both events
-    arrive together at 25 s; assert success.
-  - `handshake_timeout_triggers_reconnect_not_exit` — the
-    handshake never completes; assert the daemon enters the F7
-    reconnect loop instead of exiting (depends on Phase 4
-    landing first).
+- [x] **5a** — Tests added to `tests/relay_runtime.rs`:
+  - New stubs: `DelayedUdpConfigTcpFactory` (sleep N s then deliver
+    udp_config push) and `SilentThenNormalTcpFactory` (first connect
+    silent / never delivers, subsequent connects normal).
+  - `udp_config_within_30s_budget_succeeds` — 6 s delay; currently
+    RED (`Err(NoUdpConfig(5s))` fires at 5 s).
+  - `combined_handshake_timeout_is_30_seconds` — 25 s delay; same
+    failure mode.
+  - `handshake_timeout_triggers_reconnect_not_exit` — `SilentThenNormal`
+    factory; first connect times out, second succeeds; currently RED
+    (returns `Err(NoUdpConfig(5s))` instead of Ok).
   - `handshake_timeout_emits_reconnect_scheduled_with_reason` —
-    the handshake never completes; assert the trace contains
-    `relay.tcp.reconnect.scheduled reason="handshake_timeout"`.
+    `SilentThenNormal`; checks for `relay.tcp.reconnect.scheduled` and
+    `handshake_timeout` in traces; currently RED (neither trace appears).
+  - Note: TcpChannelEvent::Established is always immediate (sent
+    unconditionally by TcpChannel), so a separate "Established delay"
+    test is not meaningful — all four tests exercise the udp_config
+    wait, which IS controllable via the transport.
 - [ ] **5b** — Implementation:
   - Replace the 5 s deadline at `:1763` and 5 s deadline at
     `:1818` with a single 30 s budget covering both gates,
