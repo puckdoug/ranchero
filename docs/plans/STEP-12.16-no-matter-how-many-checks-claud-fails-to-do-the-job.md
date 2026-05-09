@@ -1,6 +1,6 @@
 # STEP-12.16 — Smoke test resilience: course gate, reconnect, and timeout budgets
 
-**Status:** review (2026-05-08).
+**Status:** complete (2026-05-09). All phases (1–7) implemented and all tests pass.
 
 After STEP-12.15 was completed, a real-world smoke test against a
 healthy live account failed:
@@ -404,7 +404,7 @@ once F6-F8 add their own traces.
     the daemon log contains a
     `ranchero.startup.validation_failed` event listing the
     missing field by name.
-- [ ] **7b** — Implementation:
+- [x] **7b** — Implementation:
   - **F5 success traces.** In `RelayRuntime::shutdown`
     (`src/daemon/relay.rs:2294-2334`), have the spawned
     `logout()` / `leave()` tasks emit
