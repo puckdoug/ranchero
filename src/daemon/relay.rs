@@ -214,13 +214,6 @@ pub enum RelayRuntimeError {
     #[error("no watched athlete configured; set one via `ranchero configure`")]
     NoWatchedAthlete,
 
-    /// `getPlayerState` for the watched athlete returned no
-    /// `state.world` (proto tag 35), which means the athlete is not
-    /// currently in a game. The daemon refuses to bring UDP up in
-    /// this state because the relay would have no course context to
-    /// route on. (STEP-12.14 §C2)
-    #[error("watched athlete is not in a game (no course); waiting to resume")]
-    WatchedAthleteNotInGame,
 }
 
 impl From<zwift_api::Error> for RelayRuntimeError {
@@ -1541,23 +1534,24 @@ impl RelayRuntime {
             .get_player_state(watched_id_i64)
             .await
             .map_err(RelayRuntimeError::Auth)?;
-        let course_id = match watched_state.as_ref().and_then(|s| s.world) {
-            Some(c) => c,
-            None => {
-                tracing::info!(
-                    target: "ranchero::relay",
-                    watched_athlete_id = watched_id,
-                    "relay.course_gate.suspended",
-                );
-                return Err(RelayRuntimeError::WatchedAthleteNotInGame);
-            }
-        };
-        tracing::info!(
-            target: "ranchero::relay",
-            watched_athlete_id = watched_id,
-            course_id,
-            "relay.course_gate.in_game",
-        );
+        // Course gate (STEP-12.14 §C2 / §R1 / STEP-12.16 §F6):
+        // sauce4zwift (zwift.mjs:1917-1922) proceeds with TCP even
+        // when courseId is null, suspending UDP setup until the
+        // athlete enters a game. The daemon mirrors that behaviour.
+        let course_id: Option<i32> = watched_state.as_ref().and_then(|s| s.world);
+        match course_id {
+            Some(id) => tracing::info!(
+                target: "ranchero::relay",
+                watched_athlete_id = watched_id,
+                course_id = id,
+                "relay.course_gate.in_game",
+            ),
+            None => tracing::info!(
+                target: "ranchero::relay",
+                watched_athlete_id = watched_id,
+                "relay.runtime.suspended_no_course",
+            ),
+        }
 
         // Pre-create the shared runtime state so step 8 (TCP hello) can read
         // last_world_update_ts into larg_wa_time. On a fresh connect the value
@@ -1568,7 +1562,7 @@ impl RelayRuntime {
             watched_state: std::sync::Mutex::new(initial_watched),
             current_udp_server: std::sync::Mutex::new(None),
             last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
-            suspended: Arc::new(AtomicBool::new(false)),
+            suspended: Arc::new(AtomicBool::new(course_id.is_none())),
             last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
         });
@@ -1809,157 +1803,186 @@ impl RelayRuntime {
             "relay.tcp.hello.sent",
         );
 
-        // 8.5. Wait for the first ServerToClient carrying a udp_config /
-        //      udp_config_vod*. Zwift announces UDP servers separately
-        //      from TCP servers — `session.tcp_servers` is for TCP only,
-        //      and the UDP target arrives over the TCP stream after the
-        //      hello. See docs/plans/STEP-12.13-still-screwing-up-after-
-        //      all-these-years.md §D3 for the full rationale.
-        let udp_config_deadline = std::time::Duration::from_secs(5);
-        let udp_addr = {
-            let mut picked: Option<std::net::SocketAddr> = None;
-            let deadline = tokio::time::Instant::now() + udp_config_deadline;
-            while picked.is_none() {
-                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-                if remaining.is_zero() {
-                    return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
-                }
-                match tokio::time::timeout(remaining, events_rx.recv()).await {
-                    Ok(Ok(zwift_relay::TcpChannelEvent::Inbound(stc))) => {
-                        if let Some(pools) = zwift_relay::extract_udp_pools(&stc) {
-                            // STEP-12.14 §C1 — sauce uses
-                            // `_udpServerPools.get(0).servers[0].ip`
-                            // for the initial connect: the generic
-                            // load-balancer pool at lb_course=0. Per-course
-                            // pools would reject athletes not on that course.
-                            let generic =
-                                pools.iter().find(|p| p.lb_course == 0 && p.lb_realm == 0);
-                            match generic {
-                                Some(pool) => {
-                                    tracing::info!(
-                                        target: "ranchero::relay",
-                                        pool_count = pools.len(),
-                                        server_count = pool.addresses.len(),
-                                        "relay.udp.config_received",
-                                    );
-                                    picked = pick_initial_udp_target(&pool.addresses);
-                                    if picked.is_none() {
-                                        tracing::warn!(
-                                            target: "ranchero::relay",
-                                            "relay.udp.config_no_valid_target",
-                                        );
+        // Pre-create the UDP event broadcast channel so recv_loop always
+        // has a receiver regardless of whether UDP comes up now.
+        let (udp_events_tx, udp_events_rx) =
+            tokio::sync::broadcast::channel::<zwift_relay::ChannelEvent>(64);
+
+        // 8.5 – 10. UDP setup, post-establish registration, and heartbeat
+        // are gated on the watched athlete being in a known world.
+        // sauce4zwift (zwift.mjs:1917-1922) follows the same pattern:
+        // it proceeds with TCP even when courseId is null, calling
+        // setUDPChannel() only when a course is available. When the
+        // daemon starts suspended (no course), these steps are deferred
+        // to Phase 3's resume_udp path. (STEP-12.16 §F6)
+        let heartbeat_abort: Option<tokio::task::AbortHandle> =
+            if let Some(course_id_val) = course_id {
+                // 8.5. Wait for the first ServerToClient carrying a
+                //      udp_config / udp_config_vod*. Zwift announces UDP
+                //      servers separately from TCP servers — `session.tcp_servers`
+                //      is for TCP only, and the UDP target arrives over the TCP
+                //      stream after the hello. See STEP-12.13 §D3 for the
+                //      full rationale.
+                let udp_config_deadline = std::time::Duration::from_secs(5);
+                let udp_addr = {
+                    let mut picked: Option<std::net::SocketAddr> = None;
+                    let deadline = tokio::time::Instant::now() + udp_config_deadline;
+                    while picked.is_none() {
+                        let remaining =
+                            deadline.saturating_duration_since(tokio::time::Instant::now());
+                        if remaining.is_zero() {
+                            return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
+                        }
+                        match tokio::time::timeout(remaining, events_rx.recv()).await {
+                            Ok(Ok(zwift_relay::TcpChannelEvent::Inbound(stc))) => {
+                                if let Some(pools) = zwift_relay::extract_udp_pools(&stc) {
+                                    // STEP-12.14 §C1 — sauce uses
+                                    // `_udpServerPools.get(0).servers[0].ip`
+                                    // for the initial connect: the generic
+                                    // load-balancer pool at lb_course=0.
+                                    // Per-course pools would reject athletes
+                                    // not on that course.
+                                    let generic = pools
+                                        .iter()
+                                        .find(|p| p.lb_course == 0 && p.lb_realm == 0);
+                                    match generic {
+                                        Some(pool) => {
+                                            tracing::info!(
+                                                target: "ranchero::relay",
+                                                pool_count = pools.len(),
+                                                server_count = pool.addresses.len(),
+                                                "relay.udp.config_received",
+                                            );
+                                            picked = pick_initial_udp_target(&pool.addresses);
+                                            if picked.is_none() {
+                                                tracing::warn!(
+                                                    target: "ranchero::relay",
+                                                    "relay.udp.config_no_valid_target",
+                                                );
+                                            }
+                                        }
+                                        None => {
+                                            // All pools are per-course; error so the
+                                            // operator sees a clear message rather
+                                            // than a connection refused from a
+                                            // per-course server.
+                                            tracing::warn!(
+                                                target: "ranchero::relay",
+                                                pool_count = pools.len(),
+                                                "relay.udp.config_no_generic_pool",
+                                            );
+                                            return Err(RelayRuntimeError::NoGenericPool);
+                                        }
                                     }
                                 }
-                                None => {
-                                    // All pools are per-course; error so the
-                                    // operator sees a clear message rather
-                                    // than a connection refused from a
-                                    // per-course server.
-                                    tracing::warn!(
-                                        target: "ranchero::relay",
-                                        pool_count = pools.len(),
-                                        "relay.udp.config_no_generic_pool",
-                                    );
-                                    return Err(RelayRuntimeError::NoGenericPool);
-                                }
+                            }
+                            Ok(Ok(_)) => continue,
+                            Ok(Err(_)) | Err(_) => {
+                                return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
                             }
                         }
                     }
-                    Ok(Ok(_)) => continue,
-                    Ok(Err(_)) | Err(_) => {
-                        return Err(RelayRuntimeError::NoUdpConfig(udp_config_deadline));
-                    }
-                }
-            }
-            picked.expect("loop only exits when picked is Some")
-        };
+                    picked.expect("loop only exits when picked is Some")
+                };
 
-        // 9. Connect and establish the UDP channel.
-        tracing::info!(
-            target: "ranchero::relay",
-            addr = %udp_addr,
-            "relay.udp.connecting",
-        );
-        let udp_transport = udp_factory
-            .connect(udp_addr)
-            .await
-            .map_err(RelayRuntimeError::UdpConnect)?;
-        let udp_config = zwift_relay::UdpChannelConfig {
-            athlete_id,
-            conn_id: next_udp_conn_id(),
-            // STEP-12.13 §2b — without this the writer is `None` on
-            // the UDP path (the factory's default config has no
-            // capture tap) and every UDP send/recv silently bypasses
-            // the capture file even when `--capture` is set.
-            capture: capture_writer.clone(),
-            ..udp_factory.channel_config()
-        };
-        let world_timer = zwift_relay::WorldTimer::new();
-        let heartbeat_world_timer = world_timer.clone();
-        let (udp_channel, _udp_events_from_channel) =
-            zwift_relay::UdpChannel::establish(udp_transport, &session, world_timer, udp_config)
+                // 9. Connect and establish the UDP channel.
+                tracing::info!(
+                    target: "ranchero::relay",
+                    addr = %udp_addr,
+                    "relay.udp.connecting",
+                );
+                let udp_transport = udp_factory
+                    .connect(udp_addr)
+                    .await
+                    .map_err(RelayRuntimeError::UdpConnect)?;
+                let udp_config = zwift_relay::UdpChannelConfig {
+                    athlete_id,
+                    conn_id: next_udp_conn_id(),
+                    // STEP-12.13 §2b — without this the writer is `None` on
+                    // the UDP path (the factory's default config has no
+                    // capture tap) and every UDP send/recv silently bypasses
+                    // the capture file even when `--capture` is set.
+                    capture: capture_writer.clone(),
+                    ..udp_factory.channel_config()
+                };
+                let world_timer = zwift_relay::WorldTimer::new();
+                let heartbeat_world_timer = world_timer.clone();
+                let (udp_channel, _udp_events_from_channel) = zwift_relay::UdpChannel::establish(
+                    udp_transport,
+                    &session,
+                    world_timer,
+                    udp_config,
+                )
                 .await
                 .map_err(RelayRuntimeError::UdpChannel)?;
 
-        // Log UDP established synchronously so the record is always
-        // present regardless of when shutdown races the event forwarder.
-        let udp_latency_ms = udp_channel.latency_ms().unwrap_or(0);
-        tracing::info!(
-            target: "ranchero::relay",
-            latency_ms = udp_latency_ms,
-            "relay.udp.established",
-        );
-        emit_state_change(
-            &game_events_tx,
-            &mut prev_state,
-            RuntimeState::UdpEstablished,
-        );
-
-        // 9.5. Post-establish "I'm watching" registration (STEP-12.14 §C3).
-        // Mirrors sauce4zwift `establishUDPChannel` line 2127: after the
-        // UDP hello exchange completes, a PlayerState packet is sent to
-        // register as a watcher of the watched athlete.
-        let initial_state = zwift_proto::PlayerState {
-            id: Some(athlete_id),
-            just_watching: Some(true),
-            watching_rider_id: Some(watched_id_i64),
-            world: Some(course_id),
-            ..Default::default()
-        };
-        tracing::info!(
-            target: "ranchero::relay",
-            watching_rider_id = watched_id_i64,
-            just_watching = true,
-            world = course_id,
-            "relay.udp.post_establish.sent",
-        );
-        udp_channel
-            .send_player_state(initial_state)
-            .await
-            .map_err(RelayRuntimeError::UdpChannel)?;
-
-        // 10. Spawn the 1 Hz heartbeat scheduler. (Defect 5)
-        let udp_channel = Arc::new(udp_channel);
-        let heartbeat_abort = {
-            let udp_for_heartbeat = Arc::clone(&udp_channel);
-            let heartbeat_suspended = Arc::clone(&inner.suspended);
-            let handle = tokio::spawn(async move {
-                let sink = UdpHeartbeatSink(udp_for_heartbeat);
-                let scheduler = HeartbeatScheduler::new(
-                    sink,
-                    heartbeat_world_timer,
-                    athlete_id,
-                    watched_id_i64,
-                    course_id,
-                    heartbeat_suspended,
+                // Log UDP established synchronously so the record is always
+                // present regardless of when shutdown races the event forwarder.
+                let udp_latency_ms = udp_channel.latency_ms().unwrap_or(0);
+                tracing::info!(
+                    target: "ranchero::relay",
+                    latency_ms = udp_latency_ms,
+                    "relay.udp.established",
                 );
-                scheduler.run().await;
-            });
-            let abort = handle.abort_handle();
-            drop(handle);
-            abort
-        };
-        tracing::info!(target: "ranchero::relay", "relay.heartbeat.started");
+                emit_state_change(
+                    &game_events_tx,
+                    &mut prev_state,
+                    RuntimeState::UdpEstablished,
+                );
+
+                // 9.5. Post-establish "I'm watching" registration
+                // (STEP-12.14 §C3). Mirrors sauce4zwift
+                // `establishUDPChannel` line 2127: after the UDP hello
+                // exchange completes, a PlayerState packet is sent to
+                // register as a watcher of the watched athlete.
+                let initial_state = zwift_proto::PlayerState {
+                    id: Some(athlete_id),
+                    just_watching: Some(true),
+                    watching_rider_id: Some(watched_id_i64),
+                    world: Some(course_id_val),
+                    ..Default::default()
+                };
+                tracing::info!(
+                    target: "ranchero::relay",
+                    watching_rider_id = watched_id_i64,
+                    just_watching = true,
+                    world = course_id_val,
+                    "relay.udp.post_establish.sent",
+                );
+                udp_channel
+                    .send_player_state(initial_state)
+                    .await
+                    .map_err(RelayRuntimeError::UdpChannel)?;
+
+                // 10. Spawn the 1 Hz heartbeat scheduler. (Defect 5)
+                let udp_channel = Arc::new(udp_channel);
+                let abort = {
+                    let udp_for_heartbeat = Arc::clone(&udp_channel);
+                    let heartbeat_suspended = Arc::clone(&inner.suspended);
+                    let handle = tokio::spawn(async move {
+                        let sink = UdpHeartbeatSink(udp_for_heartbeat);
+                        let scheduler = HeartbeatScheduler::new(
+                            sink,
+                            heartbeat_world_timer,
+                            athlete_id,
+                            watched_id_i64,
+                            course_id_val,
+                            heartbeat_suspended,
+                        );
+                        scheduler.run().await;
+                    });
+                    let abort = handle.abort_handle();
+                    drop(handle);
+                    abort
+                };
+                tracing::info!(target: "ranchero::relay", "relay.heartbeat.started");
+                Some(abort)
+            } else {
+                // No course known at startup: UDP and heartbeat deferred
+                // until the state-refresher or the recv-loop observes the
+                // watched athlete enter a world. (STEP-12.16 §F6 / Phase 3)
+                None
+            };
 
         // 11. (The supervisor-event handler was spawned earlier, at
         //     step 4.8, before the TCP connect, so it can drain
@@ -1979,8 +2002,6 @@ impl RelayRuntime {
         });
 
         let shutdown = Arc::new(Notify::new());
-        let (udp_events_tx, udp_events_rx) =
-            tokio::sync::broadcast::channel::<zwift_relay::ChannelEvent>(64);
         let recv_shutdown = shutdown.clone();
         let recv_writer = capture_writer.clone();
         let inner_for_recv = Arc::clone(&inner);
@@ -2022,7 +2043,7 @@ impl RelayRuntime {
             udp_events_tx,
             inner,
             tcp_sender: Some(tcp_sender),
-            heartbeat_abort: Some(heartbeat_abort),
+            heartbeat_abort,
             supervisor_event_abort: Some(supervisor_event_abort),
             state_refresher_abort: Some(state_refresher_abort),
             shutdown_auth: None,

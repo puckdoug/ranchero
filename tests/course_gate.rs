@@ -262,8 +262,9 @@ async fn start_all_inner_calls_get_player_state_with_watched_athlete_id() {
 }
 
 /// When the watched athlete has no course (`state.world = None`), the
-/// daemon must NOT connect UDP — it should suspend and surface a typed
-/// error rather than attempting a connection that the server would ignore.
+/// daemon must NOT connect UDP and must start in a suspended state —
+/// returning `Ok` rather than an error, so the process stays alive and
+/// can resume when the athlete enters a game.  (STEP-12.16 §F6)
 #[tokio::test]
 async fn start_all_inner_suspends_when_watched_athlete_has_no_course() {
     let cfg = make_config("monitor@example.com", "pass", Some(42));
@@ -289,21 +290,15 @@ async fn start_all_inner_suspends_when_watched_athlete_has_no_course() {
 
     assert!(
         !*connected.lock().unwrap(),
-        "STEP-12.14 §C2: udp_factory.connect() must NOT be called when \
+        "STEP-12.16 §F6: udp_factory.connect() must NOT be called when \
          the watched athlete has no course (state.world = None)",
     );
-    let err_msg = match result {
-        Ok(_) => panic!(
-            "STEP-12.14 §C2: start must return an error when watched athlete \
-             is not in a game; got Ok",
-        ),
-        Err(e) => e.to_string(),
-    };
     assert!(
-        err_msg.to_lowercase().contains("game")
-            || err_msg.to_lowercase().contains("course")
-            || err_msg.to_lowercase().contains("suspend"),
-        "STEP-12.14 §C2: error must mention game/course/suspend; got {err_msg:?}",
+        result.is_ok(),
+        "STEP-12.16 §F6: start must return Ok (suspended) when the watched \
+         athlete has no course; daemon must stay alive to resume later. \
+         Got: {:?}",
+        result.err(),
     );
 }
 

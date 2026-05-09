@@ -176,17 +176,24 @@ contract; `Nb` is the implementation that makes them pass.
     assertion: the lifecycle event is the public-observable
     contract, and adding a `pub fn is_suspended()` accessor on
     `RelayRuntime` is implementation work that belongs in 1b.
-- [ ] **1b** — Implementation:
-  - Stop returning `RelayRuntimeError::WatchedAthleteNotInGame`
-    from `start_all_inner`. The variant may stay in the enum
-    until callers stop matching on it; otherwise remove it.
-  - In the gate at `src/daemon/relay.rs:1544-1553`, on the `None`
-    branch set a local `course_id: Option<u32>` to `None`, set
-    `inner.suspended` to `true`, emit
-    `relay.runtime.suspended_no_course`, and continue.
-  - Adjust downstream code that currently assumes `course_id: u32`
-    to take an `Option<u32>` where the lack of a course is now
-    legal.
+- [x] **1b** — Implementation:
+  - `RelayRuntimeError::WatchedAthleteNotInGame` removed.
+  - Course gate emits `relay.runtime.suspended_no_course` on the
+    `None` branch and continues; `inner.suspended` initialised
+    to `course_id.is_none()`.
+  - `course_id` is now `Option<i32>` throughout `start_all_inner`.
+  - UDP-connect, heartbeat spawn, and the post-establish "I'm
+    watching" send are all wrapped in `if let Some(course_id_val)
+    = course_id`; `heartbeat_abort` is now
+    `Option<tokio::task::AbortHandle>` (Phase 2b UDP-deferral
+    incorporated here to keep the pre-existing
+    `course_gate.rs::start_all_inner_suspends_when_watched_athlete_has_no_course`
+    test passing).
+  - `tests/course_gate.rs::start_all_inner_suspends_when_watched_athlete_has_no_course`
+    updated: now asserts `result.is_ok()` (spec changed from fatal
+    error to suspended start in STEP-12.16 §F6).
+  - All 4 course_gate tests and all relay_runtime Phase 1a tests
+    pass; full suite green (`cargo test --workspace`).
 
 ### Phase 2 — F6 Phase B: defer UDP and heartbeat startup until a course is known
 
