@@ -235,6 +235,28 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 }
 
+/// Format a Unix nanosecond timestamp as a UTC datetime string
+/// (`YYYY-MM-DDTHH:MM:SSZ`) using only integer arithmetic.
+fn format_unix_ns_utc(ns: u64) -> String {
+    let secs = ns / 1_000_000_000;
+    let time_of_day = secs % 86400;
+    let hh = time_of_day / 3600;
+    let mm = (time_of_day % 3600) / 60;
+    let ss = time_of_day % 60;
+    // Civil date from days since 1970-01-01 (Hinnant algorithm).
+    let z = (secs / 86400) as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
+}
+
 /// Tail a wire-capture file and print each record to the supplied
 /// writer as text. This is the testable surface; the production
 /// dispatcher in [`dispatch`] wraps it with `std::io::stdout`.
@@ -284,6 +306,15 @@ pub fn print_follow_to<W: std::io::Write>(
                 seqno_in_tcp  = m.recv_iv_seqno_tcp;
                 seqno_out_udp = m.send_iv_seqno_udp;
                 seqno_in_udp  = m.recv_iv_seqno_udp;
+                let key_hex: String = m.aes_key.iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect();
+                let expires_str = format_unix_ns_utc(m.expires_at_unix_ns);
+                writeln!(
+                    out,
+                    "  Manifest  relay_id={}  conn_id={}  key={key_hex}  expires={expires_str}",
+                    m.relay_id, m.conn_id,
+                )?;
                 manifest = Some(m);
             }
             CaptureItem::Frame(record) => {
