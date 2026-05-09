@@ -24,7 +24,7 @@ use zwift_relay::{
     ChannelType, DeviceType, Header, HeaderFlags, RelayIv, encrypt, frame_tcp, tcp_plaintext,
 };
 use zwift_relay::capture::{
-    CaptureRecord, CaptureWriter, Direction, SessionManifest, TransportKind,
+    CaptureRecord, CaptureWriter, ContentType, Direction, SessionManifest, TransportKind,
 };
 
 // --- helpers ------------------------------------------------------
@@ -51,6 +51,7 @@ fn record_with(
         direction,
         transport,
         hello: false,
+        content_type: ContentType::Unspecified,
         payload,
     }
 }
@@ -86,7 +87,7 @@ async fn follow_prints_format_version_header() {
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
     assert!(
-        text.contains("Format version: 2"),
+        text.contains("Format version: 3"),
         "follow must print the format-version header before iterating records; got:\n{text}",
     );
 }
@@ -246,6 +247,7 @@ async fn follow_decrypts_outbound_tcp_frame() {
         direction: Direction::Outbound,
         transport: TransportKind::Tcp,
         hello: false,
+        content_type: ContentType::Unspecified,
         payload,
     };
 
@@ -278,6 +280,7 @@ async fn follow_decrypts_inbound_tcp_frame() {
         direction: Direction::Inbound,
         transport: TransportKind::Tcp,
         hello: false,
+        content_type: ContentType::Unspecified,
         payload,
     };
 

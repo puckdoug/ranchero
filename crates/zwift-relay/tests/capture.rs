@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use tempfile::NamedTempFile;
 use zwift_relay::capture::{
-    CaptureError, CaptureReader, CaptureRecord, CaptureWriter, Direction, FILE_HEADER_LEN, MAGIC,
-    RECORD_HEADER_LEN, TransportKind, VERSION,
+    CaptureError, CaptureReader, CaptureRecord, CaptureWriter, ContentType, Direction,
+    FILE_HEADER_LEN, MAGIC, RECORD_HEADER_LEN, TransportKind, VERSION,
 };
 
 // --- helpers -------------------------------------------------------
@@ -20,6 +20,7 @@ fn record_with_payload(direction: Direction, transport: TransportKind, payload: 
         direction,
         transport,
         hello: false,
+        content_type: ContentType::Unspecified,
         payload,
     }
 }
@@ -77,12 +78,12 @@ fn reader_rejects_unsupported_version() {
     let mut path = NamedTempFile::new().expect("tempfile");
     use std::io::Write;
     path.write_all(MAGIC).expect("write magic");
-    path.write_all(&[0x03, 0x00]).expect("write version 3");
+    path.write_all(&[0x04, 0x00]).expect("write version 4");
     path.flush().expect("flush");
 
     match CaptureReader::open(path.path()) {
-        Err(CaptureError::UnsupportedVersion(3)) => {}
-        other => panic!("expected UnsupportedVersion(3), got {other:?}"),
+        Err(CaptureError::UnsupportedVersion(4)) => {}
+        other => panic!("expected UnsupportedVersion(4), got {other:?}"),
     }
 }
 
@@ -127,6 +128,7 @@ fn writer_then_reader_round_trip_many_records() {
                 direction: if i % 2 == 0 { Direction::Inbound } else { Direction::Outbound },
                 transport: if i % 3 == 0 { TransportKind::Udp } else { TransportKind::Tcp },
                 hello: i % 5 == 0,
+                content_type: ContentType::Unspecified,
                 payload,
             }
         })
@@ -174,6 +176,7 @@ fn record_hello_flag_round_trip() {
         direction: Direction::Outbound,
         transport: TransportKind::Tcp,
         hello: true,
+        content_type: ContentType::Unspecified,
         payload: vec![0xAA],
     };
     let without_hello = CaptureRecord { hello: false, ..with_hello.clone() };
@@ -227,7 +230,7 @@ fn reader_handles_truncated_record_header() {
 
 #[test]
 fn reader_handles_truncated_payload() {
-    // Valid file header + complete v2 record header advertising
+    // Valid file header + complete v3 record header advertising
     // len=100, but only 50 payload bytes follow.
     let mut bytes = Vec::new();
     bytes.extend_from_slice(MAGIC);
@@ -237,6 +240,7 @@ fn reader_handles_truncated_payload() {
     bytes.push(Direction::Inbound.as_byte()); // direction (1)
     bytes.push(TransportKind::Udp.as_byte()); // transport (1)
     bytes.push(0); // flags (1)
+    bytes.push(0); // content_type = Unspecified (1)
     bytes.extend_from_slice(&100u32.to_le_bytes()); // len (4)
     bytes.extend_from_slice(&[0u8; 50]); // half the payload
     let path = write_partial_capture(&bytes);
@@ -261,6 +265,7 @@ fn reader_handles_bad_direction_byte() {
     bytes.push(0xFF); // invalid direction (1)
     bytes.push(0); // transport (1)
     bytes.push(0); // flags (1)
+    bytes.push(0); // content_type (1)
     bytes.extend_from_slice(&0u32.to_le_bytes()); // len = 0 (4)
     let path = write_partial_capture(&bytes);
 
@@ -281,6 +286,7 @@ fn reader_handles_bad_transport_byte() {
     bytes.push(0); // direction (1)
     bytes.push(0xFF); // invalid transport (1)
     bytes.push(0); // flags (1)
+    bytes.push(0); // content_type (1)
     bytes.extend_from_slice(&0u32.to_le_bytes()); // len (4)
     let path = write_partial_capture(&bytes);
 
@@ -772,6 +778,7 @@ fn capture_record_supports_http_transport_kind() {
         direction: Direction::Outbound,
         transport: TransportKind::Http,
         hello: false,
+        content_type: ContentType::Unspecified,
         payload: b"POST /token HTTP/1.1 ...".to_vec(),
     };
     let path = write_records(vec![original.clone()]);

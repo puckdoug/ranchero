@@ -3897,6 +3897,7 @@ mod tests {
                 direction: zwift_relay::capture::Direction::Inbound,
                 transport: zwift_relay::capture::TransportKind::Tcp,
                 hello: false,
+                content_type: zwift_relay::capture::ContentType::Unspecified,
                 payload: vec![i; 8],
             });
         }
@@ -4262,6 +4263,7 @@ mod tests {
                 direction: zwift_relay::capture::Direction::Inbound,
                 transport: zwift_relay::capture::TransportKind::Udp,
                 hello: false,
+                content_type: zwift_relay::capture::ContentType::Unspecified,
                 payload: vec![i; 8],
             });
         }

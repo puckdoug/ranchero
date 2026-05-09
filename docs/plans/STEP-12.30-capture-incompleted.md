@@ -10,7 +10,7 @@
 
 ### Phase 2 — Wire `CaptureSink`; extend capture format to v3 with content-type field
 - [x] 2a — Failing test: `login_http_exchange_appears_in_capture`
-- [ ] 2b — Bump capture format to v3; add `ContentType` enum and `content_type` byte to record header
+- [x] 2b — Bump capture format to v3; add `ContentType` enum and `content_type` byte to record header
 - [ ] 2c — Add `CaptureContentType` enum to `zwift-api`; extend `CaptureSink::record()`; update all `record_outbound`/`record_inbound` call sites
 - [ ] 2d — Implement `HttpCaptureSink` in daemon; call `set_capture_sink` at construction and re-login sites
 

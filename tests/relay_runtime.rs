@@ -440,6 +440,7 @@ async fn runtime_writes_capture_file_for_inbound_packets() {
         direction: zwift_relay::capture::Direction::Inbound,
         transport: zwift_relay::capture::TransportKind::Tcp,
         hello: false,
+        content_type: zwift_relay::capture::ContentType::Unspecified,
         payload: vec![1, 2, 3, 4],
     });
 

@@ -22,16 +22,18 @@ use tokio::task::JoinHandle;
 /// 8-byte file header magic. ASCII `"RNCWCAP"` + NUL terminator.
 pub const MAGIC: &[u8; 8] = b"RNCWCAP\0";
 
-/// Current wire-capture format version. v2 adds the per-record kind
-/// byte and the `Manifest` record kind; v1 captures are not supported.
-pub const VERSION: u16 = 2;
+/// Current wire-capture format version. v3 adds a `content_type` byte
+/// to the record header so `follow` can decode HTTP payloads without
+/// guessing the encoding; v2 and v1 captures are not supported.
+pub const VERSION: u16 = 3;
 
 /// File header byte length (`MAGIC` + version u16 LE).
 pub const FILE_HEADER_LEN: usize = 10;
 
-/// Per-record fixed-overhead byte length (v2 layout):
-/// `ts_unix_ns(8) + kind(1) + direction(1) + transport(1) + flags(1) + len(4)`.
-pub const RECORD_HEADER_LEN: usize = 16;
+/// Per-record fixed-overhead byte length (v3 layout):
+/// `ts_unix_ns(8) + kind(1) + direction(1) + transport(1) + flags(1)
+///  + content_type(1) + len(4)`.
+pub const RECORD_HEADER_LEN: usize = 17;
 
 /// Hard cap on per-record payload length, matching the `BE u16` TCP
 /// frame ceiling. The format's `len` field is u32 to leave room for
@@ -128,12 +130,43 @@ impl RecordKind {
     }
 }
 
+/// Payload encoding tag stored in byte 12 of every v3 Frame record
+/// header. `Unspecified` is used for TCP/UDP wire frames; the HTTP
+/// variants let `follow` decode payloads without guessing the format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContentType {
+    #[default]
+    Unspecified   = 0,
+    Json          = 1,
+    UrlEncoded    = 2,
+    ProtobufLite  = 3,
+    Empty         = 4,
+}
+
+impl ContentType {
+    pub fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_byte(b: u8) -> Result<Self, CaptureError> {
+        match b {
+            0 => Ok(ContentType::Unspecified),
+            1 => Ok(ContentType::Json),
+            2 => Ok(ContentType::UrlEncoded),
+            3 => Ok(ContentType::ProtobufLite),
+            4 => Ok(ContentType::Empty),
+            other => Err(CaptureError::BadContentType(other)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureRecord {
     pub ts_unix_ns: u64,
     pub direction: Direction,
     pub transport: TransportKind,
     pub hello: bool,
+    pub content_type: ContentType,
     pub payload: Vec<u8>,
 }
 
@@ -226,6 +259,9 @@ pub enum CaptureError {
 
     #[error("invalid record-kind byte: {0}")]
     BadRecordKind(u8),
+
+    #[error("invalid content-type byte: {0}")]
+    BadContentType(u8),
 
     #[error("file truncated mid-record (read {got} of {needed} bytes)")]
     Truncated { needed: usize, got: usize },
@@ -486,8 +522,9 @@ async fn write_frame_record(
     header[9] = record.direction.as_byte();
     header[10] = record.transport.as_byte();
     header[11] = if record.hello { FLAG_HELLO } else { 0 };
+    header[12] = record.content_type.as_byte();
     let len = u32::try_from(record.payload.len()).unwrap_or(u32::MAX);
-    header[12..16].copy_from_slice(&len.to_le_bytes());
+    header[13..17].copy_from_slice(&len.to_le_bytes());
     file.write_all(&header).await?;
     file.write_all(&record.payload).await?;
     Ok(())
@@ -501,10 +538,10 @@ async fn write_manifest_record(
     let mut header = [0u8; RECORD_HEADER_LEN];
     header[0..8].copy_from_slice(&now_unix_ns().to_le_bytes());
     header[8] = RecordKind::Manifest.as_byte();
-    // Direction, transport, and flags are unused for manifest records
-    // (zeroed); the kind byte is the sole discriminant.
+    // Direction, transport, flags, and content_type are unused for
+    // manifest records (zeroed); the kind byte is the sole discriminant.
     let len = MANIFEST_PAYLOAD_LEN as u32;
-    header[12..16].copy_from_slice(&len.to_le_bytes());
+    header[13..17].copy_from_slice(&len.to_le_bytes());
     file.write_all(&header).await?;
     file.write_all(&payload).await?;
     Ok(())
@@ -598,13 +635,14 @@ impl Iterator for CaptureReader {
     }
 }
 
-/// Parsed v2 record header awaiting payload bytes.
+/// Parsed v3 record header awaiting payload bytes.
 struct ParsedHeader {
     ts_unix_ns: u64,
     kind: RecordKind,
     direction: Direction,
     transport: TransportKind,
     hello: bool,
+    content_type: ContentType,
     payload_len: usize,
 }
 
@@ -616,6 +654,7 @@ impl ParsedHeader {
                 direction: self.direction,
                 transport: self.transport,
                 hello: self.hello,
+                content_type: self.content_type,
                 payload,
             })),
             RecordKind::Manifest => Ok(CaptureItem::Manifest(SessionManifest::decode(&payload)?)),
@@ -626,18 +665,20 @@ impl ParsedHeader {
 fn parse_record_header(header: &[u8; RECORD_HEADER_LEN]) -> Result<ParsedHeader, CaptureError> {
     let ts_unix_ns = u64::from_le_bytes(header[0..8].try_into().unwrap());
     let kind = RecordKind::from_byte(header[8])?;
-    let payload_len = u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
+    let payload_len = u32::from_le_bytes(header[13..17].try_into().unwrap()) as usize;
     match kind {
         RecordKind::Frame => {
             let direction = Direction::from_byte(header[9])?;
             let transport = TransportKind::from_byte(header[10])?;
             let hello = (header[11] & FLAG_HELLO) != 0;
+            let content_type = ContentType::from_byte(header[12])?;
             Ok(ParsedHeader {
                 ts_unix_ns,
                 kind,
                 direction,
                 transport,
                 hello,
+                content_type,
                 payload_len,
             })
         }
@@ -649,6 +690,7 @@ fn parse_record_header(header: &[u8; RECORD_HEADER_LEN]) -> Result<ParsedHeader,
             direction: Direction::Inbound,
             transport: TransportKind::Tcp,
             hello: false,
+            content_type: ContentType::Unspecified,
             payload_len,
         }),
     }
@@ -697,6 +739,7 @@ pub fn record_inbound(
             direction: Direction::Inbound,
             transport,
             hello: false,
+            content_type: ContentType::Unspecified,
             payload: plaintext.to_vec(),
         });
     }
@@ -718,6 +761,7 @@ pub fn record_outbound(
             direction: Direction::Outbound,
             transport,
             hello,
+            content_type: ContentType::Unspecified,
             payload: proto_bytes.to_vec(),
         });
     }
