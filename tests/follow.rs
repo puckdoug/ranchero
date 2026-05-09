@@ -428,3 +428,64 @@ async fn follow_output_includes_manifest_summary() {
          ({relay_id}); not found in output:\n{text}",
     );
 }
+
+// --- STEP-12.30 Phase 6a: follow output must not expose Option<T> wrappers ------
+
+/// Build a capture file containing a Manifest followed by one outbound TCP frame
+/// that encodes a `ClientToServer` with `seqno = 7`. Used by both Phase 6a tests.
+async fn write_seqno7_capture() -> NamedTempFile {
+    let aes_key = [0xCCu8; 16];
+    let conn_id: u16 = 5;
+    let cts = zwift_proto::ClientToServer { seqno: Some(7), ..Default::default() };
+    let proto_bytes = cts.encode_to_vec();
+    let payload = make_outbound_tcp_frame(&aes_key, conn_id, 0, false, &proto_bytes);
+    let record = CaptureRecord {
+        ts_unix_ns: 1_700_000_000_000_000_000,
+        direction: Direction::Outbound,
+        transport: TransportKind::Tcp,
+        hello: false,
+        content_type: ContentType::Unspecified,
+        payload,
+    };
+    write_capture_with_manifest(test_manifest(aes_key, conn_id as u32), vec![record]).await
+}
+
+#[tokio::test]
+async fn follow_output_contains_no_some_wrappers() {
+    let path = write_seqno7_capture().await;
+    let (result, out) = run_follow(path.path(), Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains('7'),
+        "STEP-12.30 Phase 6a: decoded output must still show the seqno value 7; \
+         not found in output:\n{text}",
+    );
+    assert!(
+        !text.contains("Some("),
+        "STEP-12.30 Phase 6a: decoded output must not contain 'Some(' — \
+         prost {{:#?}} wraps every present field in Some(...); \
+         Phase 6b must replace {{:#?}} with a reflective field iterator:\n{text}",
+    );
+}
+
+#[tokio::test]
+async fn follow_output_contains_no_none_fields() {
+    let path = write_seqno7_capture().await;
+    let (result, out) = run_follow(path.path(), Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains('7'),
+        "STEP-12.30 Phase 6a: decoded output must still show the seqno value 7; \
+         not found in output:\n{text}",
+    );
+    assert!(
+        !text.contains("None"),
+        "STEP-12.30 Phase 6a: decoded output must not contain 'None' — \
+         prost {{:#?}} prints every absent optional field as None; \
+         Phase 6b must replace {{:#?}} with a reflective field iterator:\n{text}",
+    );
+}
