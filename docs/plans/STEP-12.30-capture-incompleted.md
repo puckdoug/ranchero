@@ -28,7 +28,7 @@
 ### Phase 5 — Decode HTTP record payloads in `follow` output
 
 - [x] 5a — Failing tests: `follow_http_json_payload_is_pretty_printed`, `follow_http_urlencoded_payload_is_displayed`, `follow_http_protobuf_payload_is_decoded`, `follow_http_empty_payload_prints_empty_marker`
-- [ ] 5b — Dispatch on `record.content_type` to JSON / URL-encoded / protobuf / fallback decoders
+- [x] 5b — Dispatch on `record.content_type` to JSON / URL-encoded / protobuf / fallback decoders
 
 ### Phase 6 — Replace `{:#?}` with field-by-field display that omits absent fields
 

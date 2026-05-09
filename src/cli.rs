@@ -235,6 +235,41 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 }
 
+/// Try to decode `payload` as one of the known HTTP protobuf types
+/// (player state, relay login request/response, session refresh response)
+/// and write the first successful decode to `out`. Falls back to a hex
+/// dump if every attempt fails.
+fn print_http_protobuf<W: std::io::Write>(
+    out: &mut W,
+    payload: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    use prost::Message as _;
+
+    macro_rules! try_decode {
+        ($T:ty) => {
+            if let Ok(msg) = <$T>::decode(payload) {
+                writeln!(out, "{msg:#?}")?;
+                return Ok(());
+            }
+        };
+    }
+
+    try_decode!(zwift_proto::PlayerState);
+    try_decode!(zwift_proto::LoginRequest);
+    try_decode!(zwift_proto::LoginResponse);
+    try_decode!(zwift_proto::RelaySessionRefreshResponse);
+
+    // All attempts failed — emit a hex dump.
+    for chunk in payload.chunks(16) {
+        let hex: String = chunk.iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        writeln!(out, "  {hex}")?;
+    }
+    Ok(())
+}
+
 /// Format a Unix nanosecond timestamp as a UTC datetime string
 /// (`YYYY-MM-DDTHH:MM:SSZ`) using only integer arithmetic.
 fn format_unix_ns_utc(ns: u64) -> String {
@@ -280,7 +315,7 @@ pub fn print_follow_to<W: std::io::Write>(
         parse_tcp_plaintext, parse_udp_plaintext,
     };
     use zwift_relay::capture::{
-        CaptureFollower, CaptureItem, Direction, SessionManifest, TransportKind,
+        CaptureFollower, CaptureItem, ContentType, Direction, SessionManifest, TransportKind,
     };
 
     let mut follower = CaptureFollower::open(path)?;
@@ -446,7 +481,58 @@ pub fn print_follow_to<W: std::io::Write>(
                         }
                     }
                 }
-                // Phase 5 will add HTTP payload decoding.
+                if record.transport == TransportKind::Http {
+                    match record.content_type {
+                        ContentType::Empty => {
+                            writeln!(out, "  (empty)")?;
+                        }
+                        ContentType::Json => {
+                            match serde_json::from_slice::<serde_json::Value>(&record.payload) {
+                                Ok(v) => {
+                                    let pretty = serde_json::to_string_pretty(&v)
+                                        .unwrap_or_else(|_| format!("{v}"));
+                                    for line in pretty.lines() {
+                                        writeln!(out, "  {line}")?;
+                                    }
+                                }
+                                Err(_) => {
+                                    writeln!(out, "  {}", String::from_utf8_lossy(&record.payload))?;
+                                }
+                            }
+                        }
+                        ContentType::UrlEncoded => {
+                            match serde_urlencoded::from_bytes::<Vec<(String, String)>>(
+                                &record.payload,
+                            ) {
+                                Ok(pairs) => {
+                                    for (k, v) in pairs {
+                                        writeln!(out, "  {k}={v}")?;
+                                    }
+                                }
+                                Err(_) => {
+                                    writeln!(out, "  {}", String::from_utf8_lossy(&record.payload))?;
+                                }
+                            }
+                        }
+                        ContentType::ProtobufLite => {
+                            print_http_protobuf(&mut out, &record.payload)?;
+                        }
+                        ContentType::Unspecified => {
+                            let s = String::from_utf8_lossy(&record.payload);
+                            if s.chars().all(|c| !c.is_control() || c == '\n' || c == '\r') {
+                                writeln!(out, "  {s}")?;
+                            } else {
+                                for chunk in record.payload.chunks(16) {
+                                    let hex: String = chunk.iter()
+                                        .map(|b| format!("{b:02x}"))
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
+                                    writeln!(out, "  {hex}")?;
+                                }
+                            }
+                        }
+                    }
+                }
 
                 idx += 1;
             }
