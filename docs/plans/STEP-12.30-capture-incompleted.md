@@ -25,6 +25,10 @@
 - [ ] 5a — Failing tests: `follow_http_json_payload_is_pretty_printed`, `follow_http_urlencoded_payload_is_displayed`, `follow_http_protobuf_payload_is_decoded`, `follow_http_empty_payload_prints_empty_marker`
 - [ ] 5b — Dispatch on `record.content_type` to JSON / URL-encoded / protobuf / fallback decoders
 
+### Phase 6 — Replace `{:#?}` with field-by-field display that omits absent fields
+- [ ] 6a — Failing tests: `follow_output_contains_no_some_wrappers`, `follow_output_contains_no_none_fields`
+- [ ] 6b — Add `prost-reflect` to `zwift-proto`; enable file descriptor generation; replace `{:#?}` in `print_follow_to` with a reflective field iterator that prints only present fields with unwrapped values
+
 ## 1. Observed symptom
 
 Running `ranchero start --capture output.cap` followed by
@@ -62,7 +66,7 @@ The TCP/UDP call sites in `tcp.rs` and `udp.rs` are correctly positioned
 at the wire-byte boundary as specified. There is nothing wrong with what
 is written into the file.
 
-## 3. Root causes (four independent defects)
+## 3. Root causes (six independent defects)
 
 ### Defect A — `follow` never decrypts: it skips all Manifest records
 and proto-decodes encrypted bytes directly
@@ -135,6 +139,32 @@ Even with a wired `CaptureSink`, the private `post_empty()` method at
 makes its HTTP round-trip without calling `record_outbound` or
 `record_inbound`. Every other method in that file calls them;
 `post_empty` was overlooked.
+
+### Defect E — Proto messages are printed using Rust's `Debug` format, exposing `Option<T>` wrappers
+
+**Where:** `src/cli.rs` — the `writeln!(out, "{msg:#?}")` call in `print_follow_to`.
+
+prost generates every proto optional field as `Option<T>` in Rust. Formatting a decoded message
+with `{:#?}` has two consequences:
+
+1. **All fields appear**, including those that are absent (`None`). A `ServerToClient` message
+   has approximately 100 optional fields; a single record expands to hundreds of lines when most
+   fields are unset.
+
+2. **Present values are wrapped in `Some(...)`**. The output contains lines like
+   `lb_realm: Some(1,)`, `world_time: Some(1000000)`, which is Rust-internal notation that
+   is not meaningful to an operator reading session traffic.
+
+Running `ranchero follow output.cap` against a 228-record capture produced 121,000 lines of output
+from this single formatting choice.
+
+The correct fix is to iterate over only the fields that are actually present in the decoded message
+and print their values directly, without the `Option` wrapper. This must be done at the point where
+the decoded message is formatted — not by post-processing the text that `{:#?}` emits.
+
+`zwift-proto` carries only `Clone`, `PartialEq`, and `::prost::Message` derives. It has no
+`serde` derives and no `prost-reflect` support. Field-level reflection requires adding
+`prost-reflect` to `zwift-proto` and enabling file descriptor generation in its `build.rs`.
 
 ### Defect D — Manifest records are invisible in `follow` output
 
@@ -456,6 +486,51 @@ writing the summary line, dispatch on `record.content_type`:
 
 - `ContentType::Unspecified` → print raw bytes as lossy UTF-8, or a
   hex dump if non-printable.
+
+### Phase 6 — Replace `{:#?}` debug output with human-readable field display
+
+#### 6a — Failing tests
+
+- **`follow_output_contains_no_some_wrappers`** — writes a capture file with a Manifest record
+  and a synthetic outbound TCP frame encoding a `ClientToServer` message with `seqno` set to 7;
+  runs `print_follow_to`; asserts that the output does **not** contain the substring `"Some("`.
+  Currently RED: `{:#?}` wraps every present value in `Some(...)`.
+
+- **`follow_output_contains_no_none_fields`** — same setup; asserts the output does **not**
+  contain the substring `"None"`.
+  Currently RED: `{:#?}` prints every absent optional field as `None`.
+
+Both tests should also assert that the output does contain the expected field value (`"7"` for
+`seqno`) to confirm that present fields are still displayed.
+
+#### 6b — Implementation
+
+1. Add `prost-reflect` to `crates/zwift-proto/Cargo.toml`:
+   ```toml
+   [dependencies]
+   prost-reflect = { version = "0.14", features = ["derive"] }
+
+   [build-dependencies]
+   prost-reflect-build = "0.14"
+   ```
+
+2. In `crates/zwift-proto/build.rs`, replace or extend the existing `prost_build` call to use
+   `prost_reflect_build::Builder`, which emits a `file_descriptor_pool` alongside the generated
+   structs. The generated types will gain a `::prost_reflect::ReflectMessage` derive, providing
+   a `.transcode_to_dynamic()` method that returns a `DynamicMessage`.
+
+3. In `src/cli.rs`, replace the `writeln!(out, "{msg:#?}")` call with a helper function
+   `print_message<W: io::Write>(out: &mut W, msg: &impl prost_reflect::ReflectMessage)` that:
+   - Calls `msg.transcode_to_dynamic()` to obtain a `DynamicMessage`.
+   - Iterates over `dynamic_msg.fields()`, which yields only present fields.
+   - For each `(FieldDescriptor, Value)` pair, writes `  field_name: display_value\n` to `out`.
+   - Recurse for nested `Message` values; print scalar values (`u32`, `i32`, `string`, etc.)
+     directly without any wrapper.
+
+4. Replace all `writeln!(out, "{msg:#?}")` sites in `print_follow_to` with calls to
+   `print_message(&mut out, &msg)`.
+
+Verify with the Phase 6a tests plus the full `cargo test --workspace`.
 
 ## 6. Verification gate
 
