@@ -310,6 +310,96 @@ fn follow_subcommand_has_no_decode_flag() {
     );
 }
 
+// --- STEP-12.30 Phase 5a: follow must decode HTTP record payloads ----------------
+
+fn http_record(direction: Direction, content_type: ContentType, payload: Vec<u8>) -> CaptureRecord {
+    CaptureRecord {
+        ts_unix_ns: 1_700_000_000_000_000_000,
+        direction,
+        transport: TransportKind::Http,
+        hello: false,
+        content_type,
+        payload,
+    }
+}
+
+#[tokio::test]
+async fn follow_http_json_payload_is_pretty_printed() {
+    let json_bytes = br#"{"access_token":"ATOK","expires_in":600}"#.to_vec();
+    let record = http_record(Direction::Inbound, ContentType::Json, json_bytes);
+    let path = write_capture(vec![record]).await;
+
+    let (result, out) = run_follow(path.path(), Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains("access_token"),
+        "STEP-12.30 Phase 5a: inbound HTTP Json record payload must be \
+         pretty-printed; 'access_token' not found in output:\n{text}",
+    );
+}
+
+#[tokio::test]
+async fn follow_http_urlencoded_payload_is_displayed() {
+    let payload = b"client_id=Zwift+Game+Client&grant_type=password&username=alice".to_vec();
+    let record = http_record(Direction::Outbound, ContentType::UrlEncoded, payload);
+    let path = write_capture(vec![record]).await;
+
+    let (result, out) = run_follow(path.path(), Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains("grant_type"),
+        "STEP-12.30 Phase 5a: outbound HTTP UrlEncoded record payload must be \
+         displayed as key=value pairs; 'grant_type' not found in output:\n{text}",
+    );
+    assert!(
+        text.contains("password"),
+        "STEP-12.30 Phase 5a: the grant_type value 'password' must appear in \
+         the URL-encoded output:\n{text}",
+    );
+}
+
+#[tokio::test]
+async fn follow_http_protobuf_payload_is_decoded() {
+    let state = zwift_proto::PlayerState {
+        id: Some(12345),
+        world: Some(7),
+        ..Default::default()
+    };
+    let payload = state.encode_to_vec();
+    let record = http_record(Direction::Inbound, ContentType::ProtobufLite, payload);
+    let path = write_capture(vec![record]).await;
+
+    let (result, out) = run_follow(path.path(), Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains("12345"),
+        "STEP-12.30 Phase 5a: inbound HTTP ProtobufLite record must be decoded \
+         and display the player id (12345); not found in output:\n{text}",
+    );
+}
+
+#[tokio::test]
+async fn follow_http_empty_payload_prints_empty_marker() {
+    let record = http_record(Direction::Outbound, ContentType::Empty, vec![]);
+    let path = write_capture(vec![record]).await;
+
+    let (result, out) = run_follow(path.path(), Some(1)).await;
+    result.expect("follow must return Ok on idle timeout");
+    let text = String::from_utf8(out).expect("utf-8 output");
+
+    assert!(
+        text.contains("(empty)"),
+        "STEP-12.30 Phase 5a: HTTP Empty record must print '(empty)' marker; \
+         not found in output:\n{text}",
+    );
+}
+
 // --- STEP-12.30 Phase 4a: follow must print a summary line for Manifest records ---
 
 #[tokio::test]
