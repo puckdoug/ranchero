@@ -152,20 +152,30 @@ contract; `Nb` is the implementation that makes them pass.
 
 ### Phase 1 — F6 Phase A: replace the fatal error with a suspended start
 
-- [ ] **1a** — Tests in `src/daemon/relay.rs` (or
-      `tests/relay_runtime.rs` if the orchestrator-level harness is
-      easier):
+- [x] **1a** — Tests added to `tests/relay_runtime.rs` (the
+      orchestrator-level harness already has the stub DI
+      infrastructure for this scenario):
   - `start_with_watched_athlete_not_in_game_starts_suspended` —
-    `auth.get_player_state(watched_id)` returns `Ok(Some(state))`
-    with `state.world = None`. The runtime returns `Ok(_)` (does
-    not error), `inner.suspended` is `true` after start, and the
-    trace contains `relay.runtime.suspended_no_course`.
+    new `WatchedAthleteOfflineAuth` stub returns `Ok(Some(state))`
+    with `state.world = None`. Asserts the runtime returns
+    `Ok(_)` and the trace contains
+    `relay.runtime.suspended_no_course`. Currently FAILS with
+    `WatchedAthleteNotInGame`.
   - `start_with_watched_athlete_not_logged_in_starts_suspended` —
-    `auth.get_player_state(watched_id)` returns `Ok(None)`
-    (sauce's 404 case). Same expectations as above.
-  - `start_with_watched_athlete_in_game_proceeds_normally` — a
-    state with `world = Some(7)` continues to bring up TCP and
-    UDP exactly as today; no suspend trace fires.
+    new `WatchedAthleteNoStateAuth` stub returns `Ok(None)`
+    (sauce's 404 case at `zwift.mjs:613-622`). Same assertions.
+    Currently FAILS with `WatchedAthleteNotInGame`.
+  - `start_with_watched_athlete_in_game_proceeds_normally` —
+    existing `StubAuth` (returns `world = Some(1)`); asserts
+    startup succeeds AND the new
+    `relay.runtime.suspended_no_course` trace does NOT fire on
+    the happy path. Currently passes (the trace event does not
+    yet exist, so the negative assertion holds).
+  - The `inner.suspended is true` check from the original
+    contract was deferred from the test layer to the trace
+    assertion: the lifecycle event is the public-observable
+    contract, and adding a `pub fn is_suspended()` accessor on
+    `RelayRuntime` is implementation work that belongs in 1b.
 - [ ] **1b** — Implementation:
   - Stop returning `RelayRuntimeError::WatchedAthleteNotInGame`
     from `start_all_inner`. The variant may stay in the enum

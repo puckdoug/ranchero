@@ -207,6 +207,65 @@ impl AuthLogin for StubAuth {
     }
 }
 
+/// Stub auth representing a watched athlete who is online (Zwift
+/// returned a `PlayerState`) but who is not currently in any world
+/// (`state.world = None`). STEP-12.16 §F6 Phase 1a fixture: the
+/// daemon must accept this state and start in a suspended posture
+/// rather than aborting startup with `WatchedAthleteNotInGame`.
+struct WatchedAthleteOfflineAuth;
+
+impl AuthLogin for WatchedAthleteOfflineAuth {
+    async fn login(
+        &self,
+        _email: &str,
+        _password: &str,
+    ) -> Result<(), zwift_api::Error> {
+        Ok(())
+    }
+
+    async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
+        Ok(12345)
+    }
+
+    async fn get_player_state(
+        &self,
+        _athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
+        Ok(Some(zwift_proto::PlayerState {
+            world: None,
+            ..Default::default()
+        }))
+    }
+}
+
+/// Stub auth representing a watched athlete whose
+/// `/relay/worlds/1/players/{id}` endpoint returns 404 (mapped to
+/// `Ok(None)` by `ZwiftAuth::get_player_state`). STEP-12.16 §F6
+/// Phase 1a fixture for sauce4zwift's null-state branch
+/// (`zwift.mjs:613-622`, `:1706-1716`).
+struct WatchedAthleteNoStateAuth;
+
+impl AuthLogin for WatchedAthleteNoStateAuth {
+    async fn login(
+        &self,
+        _email: &str,
+        _password: &str,
+    ) -> Result<(), zwift_api::Error> {
+        Ok(())
+    }
+
+    async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
+        Ok(12345)
+    }
+
+    async fn get_player_state(
+        &self,
+        _athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
+        Ok(None)
+    }
+}
+
 struct StubSession {
     session: StdMutex<Option<zwift_relay::RelaySession>>,
 }
@@ -3855,5 +3914,126 @@ async fn start_with_writer_records_fresh_manifest_on_supervisor_relogin() {
         manifest_count >= 2,
         "STEP-12.15 F3: a SessionEvent::LoggedIn with a fresh AES key must write \
          a new SessionManifest to the capture file. Expected >= 2 manifests, got {manifest_count}"
+    );
+}
+
+// ==========================================================================
+// STEP-12.16 §F6 Phase 1a — Course gate must suspend, not abort.
+//
+// Red state: `start_all_inner` returns `Err(WatchedAthleteNotInGame)` when
+// the watched athlete has no course; the runtime never reaches `Ok(_)` and
+// no `relay.runtime.suspended_no_course` trace fires. Each test below
+// will fail until Phase 1b replaces the fatal branch with a suspended
+// start (and Phase 2b defers UDP/heartbeat startup so the runtime can
+// actually return).
+// ==========================================================================
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn start_with_watched_athlete_not_in_game_starts_suspended() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        WatchedAthleteOfflineAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.16 §F6 Phase 1a: the runtime must start when the watched \
+         athlete is online but not in a world (state.world = None); sauce4zwift \
+         (zwift.mjs:1917-1922) suspends and waits in this state. Got: {:?}",
+        result.as_ref().err(),
+    );
+    let runtime = result.unwrap();
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.suspended_no_course",
+        ),
+        "STEP-12.16 §F6 Phase 1a: a `relay.runtime.suspended_no_course` \
+         lifecycle event must fire when the daemon starts in the suspended \
+         state because no course is yet known",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn start_with_watched_athlete_not_logged_in_starts_suspended() {
+    let cfg = make_config("rider@example.com", "secret");
+
+    let result = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        WatchedAthleteNoStateAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.16 §F6 Phase 1a: the runtime must start when \
+         `get_player_state` returns `Ok(None)` (sauce4zwift's 404 branch at \
+         zwift.mjs:613-622). Got: {:?}",
+        result.as_ref().err(),
+    );
+    let runtime = result.unwrap();
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.suspended_no_course",
+        ),
+        "STEP-12.16 §F6 Phase 1a: a `relay.runtime.suspended_no_course` \
+         lifecycle event must fire when the player-state endpoint reports \
+         the athlete is not logged in",
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn start_with_watched_athlete_in_game_proceeds_normally() {
+    // Existing `StubAuth` returns `state.world = Some(1)` — the in-game
+    // path. The runtime must continue to bring up TCP and UDP exactly as
+    // it does today; the new `relay.runtime.suspended_no_course`
+    // lifecycle event must NOT fire on the happy path.
+    let cfg = make_config("rider@example.com", "secret");
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        NoopUdpFactory,
+    )
+    .await
+    .expect(
+        "STEP-12.16 §F6 Phase 1a: the in-game start path must continue to \
+         succeed unchanged",
+    );
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        !tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.runtime.suspended_no_course",
+        ),
+        "STEP-12.16 §F6 Phase 1a: `relay.runtime.suspended_no_course` must \
+         NOT fire when the watched athlete is in a game at start time",
     );
 }
