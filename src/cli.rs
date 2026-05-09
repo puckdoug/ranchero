@@ -235,6 +235,61 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     }
 }
 
+/// Write the fields of a decoded proto message to `out`, printing only
+/// fields that are present in the message and omitting the `Option<T>`/
+/// `None` wrappers that `{:#?}` would produce. Nested messages are
+/// indented by two extra spaces per level.
+fn print_message<W: std::io::Write>(
+    out: &mut W,
+    msg: &impl prost_reflect::ReflectMessage,
+    indent: usize,
+) -> std::io::Result<()> {
+    use prost_reflect::ReflectMessage as _;
+    let pad = "  ".repeat(indent);
+    let dynamic = msg.transcode_to_dynamic();
+    writeln!(out, "{pad}{}", dynamic.descriptor().name())?;
+    for (field, value) in dynamic.fields() {
+        write_value(out, &pad, field.name(), value, indent)?;
+    }
+    Ok(())
+}
+
+fn write_value<W: std::io::Write>(
+    out: &mut W,
+    pad: &str,
+    name: &str,
+    value: &prost_reflect::Value,
+    indent: usize,
+) -> std::io::Result<()> {
+    use prost_reflect::Value;
+    match value {
+        Value::Message(inner) => {
+            writeln!(out, "{pad}  {name}:")?;
+            let inner_pad = "  ".repeat(indent + 2);
+            for (f, v) in inner.fields() {
+                write_value(out, &inner_pad, f.name(), v, indent + 1)?;
+            }
+        }
+        Value::List(items) => {
+            for item in items {
+                write_value(out, pad, name, item, indent)?;
+            }
+        }
+        Value::EnumNumber(n) => writeln!(out, "{pad}  {name}: {n}")?,
+        Value::Bool(b)       => writeln!(out, "{pad}  {name}: {b}")?,
+        Value::I32(v)        => writeln!(out, "{pad}  {name}: {v}")?,
+        Value::I64(v)        => writeln!(out, "{pad}  {name}: {v}")?,
+        Value::U32(v)        => writeln!(out, "{pad}  {name}: {v}")?,
+        Value::U64(v)        => writeln!(out, "{pad}  {name}: {v}")?,
+        Value::F32(v)        => writeln!(out, "{pad}  {name}: {v}")?,
+        Value::F64(v)        => writeln!(out, "{pad}  {name}: {v}")?,
+        Value::String(s)     => writeln!(out, "{pad}  {name}: {s}")?,
+        Value::Bytes(b)      => writeln!(out, "{pad}  {name}: <{} bytes>", b.len())?,
+        Value::Map(m)        => writeln!(out, "{pad}  {name}: <map, {} entries>", m.len())?,
+    }
+    Ok(())
+}
+
 /// Try to decode `payload` as one of the known HTTP protobuf types
 /// (player state, relay login request/response, session refresh response)
 /// and write the first successful decode to `out`. Falls back to a hex
@@ -248,7 +303,7 @@ fn print_http_protobuf<W: std::io::Write>(
     macro_rules! try_decode {
         ($T:ty) => {
             if let Ok(msg) = <$T>::decode(payload) {
-                writeln!(out, "{msg:#?}")?;
+                print_message(out, &msg, 0)?;
                 return Ok(());
             }
         };
@@ -454,7 +509,7 @@ pub fn print_follow_to<W: std::io::Write>(
                                             match zwift_proto::ServerToClient::decode(
                                                 proto_bytes.as_slice(),
                                             ) {
-                                                Ok(msg) => writeln!(out, "{msg:#?}")?,
+                                                Ok(msg) => print_message(&mut out, &msg, 0)?,
                                                 Err(e) => writeln!(out, "  (decode error: {e})")?,
                                             }
                                         }
@@ -462,7 +517,7 @@ pub fn print_follow_to<W: std::io::Write>(
                                             match zwift_proto::ClientToServer::decode(
                                                 proto_bytes.as_slice(),
                                             ) {
-                                                Ok(msg) => writeln!(out, "{msg:#?}")?,
+                                                Ok(msg) => print_message(&mut out, &msg, 0)?,
                                                 Err(e) => writeln!(out, "  (decode error: {e})")?,
                                             }
                                         }

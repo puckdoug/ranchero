@@ -6,4 +6,7 @@
 //
 // See docs/plans/STEP-06-proto-crate.md.
 
+pub static FILE_DESCRIPTOR_SET_BYTES: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/file_descriptor_set.bin"));
+
 include!(concat!(env!("OUT_DIR"), "/_.rs"));

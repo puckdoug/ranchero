@@ -33,7 +33,7 @@
 ### Phase 6 — Replace `{:#?}` with field-by-field display that omits absent fields
 
 - [x] 6a — Failing tests: `follow_output_contains_no_some_wrappers`, `follow_output_contains_no_none_fields`
-- [ ] 6b — Add `prost-reflect` to `zwift-proto`; enable file descriptor generation; replace `{:#?}` in `print_follow_to` with a reflective field iterator that prints only present fields with unwrapped values
+- [x] 6b — Add `prost-reflect` to `zwift-proto`; enable file descriptor generation; replace `{:#?}` in `print_follow_to` with a reflective field iterator that prints only present fields with unwrapped values
 
 ## 1. Observed symptom
 

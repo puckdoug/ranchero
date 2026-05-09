@@ -7,6 +7,8 @@ description = "Rust types for the Zwift relay protobuf schema (vendored from zwi
 
 [dependencies]
 prost = "0.13"
+prost-reflect = { version = "0.14", features = ["derive"] }
 
 [build-dependencies]
 prost-build = "0.13"
+prost-reflect-build = "0.14"

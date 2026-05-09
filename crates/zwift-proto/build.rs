@@ -14,7 +14,8 @@ fn main() {
     for f in &files {
         println!("cargo:rerun-if-changed={f}");
     }
-    prost_build::Config::new()
+    prost_reflect_build::Builder::new()
+        .file_descriptor_set_bytes("crate::FILE_DESCRIPTOR_SET_BYTES")
         .compile_protos(&files, &[proto_root])
-        .expect("prost-build: compile_protos");
+        .expect("prost-reflect-build: compile_protos");
 }
