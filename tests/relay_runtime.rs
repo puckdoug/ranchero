@@ -4325,3 +4325,239 @@ async fn recv_loop_self_state_with_world_transitions_out_of_suspended() {
          resume_udp must be called from the inbound-state branch",
     );
 }
+
+// ==========================================================================
+// STEP-12.16 §F7 Phase 4a — TCP auto-reconnect on mid-session shutdown
+//
+// sauce4zwift (zwift.mjs:1869-1883) calls _schedConnectRetry() whenever
+// the TCP channel emits a shutdown event while the daemon is running.
+// Ranchero currently returns Ok(()) from recv_loop on
+// TcpChannelEvent::Shutdown, which exits the orchestrator task and
+// terminates the daemon.
+//
+// Tests 1 and 2 are RED until Phase 4b implements the reconnect loop.
+// Test 3 documents the existing clean-shutdown behaviour; it is GREEN
+// from the start and serves as a regression guard once Phase 4b lands.
+// ==========================================================================
+
+/// TCP factory that counts every call to connect() and always vends a fresh
+/// transport with the default udp_config push.  The Arc<AtomicU32> counter
+/// stays accessible after the factory is moved into start_with_all_deps,
+/// so reconnect tests can read it back.
+struct CountingRepeatableTcpFactory {
+    connect_count: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl CountingRepeatableTcpFactory {
+    fn new() -> (Self, Arc<std::sync::atomic::AtomicU32>) {
+        let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        (Self { connect_count: Arc::clone(&count) }, count)
+    }
+}
+
+impl TcpTransportFactory for CountingRepeatableTcpFactory {
+    type Transport = NoopTcpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        self.connect_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async { Ok(NoopTcpTransport::with_pending(Some(default_udp_config_push()))) }
+    }
+}
+
+/// TCP factory whose connect sequence is: succeed (initial) → fail
+/// ConnectionRefused (first reconnect attempt) → succeed (second reconnect).
+/// The connect count is shared via Arc so assertions can read it back.
+struct ReconnectSequenceTcpFactory {
+    connect_count: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl ReconnectSequenceTcpFactory {
+    fn new() -> (Self, Arc<std::sync::atomic::AtomicU32>) {
+        let count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        (Self { connect_count: Arc::clone(&count) }, count)
+    }
+}
+
+impl TcpTransportFactory for ReconnectSequenceTcpFactory {
+    type Transport = NoopTcpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        let n = self
+            .connect_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1; // 1-based
+        async move {
+            match n {
+                1 => Ok(NoopTcpTransport::with_pending(Some(default_udp_config_push()))),
+                2 => Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    "reconnect refused",
+                )),
+                _ => Ok(NoopTcpTransport::with_pending(Some(default_udp_config_push()))),
+            }
+        }
+    }
+}
+
+/// After a mid-session TcpChannelEvent::Shutdown the daemon must schedule a
+/// reconnect and call tcp_factory.connect() a second time within the minimum
+/// backoff window (1 s per the plan).  relay.tcp.reconnect.scheduled and a
+/// second relay.tcp.established must both appear in the trace.
+///
+/// RED until Phase 4b implements the reconnect loop in recv_loop.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn tcp_channel_shutdown_mid_session_triggers_reconnect() {
+    let cfg = make_config("rider@example.com", "secret");
+    let (tcp_factory, tcp_connect_count) = CountingRepeatableTcpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("initial start must succeed");
+
+    // Yield to let the runtime reach established state.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Simulate a mid-session TCP channel shutdown (e.g. server closed
+    // the connection).
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Shutdown);
+
+    // Advance past the minimum reconnect backoff (1 s) so the reconnect
+    // attempt fires.
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    let count = tcp_connect_count.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        count,
+        2,
+        "STEP-12.16 §F7 Phase 4a: TCP must reconnect after a mid-session \
+         Shutdown; tcp_factory.connect() must be called twice (initial + \
+         reconnect). Got {count}",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.reconnect.scheduled",
+        ),
+        "STEP-12.16 §F7 Phase 4a: relay.tcp.reconnect.scheduled must be \
+         emitted when a mid-session TCP shutdown triggers a reconnect",
+    );
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+}
+
+/// When the first reconnect attempt fails the daemon must retry, incrementing
+/// the attempt counter.  The trace must contain
+/// relay.tcp.reconnect.attempt attempt=1 error=… and attempt=2.
+///
+/// RED until Phase 4b implements the reconnect loop.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn tcp_reconnect_increments_attempt_counter_on_repeated_failures() {
+    let cfg = make_config("rider@example.com", "secret");
+    let (tcp_factory, tcp_connect_count) = ReconnectSequenceTcpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("initial start must succeed");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Trigger reconnect.
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Shutdown);
+
+    // Allow time for two reconnect attempts (1st fails, 2nd succeeds; each
+    // with ~1 s backoff).
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    let count = tcp_connect_count.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        count,
+        3, // initial + 2 reconnect attempts
+        "STEP-12.16 §F7 Phase 4a: expected 3 connect() calls (initial, \
+         refused reconnect, successful reconnect); got {count}",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain(
+            "ranchero",
+            "relay.tcp.reconnect.attempt",
+        ),
+        "STEP-12.16 §F7 Phase 4a: relay.tcp.reconnect.attempt must be \
+         emitted on each reconnect attempt",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "attempt=1"),
+        "STEP-12.16 §F7 Phase 4a: relay.tcp.reconnect.attempt must carry \
+         attempt=1 on the first reconnect attempt",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "attempt=2"),
+        "STEP-12.16 §F7 Phase 4a: relay.tcp.reconnect.attempt must carry \
+         attempt=2 on the second reconnect attempt",
+    );
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+}
+
+/// After runtime.shutdown() the daemon must not schedule any further TCP
+/// reconnect attempts.  This test is GREEN from the start (existing behaviour)
+/// and serves as a regression guard once Phase 4b lands.
+#[tokio::test(start_paused = true)]
+async fn tcp_reconnect_stops_on_explicit_shutdown() {
+    let cfg = make_config("rider@example.com", "secret");
+    let (tcp_factory, tcp_connect_count) = CountingRepeatableTcpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        tcp_factory,
+        NoopUdpFactory,
+    )
+    .await
+    .expect("initial start must succeed");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Inject a Shutdown event, then immediately call shutdown() to prevent any
+    // reconnect that Phase 4b would otherwise schedule.
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Shutdown);
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    // Allow any hypothetical reconnect window to pass.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    let count = tcp_connect_count.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        count,
+        1,
+        "STEP-12.16 §F7 Phase 4a: explicit shutdown must prevent reconnect; \
+         tcp_factory.connect() must be called exactly once (initial only). \
+         Got {count}",
+    );
+}

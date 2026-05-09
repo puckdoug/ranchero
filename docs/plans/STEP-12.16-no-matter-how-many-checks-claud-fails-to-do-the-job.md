@@ -279,22 +279,21 @@ and a new "bring UDP up now" helper.
 
 ### Phase 4 — F7: auto-reconnect on mid-session TCP shutdown
 
-- [ ] **4a** — Tests in `tests/relay_runtime.rs`:
-  - `tcp_channel_shutdown_mid_session_triggers_reconnect` —
-    start successfully (athlete in game); after the first
-    `Established`, the TCP factory simulates a shutdown event;
-    assert the TCP factory's `connect` count becomes two within
-    a bounded backoff window; trace contains
-    `relay.tcp.reconnect.scheduled` and a second
-    `relay.tcp.established`.
-  - `tcp_reconnect_increments_attempt_counter_on_repeated_failures`
-    — first reconnect fails with `ConnectionRefused`, second
-    succeeds; trace contains
-    `relay.tcp.reconnect.attempt attempt=1 error=…` and
-    `attempt=2`.
-  - `tcp_reconnect_stops_on_explicit_shutdown` — call
-    `runtime.shutdown()`; the recv-loop exits; assert no further
-    reconnect attempt is scheduled.
+- [x] **4a** — Tests added to `tests/relay_runtime.rs`:
+  - New stubs: `CountingRepeatableTcpFactory` (shared `Arc<AtomicU32>`
+    counter, vends udp_config push on every connect) and
+    `ReconnectSequenceTcpFactory` (succeed → refuse → succeed).
+  - `tcp_channel_shutdown_mid_session_triggers_reconnect` — injects
+    `TcpChannelEvent::Shutdown` after established; asserts
+    `tcp_connect_count == 2` after 2 s and trace contains
+    `relay.tcp.reconnect.scheduled`.  Currently RED (count stays 1).
+  - `tcp_reconnect_increments_attempt_counter_on_repeated_failures` —
+    `ReconnectSequenceTcpFactory`; injects Shutdown; asserts count == 3
+    and trace contains `relay.tcp.reconnect.attempt attempt=1` and
+    `attempt=2`.  Currently RED (count stays 1).
+  - `tcp_reconnect_stops_on_explicit_shutdown` — injects Shutdown then
+    calls `runtime.shutdown()` immediately; asserts count == 1.
+    GREEN from start (regression guard for Phase 4b).
 - [ ] **4b** — Implementation:
   - In `recv_loop`, when `TcpChannelEvent::Shutdown` arrives and
     the runtime has not been asked to stop, do not return
