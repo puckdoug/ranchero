@@ -4303,10 +4303,17 @@ async fn recv_loop_self_state_with_world_transitions_out_of_suspended() {
         }],
         ..Default::default()
     };
+    // Yield before injecting so the recv-loop has a chance to process the
+    // pending udp_config push from StubTcpFactory, which sets
+    // inner.initial_udp_addr.  Without this yield the injected state
+    // arrives before the udp_config event and the resume task cannot
+    // pick an address.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
     runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
 
-    // Give the recv-loop a moment to process the injected event.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Give the recv-loop and resume task time to connect UDP.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     runtime.shutdown();
     let _ = runtime.join().await;

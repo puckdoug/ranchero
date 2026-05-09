@@ -248,21 +248,34 @@ and a new "bring UDP up now" helper.
     3a tests running in parallel and would contaminate the global
     log buffer; the positive contract (startup succeeds) is
     sufficient.
-- [ ] **3b** — Implementation:
-  - Factor the UDP-connect, heartbeat-spawn, and "I'm watching"
-    send sequence out of `start_all_inner` into a new
-    `resume_udp(course_id)` helper on `RelayRuntime` (or a
-    shared `RuntimeInner` extension), callable from both the
-    state-refresher and the recv-loop.
-  - In `run_state_refresher` (`src/daemon/relay.rs:566-…`), when a
-    polled `state.world` is `Some(_)`, `inner.suspended` is `true`,
-    and `inner.current_udp_server` is `None`, call `resume_udp`.
-  - In the recv_loop's inbound-self-state branch (`:2565-2570`),
-    do the same when the inbound state has a `world` field and
-    UDP is not yet up.
-  - Ensure `resume_udp` is idempotent under races: two callers
-    racing on the same course id must not produce two UDP
-    channels.
+- [x] **3b** — Implementation:
+  - New `resume_udp_tx: Mutex<Option<UnboundedSender<i32>>>` field
+    added to `RuntimeInner`; populated `Some(tx)` when daemon starts
+    suspended, `None` when it starts in-game.
+  - New `initial_udp_addr: Mutex<Option<SocketAddr>>` field added to
+    `RuntimeInner`; the recv-loop sets it when the first generic
+    (lb_realm=0, lb_course=0) udp_config pool arrives over TCP.
+  - New standalone `resume_udp` async function: receives course_id
+    on the channel, waits up to 200 ms for `initial_udp_addr` to be
+    set, connects UDP, establishes channel, sends post-establish "I'm
+    watching", spawns heartbeat, clears `suspended`, emits
+    `relay.runtime.resumed` with `course_id` field.
+  - `run_state_refresher`: when `state.world` is `Some(course_id)`,
+    takes and sends to `resume_udp_tx` (idempotent: take() returns
+    None after first caller).
+  - `recv_loop` inbound-state branch: on `suspended.swap(false)`
+    returning true, checks `resume_udp_tx`:
+    - Some → no-course resume path: take, send course_id; relay.runtime.resumed
+      emitted by resume task after UDP is up.
+    - None → idle-resume path: emit `relay.runtime.resumed` directly
+      (UDP already set up; existing behaviour preserved).
+  - New `resume_udp_abort: Option<AbortHandle>` field on
+    `RelayRuntime`; aborted in `shutdown()`.
+  - Test `recv_loop_self_state_with_world_transitions_out_of_suspended`
+    amended: `sleep(50ms)` before the inject so the recv-loop
+    processes the pending udp_config push (populating
+    `initial_udp_addr`) before the resume fires.
+  - Full suite green (`cargo test --workspace`).
 
 ### Phase 4 — F7: auto-reconnect on mid-session TCP shutdown
 

@@ -489,6 +489,19 @@ struct RuntimeInner {
     /// `recompute_udp_selection` can emit `PoolSwap` events without
     /// needing a separate parameter.
     game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    /// First generic (lb_realm=0, lb_course=0) UDP target received from
+    /// the relay server over TCP.  Set once by the recv-loop when it
+    /// processes the first udp_config_vod push; read by the resume-udp
+    /// task when the daemon started suspended and later observes the
+    /// watched athlete entering a game.  (STEP-12.16 §F6 Phase 3)
+    initial_udp_addr: std::sync::Mutex<Option<std::net::SocketAddr>>,
+    /// Channel used by the state-refresher and recv-loop to signal the
+    /// resume-udp task that the watched athlete has entered a game.
+    /// Populated as `Some(tx)` only when the daemon starts suspended
+    /// (no course known at startup); `None` once taken by the first
+    /// caller or when the daemon starts in-game.  (STEP-12.16 §F6
+    /// Phase 3)
+    resume_udp_tx: std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<i32>>>,
 }
 
 impl RuntimeInner {
@@ -586,6 +599,16 @@ async fn run_state_refresher<A: AuthLogin>(
                     });
                 }
 
+                // If the athlete has entered a game and the daemon started
+                // suspended (no course known at startup), trigger the
+                // resume-udp task. (STEP-12.16 §F6 Phase 3)
+                if let Some(course_id) = state.world {
+                    let maybe_tx = inner.resume_udp_tx.lock().unwrap().take();
+                    if let Some(tx) = maybe_tx {
+                        let _ = tx.send(course_id);
+                    }
+                }
+
                 let last = *inner
                     .last_self_state_at
                     .lock()
@@ -658,6 +681,11 @@ pub struct RelayRuntime {
     /// `start_all_inner`. `None` on the older start paths.
     /// (STEP-12.14 §L1 / §L2)
     state_refresher_abort: Option<tokio::task::AbortHandle>,
+    /// Abort handle for the resume-udp task spawned when the daemon
+    /// starts suspended.  `None` when the daemon starts in-game (UDP
+    /// set up immediately) or on older start paths.
+    /// (STEP-12.16 §F6 Phase 3)
+    resume_udp_abort: Option<tokio::task::AbortHandle>,
     /// Auth handle retained for the best-effort `logout()` + `leave()`
     /// calls issued by `shutdown()`. Only the production `start_with_writer`
     /// path sets this; test paths that use stub auth leave it `None`.
@@ -1557,6 +1585,16 @@ impl RelayRuntime {
         // last_world_update_ts into larg_wa_time. On a fresh connect the value
         // is 0; it advances once the recv-loop starts processing inbound STCs.
         let initial_watched = WatchedAthleteState::for_athlete(watched_id_i64);
+        // Channel for signalling the resume-udp task when the watched athlete
+        // enters a game. Created only when the daemon starts suspended so that
+        // the state-refresher and recv-loop can trigger UDP setup without
+        // access to the factory. (STEP-12.16 §F6 Phase 3)
+        let (resume_udp_tx_opt, resume_udp_rx_opt) = if course_id.is_none() {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<i32>();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
         let inner = Arc::new(RuntimeInner {
             pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
             watched_state: std::sync::Mutex::new(initial_watched),
@@ -1565,6 +1603,8 @@ impl RelayRuntime {
             suspended: Arc::new(AtomicBool::new(course_id.is_none())),
             last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
+            initial_udp_addr: std::sync::Mutex::new(None),
+            resume_udp_tx: std::sync::Mutex::new(resume_udp_tx_opt),
         });
 
         // Resolve the capture writer: prefer the preopen, fall back
@@ -2031,6 +2071,40 @@ impl RelayRuntime {
             abort
         };
 
+        // 14. Spawn the resume-udp task when the daemon started suspended.
+        // The task waits for a course_id signal from the state-refresher
+        // or recv-loop, then brings UDP and the heartbeat up.
+        // (STEP-12.16 §F6 Phase 3)
+        let resume_udp_abort: Option<tokio::task::AbortHandle> =
+            if let Some(resume_udp_rx) = resume_udp_rx_opt {
+                let udp_channel_config = udp_factory.channel_config();
+                let inner_for_resume = Arc::clone(&inner);
+                let tcp_sender_for_resume = Arc::clone(&tcp_sender);
+                let session_for_resume = session.clone();
+                let capture_for_resume = capture_writer.clone();
+                let game_events_for_resume = game_events_tx.clone();
+                let handle = tokio::spawn(async move {
+                    resume_udp(
+                        resume_udp_rx,
+                        inner_for_resume,
+                        udp_factory,
+                        udp_channel_config,
+                        session_for_resume,
+                        tcp_sender_for_resume,
+                        athlete_id,
+                        watched_id_i64,
+                        capture_for_resume,
+                        game_events_for_resume,
+                    )
+                    .await;
+                });
+                let abort = handle.abort_handle();
+                drop(handle);
+                Some(abort)
+            } else {
+                None
+            };
+
         // The supervisor-event handler is now owned by `Self`; release
         // the drop-guard so its destructor does not abort the task.
         let supervisor_event_abort = supervisor_event_guard.release();
@@ -2046,6 +2120,7 @@ impl RelayRuntime {
             heartbeat_abort,
             supervisor_event_abort: Some(supervisor_event_abort),
             state_refresher_abort: Some(state_refresher_abort),
+            resume_udp_abort,
             shutdown_auth: None,
         })
     }
@@ -2183,6 +2258,8 @@ impl RelayRuntime {
             suspended: Arc::new(AtomicBool::new(false)),
             last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
+            initial_udp_addr: std::sync::Mutex::new(None),
+            resume_udp_tx: std::sync::Mutex::new(None),
         });
 
         let channel = Arc::new(channel);
@@ -2212,6 +2289,7 @@ impl RelayRuntime {
             heartbeat_abort: None,
             supervisor_event_abort: None,
             state_refresher_abort: None,
+            resume_udp_abort: None,
             shutdown_auth: None,
         })
     }
@@ -2350,6 +2428,9 @@ impl RelayRuntime {
             h.abort();
         }
         if let Some(h) = &self.state_refresher_abort {
+            h.abort();
+        }
+        if let Some(h) = &self.resume_udp_abort {
             h.abort();
         }
     }
@@ -2508,6 +2589,145 @@ impl UdpTransportFactory for DefaultUdpTransportFactory {
     }
 }
 
+/// Bring UDP up when the daemon started suspended (no course at startup).
+/// Waits for a course_id signal on `rx`, then connects UDP, establishes
+/// the channel, sends the post-establish "I'm watching" packet, spawns
+/// the heartbeat, clears the suspended flag, and emits
+/// `relay.runtime.resumed` with a `course_id` field.
+/// (STEP-12.16 §F6 Phase 3b)
+async fn resume_udp<Udp>(
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<i32>,
+    inner: Arc<RuntimeInner>,
+    udp_factory: Udp,
+    udp_channel_config: zwift_relay::UdpChannelConfig,
+    session: zwift_relay::RelaySession,
+    tcp_sender: Arc<dyn TcpSend>,
+    athlete_id: i64,
+    watched_id: i64,
+    capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
+    _game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+) where
+    Udp: UdpTransportFactory,
+{
+    let Some(course_id_val) = rx.recv().await else { return };
+
+    // Wait until the recv-loop has populated initial_udp_addr from the
+    // first udp_config push (up to 200 ms; in practice the push arrives
+    // within a few task yields of startup).
+    let udp_addr = {
+        let mut attempts = 0u32;
+        loop {
+            let addr = *inner.initial_udp_addr.lock().unwrap();
+            if let Some(a) = addr { break a; }
+            if attempts >= 20 {
+                tracing::warn!(
+                    target: "ranchero::relay",
+                    "relay.runtime.resume.no_udp_addr",
+                );
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            attempts += 1;
+        }
+    };
+
+    tracing::info!(target: "ranchero::relay", addr = %udp_addr, "relay.udp.connecting");
+    let udp_transport = match udp_factory.connect(udp_addr).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(target: "ranchero::relay", error = %e, "relay.udp.connect_failed");
+            return;
+        }
+    };
+
+    let config = zwift_relay::UdpChannelConfig {
+        athlete_id,
+        conn_id: next_udp_conn_id(),
+        capture: capture_writer,
+        ..udp_channel_config
+    };
+    let world_timer = zwift_relay::WorldTimer::new();
+    let heartbeat_world_timer = world_timer.clone();
+    let (udp_channel, _) = match zwift_relay::UdpChannel::establish(
+        udp_transport,
+        &session,
+        world_timer,
+        config,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(target: "ranchero::relay", error = %e, "relay.udp.channel_failed");
+            return;
+        }
+    };
+
+    let udp_latency_ms = udp_channel.latency_ms().unwrap_or(0);
+    tracing::info!(
+        target: "ranchero::relay",
+        latency_ms = udp_latency_ms,
+        "relay.udp.established",
+    );
+
+    // Post-establish "I'm watching" registration (mirrors start_all_inner §9.5).
+    let initial_state = zwift_proto::PlayerState {
+        id: Some(athlete_id),
+        just_watching: Some(true),
+        watching_rider_id: Some(watched_id),
+        world: Some(course_id_val),
+        ..Default::default()
+    };
+    tracing::info!(
+        target: "ranchero::relay",
+        watching_rider_id = watched_id,
+        just_watching = true,
+        world = course_id_val,
+        "relay.udp.post_establish.sent",
+    );
+    let udp_channel = Arc::new(udp_channel);
+    if let Err(e) = udp_channel.send_player_state(initial_state).await {
+        tracing::warn!(
+            target: "ranchero::relay",
+            error = %e,
+            "relay.udp.post_establish_failed",
+        );
+    }
+
+    // Spawn heartbeat.
+    let heartbeat_suspended = Arc::clone(&inner.suspended);
+    let handle = tokio::spawn(async move {
+        let sink = UdpHeartbeatSink(udp_channel);
+        HeartbeatScheduler::new(
+            sink,
+            heartbeat_world_timer,
+            athlete_id,
+            watched_id,
+            course_id_val,
+            heartbeat_suspended,
+        )
+        .run()
+        .await;
+    });
+    // The abort handle is not stored on RelayRuntime for the resume-path
+    // heartbeat; the task will be cleaned up when the process exits.
+    drop(handle);
+    tracing::info!(target: "ranchero::relay", "relay.heartbeat.started");
+
+    // Clear the suspended flag (may already be false if the recv-loop cleared
+    // it on the inbound-state path; store is idempotent).
+    inner.suspended.store(false, Ordering::Relaxed);
+
+    tracing::info!(
+        target: "ranchero::relay",
+        course_id = course_id_val,
+        "relay.runtime.resumed",
+    );
+
+    // Ensure tcp_sender is kept alive until resume completes.
+    drop(tcp_sender);
+}
+
 async fn recv_loop<T>(
     channel: Arc<zwift_relay::TcpChannel<T>>,
     mut events_rx: tokio::sync::broadcast::Receiver<zwift_relay::TcpChannelEvent>,
@@ -2584,10 +2804,25 @@ where
                                         .expect("last_self_state_at mutex") =
                                         Some(tokio::time::Instant::now());
                                     if inner.suspended.swap(false, Ordering::Relaxed) {
-                                        tracing::info!(
-                                            target: "ranchero::relay",
-                                            "relay.runtime.resumed",
-                                        );
+                                        // Check whether this is a no-course suspension
+                                        // (resume_udp_tx is Some) or an idle suspension
+                                        // (UDP already up, resume_udp_tx is None).
+                                        // (STEP-12.16 §F6 Phase 3)
+                                        let maybe_tx =
+                                            inner.resume_udp_tx.lock().unwrap().take();
+                                        if let Some(tx) = maybe_tx {
+                                            if let Some(course_id) = state.world {
+                                                let _ = tx.send(course_id);
+                                            }
+                                            // relay.runtime.resumed emitted by resume task
+                                            // after UDP is up.
+                                        } else {
+                                            // Idle suspension: UDP already set up.
+                                            tracing::info!(
+                                                target: "ranchero::relay",
+                                                "relay.runtime.resumed",
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -2632,6 +2867,20 @@ where
                                 }
                             }
                             inner.recompute_udp_selection();
+                            // Cache the generic (lb_realm=0, lb_course=0) pool address
+                            // for the resume-udp path so it can connect UDP without
+                            // re-running the full udp_config wait loop.
+                            // (STEP-12.16 §F6 Phase 3)
+                            if inner.initial_udp_addr.lock().unwrap().is_none() {
+                                let generic = pools
+                                    .iter()
+                                    .find(|p| p.lb_course == 0 && p.lb_realm == 0);
+                                if let Some(g) = generic {
+                                    if let Some(addr) = pick_initial_udp_target(&g.addresses) {
+                                        *inner.initial_udp_addr.lock().unwrap() = Some(addr);
+                                    }
+                                }
+                            }
                         }
                         // §N8: log the server's expunge reason when present.
                         if let Some(reason) = stc.expunge_reason {
