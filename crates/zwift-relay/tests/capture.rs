@@ -488,16 +488,17 @@ async fn follower_resumes_after_truncated_record_at_eof() {
             .append(true)
             .open(&writer_path)
             .expect("open append");
-        // V2 record header is 16 bytes:
-        //   ts(8) + kind(1) + direction(1) + transport(1) + flags(1) + len(4).
+        // V3 record header is 17 bytes:
+        //   ts(8) + kind(1) + direction(1) + transport(1) + flags(1) + content_type(1) + len(4).
         // We've written 5 bytes of 0xFF, treated as the first 5 bytes
-        // of ts. Append the remaining 11 bytes of header plus a
+        // of ts. Append the remaining 12 bytes of header plus a
         // 4-byte payload [1,2,3,4].
         f.write_all(&[0x00, 0x00, 0x00]).expect("rest of ts");
         f.write_all(&[0]).expect("kind Frame");
         f.write_all(&[0]).expect("direction Inbound");
         f.write_all(&[0]).expect("transport Udp");
         f.write_all(&[0]).expect("flags");
+        f.write_all(&[0]).expect("content_type Unspecified");
         f.write_all(&4u32.to_le_bytes()).expect("len");
         f.write_all(&[1u8, 2, 3, 4]).expect("payload");
         f.flush().expect("flush");
@@ -635,11 +636,11 @@ fn follower_rejects_unsupported_version() {
     let mut path = NamedTempFile::new().expect("tempfile");
     use std::io::Write;
     path.write_all(MAGIC).expect("write magic");
-    path.write_all(&[0x03, 0x00]).expect("write version 3");
+    path.write_all(&[0x04, 0x00]).expect("write version 4");
     path.flush().expect("flush");
 
     match CaptureFollower::open(path.path()) {
-        Err(CaptureError::UnsupportedVersion(3)) => {}
+        Err(CaptureError::UnsupportedVersion(4)) => {}
         other => panic!(
             "CaptureFollower::open must reject unsupported versions \
              with Err(UnsupportedVersion(_)); got {other:?}",
@@ -701,8 +702,8 @@ async fn capture_format_v2_round_trip_writes_and_reads_manifest_then_frames() {
          got {version}",
     );
     assert_eq!(
-        VERSION, 2,
-        "STEP-12.12 Phase 0a: capture format VERSION must be bumped to 2 by Phase 0b",
+        VERSION, 3,
+        "STEP-12.30 Phase 2b: capture format VERSION must be 3 after the content_type byte was added",
     );
 
     let mut reader = CaptureReader::open(path.path()).expect("reader");

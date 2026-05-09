@@ -1206,6 +1206,11 @@ impl RelayRuntime {
             None => None,
         };
 
+        if let Some(ref writer) = preopen_writer {
+            auth.set_capture_sink(Arc::new(HttpCaptureSink { writer: Arc::clone(writer) })
+                as Arc<dyn zwift_api::CaptureSink>);
+        }
+
         match Self::start_all_inner(
             cfg,
             None,
@@ -1327,7 +1332,9 @@ impl RelayRuntime {
         let session_config = zwift_relay::RelaySessionConfig::default();
         let (game_events_tx, _) = tokio::sync::broadcast::channel::<GameEvent>(64);
 
-        if capture_writer.is_some() {
+        if let Some(ref writer) = capture_writer {
+            auth.set_capture_sink(Arc::new(HttpCaptureSink { writer: Arc::clone(writer) })
+                as Arc<dyn zwift_api::CaptureSink>);
             tracing::info!(target: "ranchero::relay", "relay.capture.opened");
         }
 
@@ -2630,6 +2637,47 @@ impl AuthLogin for DefaultAuthLogin {
         athlete_id: i64,
     ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
         self.auth.get_player_state(athlete_id).await
+    }
+}
+
+/// [`zwift_api::CaptureSink`] that writes each HTTP exchange into the
+/// daemon's capture file by delegating to a [`CaptureWriter`].
+struct HttpCaptureSink {
+    writer: Arc<zwift_relay::capture::CaptureWriter>,
+}
+
+impl zwift_api::CaptureSink for HttpCaptureSink {
+    fn record(
+        &self,
+        direction: zwift_api::CaptureDirection,
+        _transport: zwift_api::CaptureTransport,
+        content_type: zwift_api::CaptureContentType,
+        payload: &[u8],
+    ) {
+        use zwift_relay::capture::{CaptureRecord, ContentType, Direction, TransportKind};
+
+        let dir = match direction {
+            zwift_api::CaptureDirection::Inbound => Direction::Inbound,
+            zwift_api::CaptureDirection::Outbound => Direction::Outbound,
+        };
+        let ct = match content_type {
+            zwift_api::CaptureContentType::Json => ContentType::Json,
+            zwift_api::CaptureContentType::UrlEncoded => ContentType::UrlEncoded,
+            zwift_api::CaptureContentType::ProtobufLite => ContentType::ProtobufLite,
+            zwift_api::CaptureContentType::Empty => ContentType::Empty,
+            zwift_api::CaptureContentType::Unspecified => ContentType::Unspecified,
+        };
+        self.writer.record(CaptureRecord {
+            ts_unix_ns: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64,
+            direction: dir,
+            transport: TransportKind::Http,
+            hello: false,
+            content_type: ct,
+            payload: payload.to_vec(),
+        });
     }
 }
 
