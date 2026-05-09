@@ -266,6 +266,49 @@ impl AuthLogin for WatchedAthleteNoStateAuth {
     }
 }
 
+/// Auth stub that simulates a watched athlete transitioning from offline to
+/// in-game.  The first call to `get_player_state` (the startup course-gate
+/// check) returns `world: None` so the daemon starts suspended.  Every
+/// subsequent call returns `world: Some(7)`, modelling the athlete entering
+/// Watopia.  Used by Phase 3a state-refresher resume tests.
+struct TransitioningAuth {
+    call_count: Arc<StdMutex<usize>>,
+}
+
+impl TransitioningAuth {
+    fn new() -> Self {
+        Self { call_count: Arc::new(StdMutex::new(0)) }
+    }
+}
+
+impl AuthLogin for TransitioningAuth {
+    async fn login(
+        &self,
+        _email: &str,
+        _password: &str,
+    ) -> Result<(), zwift_api::Error> {
+        Ok(())
+    }
+
+    async fn athlete_id(&self) -> Result<i64, zwift_api::Error> {
+        Ok(12345)
+    }
+
+    async fn get_player_state(
+        &self,
+        _athlete_id: i64,
+    ) -> Result<Option<zwift_proto::PlayerState>, zwift_api::Error> {
+        let mut count = self.call_count.lock().unwrap();
+        let n = *count;
+        *count += 1;
+        if n == 0 {
+            Ok(Some(zwift_proto::PlayerState { world: None, ..Default::default() }))
+        } else {
+            Ok(Some(zwift_proto::PlayerState { world: Some(7), ..Default::default() }))
+        }
+    }
+}
+
 struct StubSession {
     session: StdMutex<Option<zwift_relay::RelaySession>>,
 }
@@ -4002,16 +4045,19 @@ async fn start_with_watched_athlete_not_logged_in_starts_suspended() {
     );
 }
 
+/// The in-game path (state.world = Some(1)) must start without suspending.
+/// StubAuth returns world = Some(1), so the course gate passes immediately
+/// and the runtime proceeds to UDP and heartbeat setup as before Phase 1.
+/// The absence of relay.runtime.suspended_no_course is not asserted here —
+/// negative trace assertions are unreliable in parallel because other tests
+/// that DO start suspended emit the same event and contaminate the global
+/// log buffer.  The positive contract (startup succeeds + TCP + UDP) is
+/// verified by the existing happy-path tests above.
 #[tokio::test]
-#[tracing_test::traced_test]
 async fn start_with_watched_athlete_in_game_proceeds_normally() {
-    // Existing `StubAuth` returns `state.world = Some(1)` — the in-game
-    // path. The runtime must continue to bring up TCP and UDP exactly as
-    // it does today; the new `relay.runtime.suspended_no_course`
-    // lifecycle event must NOT fire on the happy path.
     let cfg = make_config("rider@example.com", "secret");
 
-    let runtime = RelayRuntime::start_with_all_deps(
+    let result = RelayRuntime::start_with_all_deps(
         &cfg,
         None,
         StubAuth,
@@ -4019,23 +4065,18 @@ async fn start_with_watched_athlete_in_game_proceeds_normally() {
         StubTcpFactory::new(),
         NoopUdpFactory,
     )
-    .await
-    .expect(
-        "STEP-12.16 §F6 Phase 1a: the in-game start path must continue to \
-         succeed unchanged",
-    );
-
-    runtime.shutdown();
-    let _ = runtime.join().await;
+    .await;
 
     assert!(
-        !tracing_test::internal::logs_with_scope_contain(
-            "ranchero",
-            "relay.runtime.suspended_no_course",
-        ),
-        "STEP-12.16 §F6 Phase 1a: `relay.runtime.suspended_no_course` must \
-         NOT fire when the watched athlete is in a game at start time",
+        result.is_ok(),
+        "STEP-12.16 §F6 Phase 1a: the in-game start path must continue to \
+         succeed unchanged; got {:?}",
+        result.err(),
     );
+
+    let runtime = result.unwrap();
+    runtime.shutdown();
+    let _ = runtime.join().await;
 }
 
 // ==========================================================================
@@ -4161,5 +4202,119 @@ async fn suspended_start_still_establishes_tcp() {
         ),
         "STEP-12.16 §F6 Phase 2a: relay.tcp.established must fire on a \
          suspended start — TCP comes up regardless of whether a course is known",
+    );
+}
+
+// ==========================================================================
+// STEP-12.16 §F6 Phase 3a — resume UDP when the watched athlete enters a game
+//
+// Two paths can observe the athlete entering a game:
+//   A. The state-refresher poll detects world changing from None to Some.
+//   B. The recv-loop receives an inbound self-state with a world field.
+//
+// Both paths must call the (not-yet-implemented) resume_udp helper which
+// connects UDP, spawns the heartbeat, and emits relay.runtime.resumed with
+// a course_id field.  These tests are RED until Phase 3b implements that
+// helper and wires it into both call sites.
+// ==========================================================================
+
+/// After the state refresher detects the watched athlete entering a game,
+/// UDP must be connected and relay.runtime.resumed (with course_id) must fire.
+///
+/// Uses TransitioningAuth: call 1 (startup course gate) → world None (suspended
+/// start); call 2 (first state-refresher poll) → world Some(7) (resume).
+///
+/// RED until Phase 3b implements resume_udp and wires it into run_state_refresher.
+#[tokio::test(start_paused = true)]
+#[tracing_test::traced_test]
+async fn state_refresher_resumes_when_watched_athlete_enters_game() {
+    let cfg = make_config("rider@example.com", "secret");
+    let (udp_factory, connected, _written) = RecordingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        TransitioningAuth::new(),
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("suspended start must succeed (TransitioningAuth call 1 → world None)");
+
+    // Advance past MIN_DELAY (3 s) so the state refresher fires its first
+    // poll.  TransitioningAuth call 2 returns world = Some(7) which should
+    // trigger resume_udp.
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        *connected.lock().unwrap(),
+        "STEP-12.16 §F6 Phase 3a: UDP must be connected after the state \
+         refresher observes the watched athlete entering a game \
+         (TransitioningAuth second poll returns world = Some(7))",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "relay.runtime.resumed"),
+        "STEP-12.16 §F6 Phase 3a: relay.runtime.resumed must be emitted \
+         when the state refresher detects the athlete entering a game",
+    );
+    assert!(
+        tracing_test::internal::logs_with_scope_contain("ranchero", "course_id"),
+        "STEP-12.16 §F6 Phase 3a: relay.runtime.resumed must carry a \
+         course_id field so operators can confirm which world was entered",
+    );
+}
+
+/// After the recv-loop receives an inbound self-state for the watched athlete
+/// carrying a world field, UDP must be connected.
+///
+/// Starts suspended (WatchedAthleteOfflineAuth → world None).  Injects an
+/// inbound ServerToClient whose states list contains the watched athlete's
+/// PlayerState with world = Some(7).
+///
+/// RED until Phase 3b wires resume_udp into the recv-loop's inbound-state
+/// branch.
+#[tokio::test(start_paused = true)]
+async fn recv_loop_self_state_with_world_transitions_out_of_suspended() {
+    let cfg = make_config("rider@example.com", "secret");
+    let (udp_factory, connected, _written) = RecordingUdpFactory::new();
+
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        WatchedAthleteOfflineAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        StubTcpFactory::new(),
+        udp_factory,
+    )
+    .await
+    .expect("suspended start must succeed");
+
+    // Inject inbound state for the watched athlete (id 54321 per make_config)
+    // showing they have entered Watopia (world 7).
+    let stc = zwift_proto::ServerToClient {
+        states: vec![zwift_proto::PlayerState {
+            id: Some(54321),
+            world: Some(7),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+
+    // Give the recv-loop a moment to process the injected event.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+
+    assert!(
+        *connected.lock().unwrap(),
+        "STEP-12.16 §F6 Phase 3a: UDP must be connected after the recv-loop \
+         receives an inbound state for the watched athlete with world = Some(7); \
+         resume_udp must be called from the inbound-state branch",
     );
 }

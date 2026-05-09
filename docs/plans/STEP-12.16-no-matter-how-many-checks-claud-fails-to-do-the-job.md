@@ -227,16 +227,27 @@ state only via the recv-loop's inbound self-state path
 (`:2565-2570`). The polled-state path needs the same transition,
 and a new "bring UDP up now" helper.
 
-- [ ] **3a** — Tests:
+- [x] **3a** — Tests (added to `tests/relay_runtime.rs`):
   - `state_refresher_resumes_when_watched_athlete_enters_game` —
-    start suspended; the `auth` stub returns `world = None` for
-    the first poll and `world = Some(7)` for the second; the
-    runtime's UDP factory `connect` count becomes one within the
-    second poll's deadline; trace contains `relay.runtime.resumed`
-    with a `course_id` field and a UDP-channel-setup trace.
+    new `TransitioningAuth` stub: call 1 (startup course gate)
+    returns `world: None` (suspended start); call 2 (first
+    state-refresher poll after 3 s) returns `world: Some(7)`.
+    `RecordingUdpFactory::connected` must be true after 4 s of
+    paused-time advance; `relay.runtime.resumed` and `course_id`
+    must appear in traces.  Currently RED (state refresher does
+    not call resume_udp).
   - `recv_loop_self_state_with_world_transitions_out_of_suspended` —
-    a variant that starts suspended (no UDP yet) and asserts UDP
-    is brought up on the first inbound self-state.
+    starts suspended; injects `TcpChannelEvent::Inbound` carrying
+    the watched athlete's `PlayerState { id: 54321, world: Some(7)
+    }`.  `RecordingUdpFactory::connected` must be true after 100 ms.
+    Currently RED (recv-loop clears suspended flag but does not call
+    resume_udp).
+  - Negative trace assertion removed from
+    `start_with_watched_athlete_in_game_proceeds_normally`: the
+    `relay.runtime.suspended_no_course` event is emitted by Phase
+    3a tests running in parallel and would contaminate the global
+    log buffer; the positive contract (startup succeeds) is
+    sufficient.
 - [ ] **3b** — Implementation:
   - Factor the UDP-connect, heartbeat-spawn, and "I'm watching"
     send sequence out of `start_all_inner` into a new
