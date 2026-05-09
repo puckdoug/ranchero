@@ -5,27 +5,33 @@
 ## 0. Progress checklist
 
 ### Phase 1 — Fix `follow`: decrypt frames; remove `--decode` flag
+
 - [x] 1a — Failing tests: `follow_decrypts_outbound_tcp_frame`, `follow_decrypts_inbound_tcp_frame`, `follow_subcommand_has_no_decode_flag`
 - [x] 1b — Implement decryption in `print_follow_to`; remove `decode` parameter and `--decode` CLI flag
 
 ### Phase 2 — Wire `CaptureSink`; extend capture format to v3 with content-type field
+
 - [x] 2a — Failing test: `login_http_exchange_appears_in_capture`
 - [x] 2b — Bump capture format to v3; add `ContentType` enum and `content_type` byte to record header
-- [ ] 2c — Add `CaptureContentType` enum to `zwift-api`; extend `CaptureSink::record()`; update all `record_outbound`/`record_inbound` call sites
+- [x] 2c — Add `CaptureContentType` enum to `zwift-api`; extend `CaptureSink::record()`; update all `record_outbound`/`record_inbound` call sites
 - [ ] 2d — Implement `HttpCaptureSink` in daemon; call `set_capture_sink` at construction and re-login sites
 
 ### Phase 3 — Fix `post_empty()` capture calls
+
 - [ ] 3 — Add `record_outbound`/`record_inbound` calls in `post_empty()`
 
 ### Phase 4 — Print Manifest records in `follow` output
+
 - [ ] 4a — Failing test: `follow_output_includes_manifest_summary`
 - [ ] 4b — Print manifest summary line in `print_follow_to`
 
 ### Phase 5 — Decode HTTP record payloads in `follow` output
+
 - [ ] 5a — Failing tests: `follow_http_json_payload_is_pretty_printed`, `follow_http_urlencoded_payload_is_displayed`, `follow_http_protobuf_payload_is_decoded`, `follow_http_empty_payload_prints_empty_marker`
 - [ ] 5b — Dispatch on `record.content_type` to JSON / URL-encoded / protobuf / fallback decoders
 
 ### Phase 6 — Replace `{:#?}` with field-by-field display that omits absent fields
+
 - [ ] 6a — Failing tests: `follow_output_contains_no_some_wrappers`, `follow_output_contains_no_none_fields`
 - [ ] 6b — Add `prost-reflect` to `zwift-proto`; enable file descriptor generation; replace `{:#?}` in `print_follow_to` with a reflective field iterator that prints only present fields with unwrapped values
 
@@ -69,6 +75,7 @@ is written into the file.
 ## 3. Root causes (six independent defects)
 
 ### Defect A — `follow` never decrypts: it skips all Manifest records
+
 and proto-decodes encrypted bytes directly
 
 **Where:** `src/cli.rs:256-313`, `crates/zwift-relay/src/capture.rs:796-809`.
@@ -88,6 +95,7 @@ header and is always visible; the payload contents are never shown. This
 is why the output appears to contain only timestamps.
 
 To decrypt a frame, `follow` must:
+
 1. Call `CaptureFollower::next_item()` instead of iterating.
 2. When a `Manifest` is returned, save it and reset per-direction
    per-transport seqno counters to the manifest's starting values.
@@ -175,16 +183,16 @@ if each manifest produced a summary line.
 
 ## 4. What is currently being captured
 
-| Record | Written at | Status |
-| --- | --- | --- |
-| `Manifest` | `relay.rs:1682`, `1734`, `1758` | Written, but silently skipped by `follow` |
-| Outbound TCP frames (encrypted) | `tcp.rs:282` | Written, but encrypted and not decrypted by `follow` |
-| Inbound TCP frames (encrypted) | `tcp.rs:412` | Written, but encrypted and not decrypted by `follow` |
-| Outbound UDP datagrams (encrypted) | `udp.rs:271`, `udp.rs:463` | Written, but encrypted and not decrypted by `follow` |
-| Inbound UDP datagrams (encrypted) | `udp.rs:300`, `udp.rs:595` | Written, but encrypted and not decrypted by `follow` |
-| HTTP exchanges | — | Not written (defect C) |
-| `POST /api/users/logout` | — | Not written (defect C2) |
-| `POST /relay/worlds/1/leave` | — | Not written (defect C2) |
+| Record                             | Written at                      | Status                                               |
+| ---------------------------------- | ------------------------------- | ---------------------------------------------------- |
+| `Manifest`                         | `relay.rs:1682`, `1734`, `1758` | Written, but silently skipped by `follow`            |
+| Outbound TCP frames (encrypted)    | `tcp.rs:282`                    | Written, but encrypted and not decrypted by `follow` |
+| Inbound TCP frames (encrypted)     | `tcp.rs:412`                    | Written, but encrypted and not decrypted by `follow` |
+| Outbound UDP datagrams (encrypted) | `udp.rs:271`, `udp.rs:463`      | Written, but encrypted and not decrypted by `follow` |
+| Inbound UDP datagrams (encrypted)  | `udp.rs:300`, `udp.rs:595`      | Written, but encrypted and not decrypted by `follow` |
+| HTTP exchanges                     | —                               | Not written (defect C)                               |
+| `POST /api/users/logout`           | —                               | Not written (defect C2)                              |
+| `POST /relay/worlds/1/leave`       | —                               | Not written (defect C2)                              |
 
 ## 5. Implementation plan
 
@@ -223,6 +231,7 @@ Add to `tests/cli_follow.rs` (or the existing follow test module):
 
 3. In `print_follow_to`, replace `for (idx, result) in follower.enumerate()`
    with a loop driven by `follower.next_item()`. Maintain local state:
+
    ```
    let mut manifest: Option<SessionManifest> = None;
    let mut seqno_out_tcp: u32 = 0;
@@ -230,6 +239,7 @@ Add to `tests/cli_follow.rs` (or the existing follow test module):
    let mut seqno_out_udp: u32 = 0;
    let mut seqno_in_udp:  u32 = 0;
    ```
+
    When `CaptureItem::Manifest(m)` is returned: save to `manifest`,
    reset the four counters from `m.send_iv_seqno_tcp`,
    `m.recv_iv_seqno_tcp`, `m.send_iv_seqno_udp`, `m.recv_iv_seqno_udp`.
@@ -292,6 +302,7 @@ In `crates/zwift-relay/src/capture.rs`:
    to `17`. Update the constant doc comment to describe the v3 layout.
 
 2. Add a `ContentType` enum with `as_byte`/`from_byte` conversions:
+
    ```rust
    pub enum ContentType {
        Unspecified     = 0,  // TCP/UDP wire frames
@@ -317,6 +328,7 @@ In `crates/zwift-relay/src/capture.rs`:
 In `crates/zwift-api/src/lib.rs`:
 
 1. Add `CaptureContentType` enum mirroring the relay-side values:
+
    ```rust
    pub enum CaptureContentType {
        Unspecified,
@@ -328,6 +340,7 @@ In `crates/zwift-api/src/lib.rs`:
    ```
 
 2. Extend `CaptureSink::record` to include it:
+
    ```rust
    fn record(
        &self,
@@ -343,24 +356,25 @@ In `crates/zwift-api/src/lib.rs`:
 
 4. Update every call site in `lib.rs` to pass the correct value:
 
-   | Method | Direction | Content type |
-   | --- | --- | --- |
-   | `token_grant` outbound | Outbound | `UrlEncoded` |
-   | `token_grant` inbound | Inbound | `Json` |
-   | `get_profile_me` outbound | Outbound | `Empty` |
-   | `get_profile_me` inbound | Inbound | `Json` |
-   | `fetch` (GET) outbound | Outbound | `Empty` |
-   | `fetch` (GET) inbound | Inbound | confirm at call site (JSON or ProtobufLite) |
-   | `post` outbound | Outbound | `ProtobufLite` if `content_type` param starts with `application/x-protobuf-lite`; else `UrlEncoded`/`Json`/`Unspecified` as appropriate |
-   | `post` inbound | Inbound | mirror from the request's `is_protobuf` flag: `ProtobufLite` or `Json` |
-   | `post_empty` outbound | Outbound | `Empty` |
-   | `post_empty` inbound | Inbound | `Empty` |
-   | `refresh` (internal) | per call | confirm at implementation time |
+   | Method                    | Direction | Content type                                                                                                                            |
+   | ------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+   | `token_grant` outbound    | Outbound  | `UrlEncoded`                                                                                                                            |
+   | `token_grant` inbound     | Inbound   | `Json`                                                                                                                                  |
+   | `get_profile_me` outbound | Outbound  | `Empty`                                                                                                                                 |
+   | `get_profile_me` inbound  | Inbound   | `Json`                                                                                                                                  |
+   | `fetch` (GET) outbound    | Outbound  | `Empty`                                                                                                                                 |
+   | `fetch` (GET) inbound     | Inbound   | confirm at call site (JSON or ProtobufLite)                                                                                             |
+   | `post` outbound           | Outbound  | `ProtobufLite` if `content_type` param starts with `application/x-protobuf-lite`; else `UrlEncoded`/`Json`/`Unspecified` as appropriate |
+   | `post` inbound            | Inbound   | mirror from the request's `is_protobuf` flag: `ProtobufLite` or `Json`                                                                  |
+   | `post_empty` outbound     | Outbound  | `Empty`                                                                                                                                 |
+   | `post_empty` inbound      | Inbound   | `Empty`                                                                                                                                 |
+   | `refresh` (internal)      | per call  | confirm at implementation time                                                                                                          |
 
 #### 2d — Daemon adapter
 
 1. Add a private `HttpCaptureSink(Arc<CaptureWriter>)` struct in
    `src/daemon/relay.rs` implementing `zwift_api::CaptureSink`:
+
    ```rust
    impl zwift_api::CaptureSink for HttpCaptureSink {
        fn record(
@@ -394,6 +408,7 @@ In `crates/zwift-api/src/lib.rs`:
 
 2. At `relay.rs:1192` and `relay.rs:1326`, after constructing `auth`,
    if `capture_writer` is `Some(writer)`:
+
    ```rust
    auth.set_capture_sink(Arc::new(HttpCaptureSink(Arc::clone(writer))));
    ```
@@ -405,6 +420,7 @@ In `crates/zwift-api/src/lib.rs`:
 ### Phase 3 — Fix defect C2: add capture calls to `post_empty()`
 
 In `crates/zwift-api/src/lib.rs`, in `post_empty()`, add:
+
 ```rust
 self.inner.record_outbound(&[]);  // before send()
 // … existing send / bytes …
@@ -427,6 +443,7 @@ No new tests needed; the regression guard in Phase 2a covers this path.
 
 Phase 1 already switches `print_follow_to` to `next_item()`. In that
 loop, when `CaptureItem::Manifest(m)` is returned, write:
+
 ```
   Manifest  relay_id=42  conn_id=7  key=<16-byte hex>  expires=2026-05-09T18:00:00Z
 ```
@@ -506,6 +523,7 @@ Both tests should also assert that the output does contain the expected field va
 #### 6b — Implementation
 
 1. Add `prost-reflect` to `crates/zwift-proto/Cargo.toml`:
+
    ```toml
    [dependencies]
    prost-reflect = { version = "0.14", features = ["derive"] }
@@ -544,6 +562,7 @@ ranchero stop
 ```
 
 Expected output from `follow`:
+
 - A `Manifest` line near the top.
 - `in  HTT` / `out HTT` records for the token grant, profile fetch, and
   relay login — each followed by the decoded payload (JSON pretty-printed,

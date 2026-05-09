@@ -608,25 +608,31 @@ async fn get_profile_me_5xx_returns_unknown() {
 
 use std::sync::{Arc, Mutex};
 
-use zwift_api::{CaptureDirection, CaptureSink, CaptureTransport};
+use zwift_api::{CaptureContentType, CaptureDirection, CaptureSink, CaptureTransport};
 
 #[derive(Default)]
 struct RecordingSink {
-    records: Mutex<Vec<(CaptureDirection, CaptureTransport, Vec<u8>)>>,
+    records: Mutex<Vec<(CaptureDirection, CaptureTransport, CaptureContentType, Vec<u8>)>>,
 }
 
 impl RecordingSink {
-    fn snapshot(&self) -> Vec<(CaptureDirection, CaptureTransport, Vec<u8>)> {
+    fn snapshot(&self) -> Vec<(CaptureDirection, CaptureTransport, CaptureContentType, Vec<u8>)> {
         self.records.lock().expect("sink mutex").clone()
     }
 }
 
 impl CaptureSink for RecordingSink {
-    fn record(&self, direction: CaptureDirection, transport: CaptureTransport, payload: &[u8]) {
+    fn record(
+        &self,
+        direction: CaptureDirection,
+        transport: CaptureTransport,
+        content_type: CaptureContentType,
+        payload: &[u8],
+    ) {
         self.records
             .lock()
             .expect("sink mutex")
-            .push((direction, transport, payload.to_vec()));
+            .push((direction, transport, content_type, payload.to_vec()));
     }
 }
 
@@ -686,10 +692,10 @@ async fn login_request_body_appears_in_capture_as_http_outbound() {
     let outbound: Vec<Vec<u8>> = sink
         .snapshot()
         .into_iter()
-        .filter(|(d, t, _)| {
+        .filter(|(d, t, _, _)| {
             *d == CaptureDirection::Outbound && *t == CaptureTransport::Http
         })
-        .map(|(_, _, p)| p)
+        .map(|(_, _, _, p)| p)
         .collect();
     let token_request = outbound
         .iter()
@@ -731,10 +737,10 @@ async fn login_response_body_appears_in_capture_as_http_inbound() {
     let inbound: Vec<Vec<u8>> = sink
         .snapshot()
         .into_iter()
-        .filter(|(d, t, _)| {
+        .filter(|(d, t, _, _)| {
             *d == CaptureDirection::Inbound && *t == CaptureTransport::Http
         })
-        .map(|(_, _, p)| p)
+        .map(|(_, _, _, p)| p)
         .collect();
     assert!(
         inbound.iter().any(|body| body == &token_resp_bytes),
@@ -762,7 +768,7 @@ async fn profile_fetch_request_and_response_appear_in_capture() {
     let records = sink.snapshot();
     let outbound = records
         .iter()
-        .find(|(d, t, _)| {
+        .find(|(d, t, _, _)| {
             *d == CaptureDirection::Outbound && *t == CaptureTransport::Http
         })
         .expect(
@@ -770,12 +776,12 @@ async fn profile_fetch_request_and_response_appear_in_capture() {
              Http capture record (empty body for the GET)",
         );
     assert!(
-        outbound.2.is_empty(),
+        outbound.3.is_empty(),
         "GET request bodies are empty; captured payload should match",
     );
     let inbound = records
         .iter()
-        .find(|(d, t, p)| {
+        .find(|(d, t, _, p)| {
             *d == CaptureDirection::Inbound && *t == CaptureTransport::Http && p == &profile_bytes
         })
         .expect(
@@ -818,7 +824,7 @@ async fn authenticated_post_and_get_paths_record_request_and_response() {
     let records = sink.snapshot();
 
     assert!(
-        records.iter().any(|(d, t, p)| {
+        records.iter().any(|(d, t, _, p)| {
             *d == CaptureDirection::Outbound
                 && *t == CaptureTransport::Http
                 && p.as_slice() == b"client-body"
@@ -827,7 +833,7 @@ async fn authenticated_post_and_get_paths_record_request_and_response() {
          an outbound Http capture; got {records:?}",
     );
     assert!(
-        records.iter().any(|(d, t, p)| {
+        records.iter().any(|(d, t, _, p)| {
             *d == CaptureDirection::Inbound
                 && *t == CaptureTransport::Http
                 && p.as_slice() == post_resp
@@ -836,7 +842,7 @@ async fn authenticated_post_and_get_paths_record_request_and_response() {
          an inbound Http capture",
     );
     assert!(
-        records.iter().any(|(d, t, p)| {
+        records.iter().any(|(d, t, _, p)| {
             *d == CaptureDirection::Inbound
                 && *t == CaptureTransport::Http
                 && p.as_slice() == get_resp

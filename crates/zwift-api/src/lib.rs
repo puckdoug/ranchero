@@ -130,6 +130,18 @@ pub enum CaptureTransport {
     Http,
 }
 
+/// Payload encoding hint passed to a [`CaptureSink`] alongside each
+/// HTTP exchange. Mirrors `zwift_relay::capture::ContentType` without
+/// creating a crate dependency in the opposite direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureContentType {
+    Unspecified,
+    Json,
+    UrlEncoded,
+    ProtobufLite,
+    Empty,
+}
+
 /// Sink that receives every HTTP request and response body issued by
 /// a [`ZwiftAuth`] instance. The daemon's adapter forwards these into
 /// the wire-capture file (`zwift_relay::capture::CaptureWriter`).
@@ -138,7 +150,13 @@ pub enum CaptureTransport {
 /// dependency would be a cycle. The trait lives here and the daemon
 /// implements it for an adapter type.
 pub trait CaptureSink: Send + Sync + 'static {
-    fn record(&self, direction: CaptureDirection, transport: CaptureTransport, payload: &[u8]);
+    fn record(
+        &self,
+        direction: CaptureDirection,
+        transport: CaptureTransport,
+        content_type: CaptureContentType,
+        payload: &[u8],
+    );
 }
 
 /// Owned HTTP response surface returned by [`ZwiftAuth::post`] and
@@ -221,15 +239,15 @@ struct Inner {
 }
 
 impl Inner {
-    fn record_outbound(&self, payload: &[u8]) {
+    fn record_outbound(&self, content_type: CaptureContentType, payload: &[u8]) {
         if let Some(sink) = self.capture_sink.lock().expect("capture_sink mutex").as_ref() {
-            sink.record(CaptureDirection::Outbound, CaptureTransport::Http, payload);
+            sink.record(CaptureDirection::Outbound, CaptureTransport::Http, content_type, payload);
         }
     }
 
-    fn record_inbound(&self, payload: &[u8]) {
+    fn record_inbound(&self, content_type: CaptureContentType, payload: &[u8]) {
         if let Some(sink) = self.capture_sink.lock().expect("capture_sink mutex").as_ref() {
-            sink.record(CaptureDirection::Inbound, CaptureTransport::Http, payload);
+            sink.record(CaptureDirection::Inbound, CaptureTransport::Http, content_type, payload);
         }
     }
 }
@@ -297,7 +315,7 @@ impl ZwiftAuth {
         ])
         .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?
         .into_bytes();
-        self.inner.record_outbound(&form_bytes);
+        self.inner.record_outbound(CaptureContentType::UrlEncoded, &form_bytes);
 
         let resp = self
             .inner
@@ -313,7 +331,7 @@ impl ZwiftAuth {
             .await?;
         let status = resp.status();
         let bytes = resp.bytes().await?;
-        self.inner.record_inbound(&bytes);
+        self.inner.record_inbound(CaptureContentType::Json, &bytes);
         if !status.is_success() {
             let body = String::from_utf8_lossy(&bytes).to_string();
             return Err(match status.as_u16() {
@@ -362,7 +380,7 @@ impl ZwiftAuth {
         let url = format!("{}/api/profiles/me", self.inner.config.api_base);
         // GET requests have an empty body; record an empty payload so
         // a downstream replay sees the exchange as request → response.
-        self.inner.record_outbound(&[]);
+        self.inner.record_outbound(CaptureContentType::Empty, &[]);
         let resp = self
             .inner
             .http
@@ -376,7 +394,7 @@ impl ZwiftAuth {
             .await?;
         let status = resp.status();
         let bytes = resp.bytes().await?;
-        self.inner.record_inbound(&bytes);
+        self.inner.record_inbound(CaptureContentType::Json, &bytes);
         match status.as_u16() {
             200 => match serde_json::from_slice::<Profile>(&bytes) {
                 Ok(profile) => {
@@ -486,7 +504,7 @@ impl ZwiftAuth {
         let url = format!("{}{}", self.inner.config.api_base, urn);
         let bearer = self.bearer().await?;
 
-        self.inner.record_outbound(&[]);
+        self.inner.record_outbound(CaptureContentType::Empty, &[]);
         tracing::debug!(
             target: "ranchero::relay",
             method = "GET",
@@ -507,7 +525,7 @@ impl ZwiftAuth {
             .await?;
         let status = resp.status();
         let resp_bytes = resp.bytes().await?;
-        self.inner.record_inbound(&resp_bytes);
+        self.inner.record_inbound(CaptureContentType::ProtobufLite, &resp_bytes);
         tracing::debug!(
             target: "ranchero::relay",
             method = "GET",
@@ -532,7 +550,7 @@ impl ZwiftAuth {
         self.refresh().await?;
         let bearer = self.bearer().await?;
 
-        self.inner.record_outbound(&[]);
+        self.inner.record_outbound(CaptureContentType::Empty, &[]);
         let retry = self
             .inner
             .http
@@ -546,7 +564,7 @@ impl ZwiftAuth {
             .await?;
         let retry_status = retry.status();
         let retry_bytes = retry.bytes().await?;
-        self.inner.record_inbound(&retry_bytes);
+        self.inner.record_inbound(CaptureContentType::ProtobufLite, &retry_bytes);
         tracing::debug!(
             target: "ranchero::relay",
             method = "GET",
@@ -620,7 +638,20 @@ impl ZwiftAuth {
         // STEP-12.14 §N4 — sauce's fetchPB sets Accept: application/x-protobuf-lite
         let is_protobuf = content_type.starts_with("application/x-protobuf-lite");
 
-        self.inner.record_outbound(&body);
+        let cap_ct_request = if is_protobuf {
+            CaptureContentType::ProtobufLite
+        } else if content_type.starts_with("application/x-www-form-urlencoded") {
+            CaptureContentType::UrlEncoded
+        } else if content_type.starts_with("application/json") {
+            CaptureContentType::Json
+        } else if body.is_empty() {
+            CaptureContentType::Empty
+        } else {
+            CaptureContentType::Unspecified
+        };
+        let cap_ct_response = if is_protobuf { CaptureContentType::ProtobufLite } else { CaptureContentType::Json };
+
+        self.inner.record_outbound(cap_ct_request, &body);
         tracing::debug!(
             target: "ranchero::relay",
             method = "POST",
@@ -647,7 +678,7 @@ impl ZwiftAuth {
             .await?;
         let status = resp.status();
         let resp_bytes = resp.bytes().await?;
-        self.inner.record_inbound(&resp_bytes);
+        self.inner.record_inbound(cap_ct_response, &resp_bytes);
         tracing::debug!(
             target: "ranchero::relay",
             method = "POST",
@@ -672,7 +703,7 @@ impl ZwiftAuth {
         self.refresh().await?;
         let bearer = self.bearer().await?;
 
-        self.inner.record_outbound(&body);
+        self.inner.record_outbound(cap_ct_request, &body);
         tracing::debug!(
             target: "ranchero::relay",
             method = "POST",
@@ -696,7 +727,7 @@ impl ZwiftAuth {
         let retry = retry_builder.body(body).send().await?;
         let retry_status = retry.status();
         let retry_bytes = retry.bytes().await?;
-        self.inner.record_inbound(&retry_bytes);
+        self.inner.record_inbound(cap_ct_response, &retry_bytes);
         tracing::debug!(
             target: "ranchero::relay",
             method = "POST",
@@ -719,7 +750,7 @@ impl ZwiftAuth {
         let url = format!("{}{}", self.inner.config.api_base, urn);
         let bearer = self.bearer().await?;
 
-        self.inner.record_outbound(&[]);
+        self.inner.record_outbound(CaptureContentType::Empty, &[]);
         tracing::debug!(
             target: "ranchero::relay",
             method = "GET",
@@ -739,7 +770,7 @@ impl ZwiftAuth {
             .await?;
         let status = resp.status();
         let resp_bytes = resp.bytes().await?;
-        self.inner.record_inbound(&resp_bytes);
+        self.inner.record_inbound(CaptureContentType::Json, &resp_bytes);
         tracing::debug!(
             target: "ranchero::relay",
             method = "GET",
@@ -764,7 +795,7 @@ impl ZwiftAuth {
         self.refresh().await?;
         let bearer = self.bearer().await?;
 
-        self.inner.record_outbound(&[]);
+        self.inner.record_outbound(CaptureContentType::Empty, &[]);
         tracing::debug!(
             target: "ranchero::relay",
             method = "GET",
@@ -784,7 +815,7 @@ impl ZwiftAuth {
             .await?;
         let retry_status = retry.status();
         let retry_bytes = retry.bytes().await?;
-        self.inner.record_inbound(&retry_bytes);
+        self.inner.record_inbound(CaptureContentType::Json, &retry_bytes);
         tracing::debug!(
             target: "ranchero::relay",
             method = "GET",
@@ -896,7 +927,7 @@ impl Inner {
         ])
         .map_err(|e| Error::InvalidTokenResponse(e.to_string()))?
         .into_bytes();
-        self.record_outbound(&form_bytes);
+        self.record_outbound(CaptureContentType::UrlEncoded, &form_bytes);
 
         let resp = self
             .http
@@ -911,7 +942,7 @@ impl Inner {
             .await?;
         let status = resp.status();
         let bytes = resp.bytes().await?;
-        self.record_inbound(&bytes);
+        self.record_inbound(CaptureContentType::Json, &bytes);
         if !status.is_success() {
             let body = String::from_utf8_lossy(&bytes).to_string();
             return Err(Error::RefreshFailed(body));
