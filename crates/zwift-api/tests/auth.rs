@@ -1537,3 +1537,117 @@ async fn logout_failure_does_not_panic() {
         "STEP-12.15 F5: logout must return Err on a 500 response, not panic",
     );
 }
+
+// ==========================================================================
+// STEP-12.17 Phase 1a — `get_profile_me` must send `Accept: application/json`
+//
+// Sauce's `getProfile('me')` calls `fetchJSON` (`zwift.mjs:523-529`), which
+// always sets `Accept: application/json`. Without this header the Zwift API
+// gateway may return a non-JSON 200 body (e.g. protobuf), causing
+// `serde_json::from_slice::<Profile>` to fail with
+// "expected value at line 1 column 1" — exactly the live failure observed on
+// 2026-05-09.
+//
+// Both tests below are RED until Phase 1b adds the header to `get_profile_me`.
+// ==========================================================================
+
+/// The profile-fetch request during `login()` must carry
+/// `Accept: application/json`.  Uses the same
+/// `login_and_capture_requests` approach as the STEP-12.14 §N3 test
+/// (`token_request_sets_accept_application_json` above): a permissive
+/// mock lets `login()` succeed regardless of headers sent, then we
+/// inspect the captured requests.
+///
+/// Currently RED: `get_profile_me` sends no Accept header.
+#[tokio::test]
+async fn get_profile_me_sends_accept_application_json() {
+    let server = MockServer::start().await;
+    let requests = login_and_capture_requests(&server, "ATOK").await;
+
+    let profile_requests: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path() == "/api/profiles/me")
+        .collect();
+    assert!(
+        !profile_requests.is_empty(),
+        "GET /api/profiles/me must be called during login()",
+    );
+    for req in profile_requests {
+        let accept = req
+            .headers
+            .get("accept")
+            .or_else(|| req.headers.get("Accept"))
+            .map(|v| v.to_str().unwrap_or(""))
+            .unwrap_or("");
+        assert_eq!(
+            accept,
+            "application/json",
+            "STEP-12.17: GET /api/profiles/me must carry \
+             `Accept: application/json` (sauce `zwift.mjs:523`). \
+             Got {accept:?} on {} {}",
+            req.method,
+            req.url,
+        );
+    }
+}
+
+/// When the server performs content negotiation correctly — returning JSON
+/// only when `Accept: application/json` is present and binary otherwise —
+/// `login()` must succeed.  This mirrors the live-server failure: without
+/// the Accept header the server returned a non-JSON 200 body, causing
+/// `AuthFailedBadSchema`.
+///
+/// Two mocks on `/api/profiles/me`:
+///   1. Strict: requires `Accept: application/json` → returns valid JSON.
+///   2. Permissive: no header requirement → returns binary garbage (200).
+///
+/// With the fix: request carries Accept → matches the strict mock → JSON
+/// decoded → `login()` returns Ok.
+///
+/// Currently RED: request has no Accept → falls through to the permissive
+/// mock → binary body → `AuthFailedBadSchema`.
+#[tokio::test]
+async fn get_profile_me_login_succeeds_when_server_honours_accept() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(token_body("ATOK", "RTOK", 600)))
+        .mount(&server)
+        .await;
+
+    // Strict mock: only matches when `Accept: application/json` is present.
+    // With the fix this is the mock that fires; without the fix it is skipped.
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .and(header("accept", "application/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": 1})))
+        .mount(&server)
+        .await;
+
+    // Permissive fallback: fires when no Accept header is present.
+    // Returns binary content that JSON cannot decode — simulating the Zwift
+    // gateway's behaviour when the client fails to declare a content preference.
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/x-protobuf-lite")
+                .set_body_bytes(b"\x0a\x03\xff\xfe\xfd".to_vec()),
+        )
+        .mount(&server)
+        .await;
+
+    let auth = ZwiftAuth::new(config_for(&server));
+    let result = auth.login("alice", "hunter2").await;
+
+    assert!(
+        result.is_ok(),
+        "STEP-12.17: login() must succeed when the server performs \
+         content negotiation on /api/profiles/me. With `Accept: \
+         application/json` the strict mock fires and returns valid JSON. \
+         Without it the permissive mock fires and returns binary, causing \
+         AuthFailedBadSchema. Got: {:?}",
+        result.err(),
+    );
+}
