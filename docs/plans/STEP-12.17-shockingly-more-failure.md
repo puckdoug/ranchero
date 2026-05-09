@@ -1,9 +1,8 @@
 # STEP-12.17 — Profile fetch returns 200 but body is not JSON
 
-**Status:** open (2026-05-09). Findings logged; phased TDD
-implementation defined below. Two adjacent diagnostic improvements
-deferred to STEP-20 §20.16; the missing `Accept: application/json`
-header itself is fixed in this plan.
+**Status:** complete (2026-05-09). Phase 1 implemented and all tests
+pass (`cargo test --workspace`). Two adjacent diagnostic improvements
+deferred to STEP-20 §20.16.
 
 After STEP-12.16 closed (course gate, mid-session reconnect,
 handshake budget), the daemon was driven against the live Zwift API
@@ -136,7 +135,7 @@ TDD pair, followed by a regression test that reproduces the
 observed failure mode (200 + non-JSON body) so a future regression
 in header handling fails loudly rather than silently.
 
-### Phase 1 — Fix `get_profile_me` to send `Accept: application/json`
+### Phase 1 — Fix `get_profile_me` to send `Accept: application/json` ✓
 
 #### 1a — Failing tests
 

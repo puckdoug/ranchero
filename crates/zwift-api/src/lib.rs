@@ -371,6 +371,7 @@ impl ZwiftAuth {
             .header("Source", &self.inner.config.source)
             .header("Platform", &self.inner.config.platform)
             .header("User-Agent", &self.inner.config.user_agent)
+            .header("Accept", "application/json") // STEP-12.17 — zwift.mjs:523 fetchJSON
             .send()
             .await?;
         let status = resp.status();
