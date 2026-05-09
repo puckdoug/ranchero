@@ -5021,3 +5021,140 @@ async fn handshake_timeout_emits_warn_event_before_reconnect() {
          relay.tcp.handshake.timeout — the timeout triggers a reconnect",
     );
 }
+
+// ==========================================================================
+// STEP-12.30 Phase 2a — HTTP exchanges must appear in the capture file
+// ==========================================================================
+
+/// Verify that `start_with_writer` writes HTTP request and response bodies
+/// into the capture file for the login sequence.
+///
+/// Currently RED for two reasons:
+///
+/// 1. `zwift_relay::capture::ContentType` and `CaptureRecord::content_type` do
+///    not exist yet — the test fails to compile until Phase 2b adds them.
+///
+/// 2. Even after Phase 2b compiles, `start_with_writer` never calls
+///    `ZwiftAuth::set_capture_sink` on the auth object it constructs (defect C,
+///    `relay.rs:1326`). Phase 2d must add that call; only then will HTTP records
+///    appear in the capture file.
+#[tokio::test]
+async fn login_http_exchange_appears_in_capture() {
+    use prost::Message;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    use wiremock::matchers::{method, path};
+
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path(zwift_api::TOKEN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "ATOK",
+            "refresh_token": "RTOK",
+            "expires_in": 600,
+            "refresh_expires_in": 2400,
+            "token_type": "Bearer",
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/profiles/me"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": 12345})),
+        )
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/relay/worlds/1/players/54321"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(
+            zwift_proto::PlayerState { world: Some(1), ..Default::default() }.encode_to_vec(),
+        ))
+        .mount(&server)
+        .await;
+
+    let login_resp = mock_login_response(42);
+    Mock::given(method("POST"))
+        .and(path(zwift_relay::LOGIN_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(login_resp))
+        .mount(&server)
+        .await;
+
+    let refresh_resp = zwift_proto::RelaySessionRefreshResponse {
+        relay_session_id: 42,
+        expiration: 0,
+    }
+    .encode_to_vec();
+    Mock::given(method("POST"))
+        .and(path(zwift_relay::SESSION_REFRESH_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(refresh_resp))
+        .mount(&server)
+        .await;
+
+    ensure_mock_tcp_and_udp();
+
+    let mut cfg = make_config("monitor@example.com", "pass");
+    cfg.zwift_endpoints.auth_base = server.uri();
+    cfg.zwift_endpoints.api_base = server.uri();
+
+    let capture_file = tempfile::NamedTempFile::new().expect("tempfile");
+    let writer = Arc::new(
+        zwift_relay::capture::CaptureWriter::open(capture_file.path())
+            .await
+            .expect("open capture writer"),
+    );
+
+    let task = {
+        let writer = Arc::clone(&writer);
+        let cfg = cfg.clone();
+        tokio::spawn(async move {
+            // TCP will fail at 127.0.0.1:3025 and the daemon enters the
+            // retry loop, but login and course-gate HTTP exchanges have
+            // already completed by then.
+            let _ = RelayRuntime::start_with_writer(&cfg, Some(writer)).await;
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    task.abort();
+    let _ = task.await;
+
+    writer.flush_and_close().await.expect("flush capture writer");
+
+    let mut reader = zwift_relay::capture::CaptureReader::open(capture_file.path())
+        .expect("open reader");
+    let mut http_records: Vec<zwift_relay::capture::CaptureRecord> = Vec::new();
+    while let Some(item) = reader.next_item() {
+        if let zwift_relay::capture::CaptureItem::Frame(record) = item.expect("decode ok") {
+            if record.transport == zwift_relay::capture::TransportKind::Http {
+                http_records.push(record);
+            }
+        }
+    }
+
+    assert!(
+        !http_records.is_empty(),
+        "STEP-12.30 Phase 2a: start_with_writer must write at least one HTTP \
+         record to the capture file during login; got 0 records. \
+         Defect C: start_with_writer (relay.rs:1326) never calls \
+         set_capture_sink on the ZwiftAuth it constructs. \
+         Phase 2d must add: auth.set_capture_sink(Arc::new(HttpCaptureSink(Arc::clone(&writer))))",
+    );
+
+    assert!(
+        http_records.iter().any(|r| !r.payload.is_empty()),
+        "STEP-12.30 Phase 2a: at least one HTTP record must carry a non-empty payload",
+    );
+
+    // This assertion references CaptureRecord::content_type and
+    // ContentType::Unspecified, which do not exist until Phase 2b adds
+    // the content_type byte to the v3 record header.
+    assert!(
+        http_records.iter().any(|r| {
+            r.content_type != zwift_relay::capture::ContentType::Unspecified
+        }),
+        "STEP-12.30 Phase 2a: at least one HTTP record must carry a ContentType \
+         field other than Unspecified (e.g. UrlEncoded for the token-grant request \
+         body, Json for responses)",
+    );
+}

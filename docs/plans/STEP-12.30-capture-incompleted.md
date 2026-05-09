@@ -9,7 +9,7 @@
 - [x] 1b — Implement decryption in `print_follow_to`; remove `decode` parameter and `--decode` CLI flag
 
 ### Phase 2 — Wire `CaptureSink`; extend capture format to v3 with content-type field
-- [ ] 2a — Failing test: `login_http_exchange_appears_in_capture`
+- [x] 2a — Failing test: `login_http_exchange_appears_in_capture`
 - [ ] 2b — Bump capture format to v3; add `ContentType` enum and `content_type` byte to record header
 - [ ] 2c — Add `CaptureContentType` enum to `zwift-api`; extend `CaptureSink::record()`; update all `record_outbound`/`record_inbound` call sites
 - [ ] 2d — Implement `HttpCaptureSink` in daemon; call `set_capture_sink` at construction and re-login sites
