@@ -705,7 +705,7 @@ pub struct RelayRuntime {
     /// calls issued by `shutdown()`. Only the production `start_with_writer`
     /// path sets this; test paths that use stub auth leave it `None`.
     /// (STEP-12.15 §F5 / STEP-12.14 §N9)
-    shutdown_auth: Option<Arc<zwift_api::ZwiftAuth>>,
+    pub shutdown_auth: Option<Arc<zwift_api::ZwiftAuth>>,
 }
 
 // ---------------------------------------------------------------------------

@@ -305,17 +305,11 @@ and a new "bring UDP up now" helper.
     explicit-shutdown path); else → `reconnect_needed.notify_one()`,
     return Ok (triggers reconnect).
   - New `connection_manager<Tcp>` async function captures `tcp_factory`
-    by value. Awaits initial recv_loop handle, then loops:
-    - Wait for `reconnect_needed.notified()`; check stopping.
-    - Emit `relay.tcp.reconnect.scheduled delay_ms=… reason="shutdown"`.
-    - Back-off sleep interruptible via `select!` with `shutdown.notified()`.
-    - Increment `backoff_count`; emit `relay.tcp.reconnect.attempt attempt=N
-backoff_ms=M` (success path) or `…attempt=N … error=…` (failure).
-    - On failure: `reconnect_needed.notify_one()`, continue.
-    - On success: `TcpChannel::establish`, wait for Established, subscribe
-      new `recv_rx`, spawn forwarder, send TCP hello, emit
-      `relay.tcp.reconnect.succeeded attempts=N`, reset backoff, spawn
-      new recv_loop, await it.
+    by value. Awaits initial recv_loop handle, then loops: - Wait for `reconnect_needed.notified()`; check stopping. - Emit `relay.tcp.reconnect.scheduled delay_ms=… reason="shutdown"`. - Back-off sleep interruptible via `select!` with `shutdown.notified()`. - Increment `backoff_count`; emit `relay.tcp.reconnect.attempt attempt=N
+backoff_ms=M` (success path) or `…attempt=N … error=…` (failure). - On failure: `reconnect_needed.notify_one()`, continue. - On success: `TcpChannel::establish`, wait for Established, subscribe
+    new `recv_rx`, spawn forwarder, send TCP hello, emit
+    `relay.tcp.reconnect.succeeded attempts=N`, reset backoff, spawn
+    new recv_loop, await it.
   - `start_all_inner`'s `join_handle` is now the `connection_manager`
     task; the initial recv_loop is an intermediate handle that the
     manager awaits first.
@@ -388,7 +382,7 @@ STEP-12.12 ("log shit properly") were meant to prevent. Fixing
 them inside this plan keeps the daemon's lifecycle log readable
 once F6-F8 add their own traces.
 
-- [ ] **7a** — Tests:
+- [x] **7a** — Tests:
   - `logout_success_emits_runtime_logout_succeeded` — drive a
     successful `logout()` in the shutdown path (a wiremock 200);
     assert the trace contains `relay.runtime.logout_succeeded`
