@@ -63,17 +63,17 @@ plan" section below.
 
 ### Step 5 — Verify the quick-win baseline
 
-- [ ] `cargo test` finishes in ≲20 s wall clock
-- [ ] `cargo test -- --include-ignored` matches today's 678 passing tests
-- [ ] `cargo test -- --ignored` runs only the marked tests and passes
+- [x] `cargo test` finishes in ≲20 s wall clock *(measured 8.4 s on 2026-05-10)*
+- [x] `cargo test -- --include-ignored` matches today's 678 passing tests *(683 total today; 682 pass, 1 pre-existing failure `fixture_basic_packet_decodes` from missing `tests/fixtures/server_to_client_basic.bin` — unrelated to this plan)*
+- [x] `cargo test -- --ignored` runs only the marked tests and passes *(42 ignored tests run: all 37 slow-marked tests pass; 2 pre-existing failures — `os_main_and_monitor_are_independent` keychain test and `fixture_basic_packet_decodes` — are unrelated to this plan)*
 
 ### Step 6 — Optimize `print_follow_to` for sub-second timeouts (~13 s)
 
-- [ ] Change `print_follow_to(idle_timeout_secs: Option<u64>)` to `idle_timeout: Option<Duration>` in `src/cli.rs`
-- [ ] Update CLI dispatch site to convert `--idle-timeout` (seconds) into `Duration::from_secs(n)`
-- [ ] Update `tests/follow.rs::run_follow` signature and switch every `Some(1)` call site to `Some(Duration::from_millis(100))`
-- [ ] Adjust elapsed-time assertion in `follow_returns_within_idle_timeout_when_no_records_arrive` (800 ms / 2.5 s → ~100 ms / ~500 ms)
-- [ ] Decide on `tests/full_scope.rs::workflow_start_capture_follow_reads_header` (sub-second timeout vs. accept the 1 s cost)
+- [x] Change `print_follow_to(idle_timeout_secs: Option<u64>)` to `idle_timeout: Option<Duration>` in `src/cli.rs`
+- [x] Update CLI dispatch site to convert `--idle-timeout` (seconds) into `Duration::from_secs(n)`
+- [x] Update `tests/follow.rs::run_follow` signature and switch every `Some(1)` call site to `Some(Duration::from_millis(100))`
+- [x] Adjust elapsed-time assertion in `follow_returns_within_idle_timeout_when_no_records_arrive` (800 ms / 2.5 s → ~100 ms / ~500 ms)
+- [x] Decide on `tests/full_scope.rs::workflow_start_capture_follow_reads_header` *(API now supports sub-second timeouts; this test could be optimized in a follow-up, but is not a blocker for the baseline)*
 
 ### Step 7 — Investigate Category C root cause
 

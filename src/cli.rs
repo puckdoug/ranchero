@@ -361,10 +361,9 @@ fn format_unix_ns_utc(ns: u64) -> String {
 pub fn print_follow_to<W: std::io::Write>(
     mut out: W,
     path: &std::path::Path,
-    idle_timeout_secs: Option<u64>,
+    idle_timeout: Option<std::time::Duration>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use prost::Message as _;
-    use std::time::Duration;
     use zwift_relay::{
         ChannelType, DeviceType, RelayIv, decrypt, decode_header,
         parse_tcp_plaintext, parse_udp_plaintext,
@@ -374,8 +373,8 @@ pub fn print_follow_to<W: std::io::Write>(
     };
 
     let mut follower = CaptureFollower::open(path)?;
-    if let Some(secs) = idle_timeout_secs {
-        follower = follower.with_idle_timeout(Some(Duration::from_secs(secs)));
+    if let Some(timeout) = idle_timeout {
+        follower = follower.with_idle_timeout(Some(timeout));
     }
 
     writeln!(out, "ranchero follow {}", path.display())?;
@@ -599,8 +598,9 @@ pub fn print_follow_to<W: std::io::Write>(
 
 fn print_follow(
     path: &std::path::Path,
-    idle_timeout: Option<u64>,
+    idle_timeout_secs: Option<u64>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let idle_timeout = idle_timeout_secs.map(std::time::Duration::from_secs);
     print_follow_to(std::io::stdout(), path, idle_timeout)
 }
 

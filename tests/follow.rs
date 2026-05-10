@@ -63,12 +63,12 @@ fn record_with(
 /// it directly.
 async fn run_follow(
     path: &Path,
-    idle_timeout_secs: Option<u64>,
+    idle_timeout: Option<std::time::Duration>,
 ) -> (Result<(), Box<dyn std::error::Error + Send + Sync>>, Vec<u8>) {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let mut out: Vec<u8> = Vec::new();
-        let result = print_follow_to(&mut out, &path, idle_timeout_secs)
+        let result = print_follow_to(&mut out, &path, idle_timeout)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                 Box::<dyn std::error::Error + Send + Sync>::from(e.to_string())
             });
@@ -83,7 +83,7 @@ async fn run_follow(
 #[tokio::test]
 async fn follow_prints_format_version_header() {
     let path = write_capture(Vec::new()).await;
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
     assert!(
@@ -100,7 +100,7 @@ async fn follow_prints_one_summary_line_per_frame_record() {
         record_with(Direction::Outbound, TransportKind::Udp, vec![8, 9]),
     ];
     let path = write_capture(records).await;
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
 
     let text = String::from_utf8(out).expect("utf-8 output");
@@ -128,10 +128,10 @@ async fn follow_prints_one_summary_line_per_frame_record() {
 #[tokio::test]
 async fn follow_returns_within_idle_timeout_when_no_records_arrive() {
     let path = write_capture(Vec::new()).await;
-    let timeout = Duration::from_millis(800);
+    let timeout = Duration::from_millis(100);
 
     let start = Instant::now();
-    let (result, _out) = run_follow(path.path(), Some(1)).await;
+    let (result, _out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     let elapsed = start.elapsed();
 
     result.expect("follow must return Ok on idle timeout");
@@ -140,7 +140,7 @@ async fn follow_returns_within_idle_timeout_when_no_records_arrive() {
         "follow must run for at least the configured idle window; elapsed = {elapsed:?}",
     );
     assert!(
-        elapsed < Duration::from_millis(2_500),
+        elapsed < Duration::from_millis(500),
         "follow must not block past the idle window by a wide margin; elapsed = {elapsed:?}",
     );
 }
@@ -156,7 +156,7 @@ async fn follow_returns_error_for_bad_magic() {
         file.flush().expect("flush");
     }
 
-    let (result, _out) = run_follow(path.path(), Some(1)).await;
+    let (result, _out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     assert!(
         result.is_err(),
         "follow must return an error for a malformed capture file",
@@ -256,7 +256,7 @@ async fn follow_decrypts_outbound_tcp_frame() {
         vec![record],
     ).await;
 
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
@@ -289,7 +289,7 @@ async fn follow_decrypts_inbound_tcp_frame() {
         vec![record],
     ).await;
 
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
@@ -329,7 +329,7 @@ async fn follow_http_json_payload_is_pretty_printed() {
     let record = http_record(Direction::Inbound, ContentType::Json, json_bytes);
     let path = write_capture(vec![record]).await;
 
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
@@ -346,7 +346,7 @@ async fn follow_http_urlencoded_payload_is_displayed() {
     let record = http_record(Direction::Outbound, ContentType::UrlEncoded, payload);
     let path = write_capture(vec![record]).await;
 
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
@@ -373,7 +373,7 @@ async fn follow_http_protobuf_payload_is_decoded() {
     let record = http_record(Direction::Inbound, ContentType::ProtobufLite, payload);
     let path = write_capture(vec![record]).await;
 
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
@@ -389,7 +389,7 @@ async fn follow_http_empty_payload_prints_empty_marker() {
     let record = http_record(Direction::Outbound, ContentType::Empty, vec![]);
     let path = write_capture(vec![record]).await;
 
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
@@ -413,7 +413,7 @@ async fn follow_output_includes_manifest_summary() {
     // Manifest only — no frame records; the summary line must still appear.
     let path = write_capture_with_manifest(manifest, vec![]).await;
 
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
@@ -453,7 +453,7 @@ async fn write_seqno7_capture() -> NamedTempFile {
 #[tokio::test]
 async fn follow_output_contains_no_some_wrappers() {
     let path = write_seqno7_capture().await;
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
@@ -473,7 +473,7 @@ async fn follow_output_contains_no_some_wrappers() {
 #[tokio::test]
 async fn follow_output_contains_no_none_fields() {
     let path = write_seqno7_capture().await;
-    let (result, out) = run_follow(path.path(), Some(1)).await;
+    let (result, out) = run_follow(path.path(), Some(std::time::Duration::from_millis(100))).await;
     result.expect("follow must return Ok on idle timeout");
     let text = String::from_utf8(out).expect("utf-8 output");
 
