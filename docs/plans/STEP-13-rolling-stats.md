@@ -168,13 +168,13 @@ Inline XP:
 
 TSS:
 
-- [ ] **13.15-T** Add `tss_at_threshold`, `tss_zero_seconds`,
+- [x] **13.15-T** Add `tss_at_threshold`, `tss_zero_seconds`,
       `tss_zero_ftp_returns_none`, and `tss_known_vector`. Tests fail.
 - [ ] **13.15-I** Implement `calc_tss(np, seconds, ftp)`. Tests green.
 
 One-second bucket:
 
-- [ ] **13.16-T** Add `bucket_emits_mean_on_boundary`,
+- [x] **13.16-T** Add `bucket_emits_mean_on_boundary`,
       `bucket_round_to_int`, and `bucket_flush_drains_remainder`.
       Tests fail.
 - [ ] **13.16-I** Implement `OneSecondBucket::new` / `add` / `flush`.
@@ -182,7 +182,7 @@ One-second bucket:
 
 Recorded-stream parity:
 
-- [ ] **13.17-T** Run `tests/fixtures/gen_vectors.mjs` once to emit
+- [x] **13.17-T** Run `tests/fixtures/gen_vectors.mjs` once to emit
       the JSON oracles, then add `tests/parity.rs` cases that load
       each `*.json` fixture, drive both `RollingAverage::avg` and
       `RollingPower::np` / `xp` through it, and assert every numeric
