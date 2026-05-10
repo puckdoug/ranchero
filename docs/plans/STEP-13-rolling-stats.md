@@ -68,7 +68,7 @@ a failing test pinning the requirement first.
 
 Setup (no tests):
 
-- [ ] **13.1** Crate skeleton (`zwift-stats`) — `Cargo.toml`, `lib.rs`
+- [x] **13.1** Crate skeleton (`zwift-stats`) — `Cargo.toml`, `lib.rs`
       with module stubs, SPDX header. `cargo test -p zwift-stats`
       runs and passes with zero tests collected.
 
