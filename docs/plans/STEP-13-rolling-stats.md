@@ -131,12 +131,12 @@ Bulk import and free-function helpers:
 
 - [x] **13.10-T** Add `import_data_matches_serial_add` and
       `import_reduce_finds_peak_window`. Tests fail.
-- [ ] **13.10-I** Implement `import_data` and `import_reduce` (the
+- [x] **13.10-I** Implement `import_data` and `import_reduce` (the
       walk-and-snapshot loop used by `peak_*`). Tests green.
 - [x] **13.11-T** Add `recommended_time_gaps_mode_and_max`,
       `corrected_rolling_average_returns_none_for_short_streams`, and
       `peak_average_finds_max_window`. Tests fail.
-- [ ] **13.11-I** Implement `recommended_time_gaps`,
+- [x] **13.11-I** Implement `recommended_time_gaps`,
       `corrected_rolling_average`, `corrected_rolling_power`, and
       `peak_average`. Tests green.
 

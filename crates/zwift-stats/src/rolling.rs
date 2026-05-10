@@ -256,4 +256,29 @@ impl RollingAverage {
     pub fn entries(&self) -> impl Iterator<Item = (f64, Sample)> + '_ {
         (self.offt..self.length).map(move |i| (self.times[i], self.values[i]))
     }
+
+    pub fn import_data(&mut self, data: &[(f64, Sample)]) {
+        for (ts, val) in data {
+            self.add(*ts, *val, None);
+        }
+    }
+
+    pub fn import_reduce(&mut self, data: &[(f64, Sample)], _: Option<f64>) -> (f64, std::ops::Range<f64>) {
+        let mut peak_avg = 0.0;
+        let mut peak_start = 0.0;
+        let mut peak_end = 0.0;
+
+        for (ts, val) in data {
+            self.add(*ts, *val, None);
+            if let Some(avg) = self.avg(Some(false)) {
+                if avg > peak_avg {
+                    peak_avg = avg;
+                    peak_start = self.times[self.offt];
+                    peak_end = *ts;
+                }
+            }
+        }
+
+        (peak_avg, peak_start..peak_end)
+    }
 }

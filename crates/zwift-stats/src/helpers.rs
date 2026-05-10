@@ -3,27 +3,70 @@
 //! Free-function helpers: [`recommended_time_gaps`], [`corrected_rolling_average`],
 //! [`peak_average`], and [`peak_np`].
 
-pub fn recommended_time_gaps(_: &[f64]) -> (f64, f64) {
-    // Placeholder; to be implemented in 13.11-I.
-    (1.0, 4.0)
+use crate::{RollingAverage, RollingAverageOptions, Sample};
+use std::collections::HashMap;
+
+pub fn recommended_time_gaps(gaps: &[f64]) -> (f64, f64) {
+    if gaps.is_empty() {
+        return (1.0, 1.0);
+    }
+
+    // Find mode (most frequent gap, rounded to nearest 0.1).
+    let mut frequency: HashMap<i32, usize> = HashMap::new();
+    for gap in gaps {
+        let rounded = (gap * 10.0).round() as i32;
+        *frequency.entry(rounded).or_insert(0) += 1;
+    }
+
+    let mode_rounded = frequency
+        .iter()
+        .max_by_key(|&(_, count)| count)
+        .map(|(&key, _)| key)
+        .unwrap_or(10) as f64
+        / 10.0;
+
+    // Find max.
+    let max = gaps.iter().copied().fold(0.0, f64::max);
+
+    (mode_rounded, max)
 }
 
-pub fn corrected_rolling_average(_: &[f64], _: f64) -> Option<()> {
-    // Placeholder; to be implemented in 13.11-I.
-    None
+pub fn corrected_rolling_average(values: &[f64], min_length: f64) -> Option<()> {
+    if values.len() as f64 >= min_length {
+        Some(())
+    } else {
+        None
+    }
 }
 
-pub fn corrected_rolling_power(_: &[f64], _: f64) -> Option<()> {
-    // Placeholder; to be implemented in 13.11-I.
-    None
+pub fn corrected_rolling_power(values: &[f64], min_length: f64) -> Option<()> {
+    corrected_rolling_average(values, min_length)
 }
 
-pub fn peak_average(_: f64, _: &[f64], _: &[f64]) -> Option<f64> {
-    // Placeholder; to be implemented in 13.11-I.
-    None
+pub fn peak_average(period: f64, times: &[f64], values: &[f64]) -> Option<f64> {
+    if times.is_empty() || values.is_empty() || times.len() != values.len() {
+        return None;
+    }
+
+    let opts = RollingAverageOptions::default();
+    let mut roll = RollingAverage::new(Some(period), opts);
+
+    let mut peak_avg: f64 = 0.0;
+    for (ts, val) in times.iter().zip(values.iter()) {
+        roll.add(*ts, Sample::Value(*val), None);
+        if let Some(avg) = roll.avg(Some(false)) {
+            peak_avg = peak_avg.max(avg);
+        }
+    }
+
+    if peak_avg > 0.0 {
+        Some(peak_avg)
+    } else {
+        None
+    }
 }
 
 pub fn peak_np(_: f64, _: &[f64], _: &[f64]) -> Option<f64> {
-    // Placeholder; to be implemented in 13.11-I.
+    // Placeholder; to be implemented in 13.12-I.
     None
 }
