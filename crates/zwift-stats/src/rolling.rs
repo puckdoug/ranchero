@@ -4,7 +4,7 @@
 
 use crate::Sample;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct RollingAverageOptions {
     pub ideal_gap: Option<f64>,
     pub max_gap: Option<f64>,

@@ -19,7 +19,7 @@ mod helpers;
 mod bucket;
 
 pub use sample::{Sample, is_active_value};
-pub use rolling::RollingAverage;
+pub use rolling::{RollingAverage, RollingAverageOptions};
 pub use power::{RollingPower, calc_tss};
 pub use helpers::{recommended_time_gaps, corrected_rolling_average, corrected_rolling_power, peak_average, peak_np};
 pub use bucket::OneSecondBucket;
