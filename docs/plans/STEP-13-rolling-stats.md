@@ -15,7 +15,7 @@ primitives that drive every per-athlete metric in the project:
   `(mean)^(1/4)`, returned only after `weighted_min_time` ≥ 300 s of
   active samples) and an optional XP accumulator.
 - `calc_tss(np, seconds, ftp) = (seconds · np · (np / ftp)) /
-  (ftp · 3600) · 100` (algebraically `seconds · np² / (ftp² · 36)`).
+(ftp · 3600) · 100` (algebraically `seconds · np² / (ftp² · 36)`).
 - A small **one-second bucketer** that averages sub-second samples
   before they are pushed into the rolling window. The bucketer is the
   primitive on which STEP 14's `DataCollector` will compose its
@@ -115,12 +115,12 @@ Gap-fill (soft, hard, catastrophic):
 
 Period eviction and accessors:
 
-- [ ] **13.8-T** Add `period_eviction_keeps_window_bounded`,
+- [x] **13.8-T** Add `period_eviction_keeps_window_bounded`,
       `eviction_decrements_accumulators`, and
       `full_with_offt_one_evicts_correctly`. Tests fail.
 - [ ] **13.8-I** Implement `resize`, `shift`, `process_shift`, and
       the `while full({offt: 1}) shift()` eviction loop. Tests green.
-- [ ] **13.9-T** Add `clone_independent_writes`,
+- [x] **13.9-T** Add `clone_independent_writes`,
       `slice_returns_subwindow`, `time_at_negative_index`, and
       `entries_yields_offset_to_length`. Tests fail.
 - [ ] **13.9-I** Implement `clone_with`, `slice`, `pop`, `time_at` /
@@ -198,15 +198,15 @@ rather than skipping the entry.
 
 ## Scope
 
-| In scope | Out of scope (where it goes) |
-|---|---|
-| `RollingAverage` over `f64` (with `Sample` enum for sentinels). | `DataCollector` / `DataBucket` per-signal wiring (STEP 14). |
-| `RollingPower` with optional inline NP and inline XP. | Peak-period clone fan-out, 5 / 15 / 60 / 300 / 1200 / 3600 s (STEP 14). |
-| `calc_tss`. | Multi-bucket orchestration (`DataCollector::add`) and one-second bucket fan-in (STEP 14). |
-| `recommended_time_gaps`, `corrected_rolling_average`, `corrected_rolling_power`, `peak_average`, `peak_np`. | Power / HR zone definitions and the time-in-zones accumulator (STEP 15). |
-| `OneSecondBucket` (per-stream sub-second averaging). | W'-balance accumulator wrapping `RollingPower` (STEP 15). |
-| Numerical parity vectors against the JS reference. | Cycling-power estimator, drag reduction, sea-level power, ranking, decoupling — out of scope for ranchero v1; recorded in STEP 15 as the canonical exclusion list. |
-| | The compatibility test battery as a whole (STEP 19); this step ships only the per-function vectors. |
+| In scope                                                                                                    | Out of scope (where it goes)                                                                                                                                       |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `RollingAverage` over `f64` (with `Sample` enum for sentinels).                                             | `DataCollector` / `DataBucket` per-signal wiring (STEP 14).                                                                                                        |
+| `RollingPower` with optional inline NP and inline XP.                                                       | Peak-period clone fan-out, 5 / 15 / 60 / 300 / 1200 / 3600 s (STEP 14).                                                                                            |
+| `calc_tss`.                                                                                                 | Multi-bucket orchestration (`DataCollector::add`) and one-second bucket fan-in (STEP 14).                                                                          |
+| `recommended_time_gaps`, `corrected_rolling_average`, `corrected_rolling_power`, `peak_average`, `peak_np`. | Power / HR zone definitions and the time-in-zones accumulator (STEP 15).                                                                                           |
+| `OneSecondBucket` (per-stream sub-second averaging).                                                        | W'-balance accumulator wrapping `RollingPower` (STEP 15).                                                                                                          |
+| Numerical parity vectors against the JS reference.                                                          | Cycling-power estimator, drag reduction, sea-level power, ranking, decoupling — out of scope for ranchero v1; recorded in STEP 15 as the canonical exclusion list. |
+|                                                                                                             | The compatibility test battery as a whole (STEP 19); this step ships only the per-function vectors.                                                                |
 
 Source-of-truth references for every algorithm:
 
@@ -447,77 +447,77 @@ runs. Delete the file once 13.2 lands a real test.
 
 ### 13.2 — 13.3 `Sample` and pad interner — `tests/rolling.rs`
 
-| Test | Asserts |
-|---|---|
-| `sample_is_active_value` | `Value(0.0)` is inactive; `Value(5.0)` is active; `Pad(_)` is inactive regardless; `Break { .. }` is inactive. With `ignore_zeros = false`, `Value(0.0)` is still inactive (matches JS truthiness). |
-| `pad_interner_returns_same_pad_for_close_values` | `soft_pad(2.34)` and `soft_pad(2.34)` produce equal `Pad(2.3)` (signature rounds `value * 10`). |
-| `zero_pad_is_a_singleton` | `zero_pad()` is `Pad(0.0)`; calling twice returns equal samples. |
+| Test                                             | Asserts                                                                                                                                                                                             |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sample_is_active_value`                         | `Value(0.0)` is inactive; `Value(5.0)` is active; `Pad(_)` is inactive regardless; `Break { .. }` is inactive. With `ignore_zeros = false`, `Value(0.0)` is still inactive (matches JS truthiness). |
+| `pad_interner_returns_same_pad_for_close_values` | `soft_pad(2.34)` and `soft_pad(2.34)` produce equal `Pad(2.3)` (signature rounds `value * 10`).                                                                                                     |
+| `zero_pad_is_a_singleton`                        | `zero_pad()` is `Pad(0.0)`; calling twice returns equal samples.                                                                                                                                    |
 
 ### 13.4 `RollingAverage` no-gap path — `tests/rolling.rs`
 
-| Test | Asserts |
-|---|---|
-| `empty_rolling_has_zero_elapsed_and_no_avg` | `r.avg(None).is_none()`, `r.elapsed() == 0.0`, `r.active() == 0.0`, `r.size() == 0`. |
-| `single_sample_has_zero_elapsed` | After `add(t=0, Value(100), None)`, `elapsed == 0`, `active == 0`, `avg == None` (JS divides by zero — we return `None`). |
-| `two_samples_avg` | `add(0, 100); add(1, 200);` → `elapsed == 1`, `active == 1`, `avg == 200.0` (JS multiplies by gap, second sample is the only one whose gap counts). Hand-derive against `processAdd` in `data.mjs:415-422`. |
-| `accumulators_are_o1` | After 1 000 `add` calls, `avg` returns the same value as a from-scratch sum / time computation (≤ 1e-9). |
+| Test                                        | Asserts                                                                                                                                                                                                     |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `empty_rolling_has_zero_elapsed_and_no_avg` | `r.avg(None).is_none()`, `r.elapsed() == 0.0`, `r.active() == 0.0`, `r.size() == 0`.                                                                                                                        |
+| `single_sample_has_zero_elapsed`            | After `add(t=0, Value(100), None)`, `elapsed == 0`, `active == 0`, `avg == None` (JS divides by zero — we return `None`).                                                                                   |
+| `two_samples_avg`                           | `add(0, 100); add(1, 200);` → `elapsed == 1`, `active == 1`, `avg == 200.0` (JS multiplies by gap, second sample is the only one whose gap counts). Hand-derive against `processAdd` in `data.mjs:415-422`. |
+| `accumulators_are_o1`                       | After 1 000 `add` calls, `avg` returns the same value as a from-scratch sum / time computation (≤ 1e-9).                                                                                                    |
 
 ### 13.5 — 13.7 Gap-fill — `tests/rolling_gaps.rs`
 
-| Test | Asserts |
-|---|---|
-| `soft_pad_inserts_value_filler` | `ideal_gap = 1`, `pad threshold = 1.61803`. `add(0, 100); add(3, 200);` inserts `Pad(200)` at `t = 1` and `t = 2` before the real sample at `t = 3`. (`getSoftPad(value)` is called with the *new* value — see `data.mjs:401`.) |
-| `hard_gap_inserts_zero_filler` | `max_gap = 5`. `add(0, 100); add(10, 50);` inserts `Pad(0)` at `t = 1..9` (one per `ideal_gap`). The active accumulator does not advance across these. |
-| `explicit_active_false_zero_pads` | `add(0, 100); add(2, 200, active = Some(false));` inserts `Pad(0)` at `t = 1` regardless of `max_gap` (JS `data.mjs:379`). |
-| `break_gap_splits_with_book_ends` | `add(0, 100); add(7200, 200);` produces zero-pads for the leading half-hour, a single `Break { pad }` covering the middle, then zero-pads for the trailing half-hour, exactly matching `data.mjs:382-393`. |
-| `pad_threshold_excludes_borderline` | `gap = 1.6` with `ideal_gap = 1` does **not** pad (`< 1.61803`); `gap = 1.7` does. |
+| Test                                | Asserts                                                                                                                                                                                                                         |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `soft_pad_inserts_value_filler`     | `ideal_gap = 1`, `pad threshold = 1.61803`. `add(0, 100); add(3, 200);` inserts `Pad(200)` at `t = 1` and `t = 2` before the real sample at `t = 3`. (`getSoftPad(value)` is called with the _new_ value — see `data.mjs:401`.) |
+| `hard_gap_inserts_zero_filler`      | `max_gap = 5`. `add(0, 100); add(10, 50);` inserts `Pad(0)` at `t = 1..9` (one per `ideal_gap`). The active accumulator does not advance across these.                                                                          |
+| `explicit_active_false_zero_pads`   | `add(0, 100); add(2, 200, active = Some(false));` inserts `Pad(0)` at `t = 1` regardless of `max_gap` (JS `data.mjs:379`).                                                                                                      |
+| `break_gap_splits_with_book_ends`   | `add(0, 100); add(7200, 200);` produces zero-pads for the leading half-hour, a single `Break { pad }` covering the middle, then zero-pads for the trailing half-hour, exactly matching `data.mjs:382-393`.                      |
+| `pad_threshold_excludes_borderline` | `gap = 1.6` with `ideal_gap = 1` does **not** pad (`< 1.61803`); `gap = 1.7` does.                                                                                                                                              |
 
 ### 13.8 Period eviction — `tests/rolling_period.rs`
 
-| Test | Asserts |
-|---|---|
-| `period_eviction_keeps_window_bounded` | `period = 5`, push samples at `t = 0..10`. After every push, `elapsed <= 5`. |
-| `eviction_decrements_accumulators` | After eviction, `avg` matches a from-scratch recompute over `r.values()` (≤ 1e-9). |
-| `full_with_offt_one_evicts_correctly` | The `while (this.full({offt: 1}))` loop in `data.mjs:457-459` is reproduced verbatim: a window with `elapsed == period` does not evict, but pushing one more shifts a single sample. |
+| Test                                   | Asserts                                                                                                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `period_eviction_keeps_window_bounded` | `period = 5`, push samples at `t = 0..10`. After every push, `elapsed <= 5`.                                                                                                         |
+| `eviction_decrements_accumulators`     | After eviction, `avg` matches a from-scratch recompute over `r.values()` (≤ 1e-9).                                                                                                   |
+| `full_with_offt_one_evicts_correctly`  | The `while (this.full({offt: 1}))` loop in `data.mjs:457-459` is reproduced verbatim: a window with `elapsed == period` does not evict, but pushing one more shifts a single sample. |
 
 ### 13.9 Accessors / clone / slice / pop — `tests/rolling_period.rs`
 
-| Test | Asserts |
-|---|---|
-| `clone_independent_writes` | After `clone`, writes to the original do not affect the clone. (Note: the JS clone shares `_times` / `_values` and only forks indices; the Rust port copies them — this is a deliberate divergence; document it.) |
-| `slice_returns_subwindow` | `slice(start, end)` walks `shift()` then `pop()` until bounds match, exactly as `data.mjs:294-308`. |
-| `time_at_negative_index` | `time_at(-1)` returns the last sample's timestamp; `time_at(-2)` returns the second-to-last. |
-| `entries_yields_offset_to_length` | `entries().count() == size()` and the iterator skips evicted prefix. |
+| Test                              | Asserts                                                                                                                                                                                                           |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `clone_independent_writes`        | After `clone`, writes to the original do not affect the clone. (Note: the JS clone shares `_times` / `_values` and only forks indices; the Rust port copies them — this is a deliberate divergence; document it.) |
+| `slice_returns_subwindow`         | `slice(start, end)` walks `shift()` then `pop()` until bounds match, exactly as `data.mjs:294-308`.                                                                                                               |
+| `time_at_negative_index`          | `time_at(-1)` returns the last sample's timestamp; `time_at(-2)` returns the second-to-last.                                                                                                                      |
+| `entries_yields_offset_to_length` | `entries().count() == size()` and the iterator skips evicted prefix.                                                                                                                                              |
 
 ### 13.10 `import_data` / `import_reduce` — `tests/rolling.rs`
 
-| Test | Asserts |
-|---|---|
-| `import_data_matches_serial_add` | `r.import_data(&times, &values, None)` produces the same final state as a loop of `add` calls. |
+| Test                              | Asserts                                                                                                                  |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `import_data_matches_serial_add`  | `r.import_data(&times, &values, None)` produces the same final state as a loop of `add` calls.                           |
 | `import_reduce_finds_peak_window` | A 600-sample stream with a known 60-second peak average; `import_reduce` returns a clone whose `avg() == expected_peak`. |
 
 ### 13.11 Helpers — `tests/helpers.rs`
 
-| Test | Asserts |
-|---|---|
-| `recommended_time_gaps_mode_and_max` | A handcrafted timestamp stream returns `{ ideal: <mode>, max: round(max(ideal, median)) * 4 }` matching `data.mjs:185-201`. |
-| `corrected_rolling_average_returns_none_for_short_streams` | `times.len() < 2` → `None`; last timestamp `< period` → `None`. |
-| `peak_average_finds_max_window` | Compose `corrected_rolling_average` + `import_reduce`; matches a hand-computed peak. |
+| Test                                                       | Asserts                                                                                                                     |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `recommended_time_gaps_mode_and_max`                       | A handcrafted timestamp stream returns `{ ideal: <mode>, max: round(max(ideal, median)) * 4 }` matching `data.mjs:185-201`. |
+| `corrected_rolling_average_returns_none_for_short_streams` | `times.len() < 2` → `None`; last timestamp `< period` → `None`.                                                             |
+| `peak_average_finds_max_window`                            | Compose `corrected_rolling_average` + `import_reduce`; matches a hand-computed peak.                                        |
 
 ### 13.12 Inline NP — `tests/rolling_power_np.rs`
 
-| Test | Asserts |
-|---|---|
-| `np_returns_none_below_300s_active` | 299 s of constant 200 W → `np(false) == None`. |
-| `np_force_returns_value_below_min_time` | Same stream, `np(true) == Some(_)`. |
-| `np_constant_power_equals_power` | 600 s of constant 200 W → `np(false) ≈ 200.0` (≤ 1e-9). |
-| `np_known_vector` | A 600 s `(t, watts)` fixture (`fixtures/np_short.json`) with the JS oracle's NP value baked in; `np(false)` matches to ≤ 1e-6. |
-| `np_with_soft_pads_matches_oracle` | Same as above, but the input has irregular timestamps that trigger soft-pad insertion; the inline NP must match `calcNP` over the post-pad value sequence (the JS contract: NP runs on the padded stream, not the raw stream). |
+| Test                                    | Asserts                                                                                                                                                                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `np_returns_none_below_300s_active`     | 299 s of constant 200 W → `np(false) == None`.                                                                                                                                                                                 |
+| `np_force_returns_value_below_min_time` | Same stream, `np(true) == Some(_)`.                                                                                                                                                                                            |
+| `np_constant_power_equals_power`        | 600 s of constant 200 W → `np(false) ≈ 200.0` (≤ 1e-9).                                                                                                                                                                        |
+| `np_known_vector`                       | A 600 s `(t, watts)` fixture (`fixtures/np_short.json`) with the JS oracle's NP value baked in; `np(false)` matches to ≤ 1e-6.                                                                                                 |
+| `np_with_soft_pads_matches_oracle`      | Same as above, but the input has irregular timestamps that trigger soft-pad insertion; the inline NP must match `calcNP` over the post-pad value sequence (the JS contract: NP runs on the padded stream, not the raw stream). |
 
 ### 13.13 Inline NP eviction — `tests/rolling_power_np.rs`
 
-| Test | Asserts |
-|---|---|
+| Test                                  | Asserts                                                                                                                                                                                                   |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `np_after_eviction_matches_recompute` | Bound a 600 s window with `period = 300`; after every `shift()`, `np(false)` equals a from-scratch `calc_np` over the remaining values (≤ 1e-9). This is the inline-NP analogue of `accumulators_are_o1`. |
 
 ### 13.14 Inline XP — `tests/rolling_power_xp.rs`
@@ -527,20 +527,20 @@ Mirrors 13.12 against the XP fixtures
 
 ### 13.15 TSS — `tests/tss.rs`
 
-| Test | Asserts |
-|---|---|
-| `tss_at_threshold` | `calc_tss(ftp, 3600.0, ftp) == Some(100.0)`. |
-| `tss_zero_seconds` | `calc_tss(np, 0.0, ftp) == Some(0.0)`. |
-| `tss_zero_ftp_returns_none` | `calc_tss(200.0, 600.0, 0.0) == None`. |
-| `tss_known_vector` | A handful of `(np, seconds, ftp, expected)` rows generated by calling `calcTSS` directly in Node; matches to ≤ 1e-9. |
+| Test                        | Asserts                                                                                                              |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `tss_at_threshold`          | `calc_tss(ftp, 3600.0, ftp) == Some(100.0)`.                                                                         |
+| `tss_zero_seconds`          | `calc_tss(np, 0.0, ftp) == Some(0.0)`.                                                                               |
+| `tss_zero_ftp_returns_none` | `calc_tss(200.0, 600.0, 0.0) == None`.                                                                               |
+| `tss_known_vector`          | A handful of `(np, seconds, ftp, expected)` rows generated by calling `calcTSS` directly in Node; matches to ≤ 1e-9. |
 
 ### 13.16 One-second bucketer — `tests/bucket.rs`
 
-| Test | Asserts |
-|---|---|
+| Test                            | Asserts                                                                                                                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `bucket_emits_mean_on_boundary` | `add(0.0, 100); add(0.5, 200); add(1.1, 50);` → second `add` returns `None`, third returns `Some((0.5, 150.0))` (mean of the prior window flushed before storing the new sample). Hand-derived from `stats.mjs:143-152`. |
-| `bucket_round_to_int` | With `round_to_int = true`, the emitted mean is `round(150.4) == 150`. |
-| `bucket_flush_drains_remainder` | After `add` with no boundary cross, `flush()` emits the buffered mean and clears state. |
+| `bucket_round_to_int`           | With `round_to_int = true`, the emitted mean is `round(150.4) == 150`.                                                                                                                                                   |
+| `bucket_flush_drains_remainder` | After `add` with no boundary cross, `flush()` emits the buffered mean and clears state.                                                                                                                                  |
 
 ### 13.17 Recorded-stream parity — `tests/parity.rs`
 
@@ -623,8 +623,8 @@ notes appended to this file.
    state.
 
 4. **TSS algebraic form.** The stub spelled `(s · np · (np / ftp))
-   / (ftp · 3600) · 100`; the JS spells `((joules · intensity) /
-   ftpHourJoules) · 100` with `joules = power · duration`,
+/ (ftp · 3600) · 100`; the JS spells `((joules · intensity) /
+ftpHourJoules) · 100` with `joules = power · duration`,
    `intensity = power / ftp`. They are algebraically identical. The
    Rust impl can use either; the test vectors will confirm parity.
 
@@ -665,7 +665,7 @@ notes appended to this file.
   measures the cost.
 - **Float comparison policy.** Production code never compares floats
   for equality. Tests use `approx::abs_diff_eq!(actual, expected,
-  epsilon = 1e-9)` for hand-derived vectors, `epsilon = 1e-6` for
+epsilon = 1e-9)` for hand-derived vectors, `epsilon = 1e-6` for
   parity vectors against the JS oracle. The wider tolerance for
   parity is justified by IEEE-754 differences across V8 and Rust's
   `powf`.
@@ -673,7 +673,7 @@ notes appended to this file.
 ## Wiring into the workspace
 
 - `crates/zwift-stats/` is picked up by the existing `members =
-  ["crates/*"]` glob in the root `Cargo.toml`; no edit is needed
+["crates/*"]` glob in the root `Cargo.toml`; no edit is needed
   there until a consumer (STEP 14) starts depending on it.
 - `Cargo.lock` will refresh automatically the first time
   `cargo test -p zwift-stats` runs.
