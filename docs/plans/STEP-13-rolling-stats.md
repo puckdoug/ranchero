@@ -147,13 +147,13 @@ Inline NP:
       `np_constant_power_equals_power`, `np_known_vector`, and
       `np_with_soft_pads_matches_oracle`. Tests fail (no
       `RollingPower`).
-- [ ] **13.12-I** Implement `RollingPower::new` with the inline-NP
+- [x] **13.12-I** Implement `RollingPower::new` with the inline-NP
       state, the `process_add` contribution
       (`(rollSum / rollSize)^4`), and `np(force)` returning
       `(total / count)^(1/4)` once `active() ≥ 300 s`. Tests green.
 - [x] **13.13-T** Add `np_after_eviction_matches_recompute`. Test
       fails (eviction does not yet reverse NP contributions).
-- [ ] **13.13-I** Implement `RollingPower::process_shift` to reverse
+- [x] **13.13-I** Implement `RollingPower::process_shift` to reverse
       one saved `qnpa` contribution per shifted sample (mirrors
       `power.mjs:243-250`). Test green.
 

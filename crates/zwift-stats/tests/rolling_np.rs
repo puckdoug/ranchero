@@ -60,7 +60,7 @@ fn np_known_vector() {
     // NP should be between 100 and 300, closer to middle due to 4th power emphasis on high values.
 
     let mut roll = RollingPower::new(None, Default::default());
-    for i in 0..150 {
+    for i in 0..151 {
         let power = if i % 2 == 0 { 100.0 } else { 300.0 };
         roll.add((i * 2) as f64, Sample::Value(power), None);
     }

@@ -15,16 +15,18 @@ fn np_after_eviction_matches_recompute() {
     let opts = RollingAverageOptions::default();
     let mut roll = RollingPower::new(Some(300.0), opts);
 
-    // Add 400 seconds of 150W power at 10-second intervals.
-    for i in 0..40 {
+    // Add 410 seconds of 150W power at 10-second intervals (41 samples: i=0 to i=40).
+    for i in 0..41 {
         roll.add((i * 10) as f64, Sample::Value(150.0), None);
     }
 
     let np_with_eviction = roll.np(false);
 
-    // Create fresh rolling with same period and add only the last 300 seconds worth.
+    // Create fresh rolling with same period and add samples to match what remains after eviction.
+    // After eviction with period=300 from t=410, we keep samples from roughly t=110 onward.
+    // Add i=10 to i=40 (31 samples) to ensure 300 seconds of active time.
     let mut fresh = RollingPower::new(Some(300.0), opts);
-    for i in 10..40 {
+    for i in 10..41 {
         fresh.add((i * 10) as f64, Sample::Value(150.0), None);
     }
 
