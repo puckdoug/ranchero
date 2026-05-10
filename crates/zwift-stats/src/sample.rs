@@ -2,12 +2,35 @@
 
 //! [`Sample`] enum and the [`is_active_value`] predicate that governs
 //! whether a sample counts toward active time and average computations.
+//! Also provides the soft-pad interner and the `ZERO` sentinel.
+
+use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Sample {
     Value(f64),
     Pad(f64),
     Break { pad: f64 },
+}
+
+/// The cached ZERO sentinel (hard pad at 0.0), used for max-gap and explicit-active-false paths.
+pub fn zero_pad() -> Sample {
+    Sample::Pad(0.0)
+}
+
+/// Interner for soft pads. Returns a cached `Pad` instance keyed by `round(value * 10)`.
+/// Multiple calls with close values (within 0.05) return the same signature.
+fn pad_interner() -> &'static Mutex<HashMap<i32, Sample>> {
+    static INTERNER: OnceLock<Mutex<HashMap<i32, Sample>>> = OnceLock::new();
+    INTERNER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn soft_pad(value: f64) -> Sample {
+    let sig = (value * 10.0).round() as i32;
+    let mut cache = pad_interner().lock().unwrap();
+    *cache.entry(sig).or_insert(Sample::Pad(sig as f64 / 10.0))
 }
 
 impl Sample {
@@ -23,7 +46,12 @@ impl Sample {
     }
 }
 
-pub fn is_active_value(_s: Sample, _ignore_zeros: bool) -> bool {
-    // Placeholder; to be implemented in 13.2-I.
-    false
+pub fn is_active_value(s: Sample, ignore_zeros: bool) -> bool {
+    match s {
+        Sample::Value(v) => {
+            // Non-zero values are always active; zero values are active only if ignore_zeros is false.
+            (v != 0.0) || !ignore_zeros
+        }
+        Sample::Pad(_) | Sample::Break { .. } => false,
+    }
 }

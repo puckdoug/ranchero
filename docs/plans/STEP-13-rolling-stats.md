@@ -74,24 +74,24 @@ Setup (no tests):
 
 `Sample` enum and pad interner:
 
-- [ ] **13.2-T** Add `tests/rolling.rs::sample_is_active_value`
+- [x] **13.2-T** Add `tests/rolling.rs::sample_is_active_value`
       asserting `Value(0)`, `Value(5)`, `Pad(_)`, and `Break { .. }`
       classify correctly under both `ignore_zeros` flags. Compile
       error confirms `Sample` does not yet exist.
-- [ ] **13.2-I** Implement `Sample` (`Value | Pad | Break`) plus
+- [x] **13.2-I** Implement `Sample` (`Value | Pad | Break`) plus
       `is_active_value(s, ignore_zeros)`. Tests green.
-- [ ] **13.3-T** Add `pad_interner_returns_same_pad_for_close_values`
+- [x] **13.3-T** Add `pad_interner_returns_same_pad_for_close_values`
       and `zero_pad_is_a_singleton`. Tests fail (no interner).
-- [ ] **13.3-I** Implement `soft_pad(value)` keyed by
+- [x] **13.3-I** Implement `soft_pad(value)` keyed by
       `round(value * 10)` and a `ZERO` constant for hard pads. Tests
       green.
 
 `RollingAverage` no-gap path:
 
-- [ ] **13.4-T** Add `empty_rolling_has_zero_elapsed_and_no_avg`,
+- [x] **13.4-T** Add `empty_rolling_has_zero_elapsed_and_no_avg`,
       `single_sample_has_zero_elapsed`, `two_samples_avg`, and
       `accumulators_are_o1`. Tests fail (no `RollingAverage`).
-- [ ] **13.4-I** Implement `RollingAverage::new`, the no-gap branch
+- [x] **13.4-I** Implement `RollingAverage::new`, the no-gap branch
       of `add`, `process_add`, and the `avg` / `elapsed` / `active`
       accessors with O(1) accumulators. Tests green.
 
