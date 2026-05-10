@@ -372,6 +372,7 @@ async fn bearer_without_login_returns_not_authenticated() {
 // and wait real wall-clock time for the rotation to land. The 2s budget
 // is comfortably above CI scheduling jitter and still keeps the test
 // suite fast.
+#[ignore = "slow: 2 s real wait; virtual time deadlocks under wiremock (per the comment block above the test)"]
 #[tokio::test]
 async fn preemptive_refresh_fires_at_half_expires_in() {
     let server = MockServer::start().await;

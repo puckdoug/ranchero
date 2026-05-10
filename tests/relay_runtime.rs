@@ -1560,6 +1560,7 @@ async fn heartbeat_tick_emits_debug_event_per_interval() {
 // flow during establish. The 1 Hz heartbeat scheduler is the only
 // UDP-outbound path that fires under this stub setup, so the test
 // waits past one heartbeat interval before shutting down.
+#[ignore = "slow: waits 1.2 s for the first heartbeat tick to produce a UDP outbound record"]
 #[tokio::test]
 async fn start_all_inner_writes_udp_outbound_to_capture_file() {
     let cfg = make_config("monitor@example.com", "monitor-pass");
@@ -3771,6 +3772,7 @@ fn mock_login_response(relay_id: u32) -> Vec<u8> {
     resp.encode_to_vec()
 }
 
+#[ignore = "slow: hard-coded 4.5 s sleep waiting for supervisor refresh / capture flush"]
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn start_with_writer_subscribes_to_real_supervisor_events() {
@@ -3858,6 +3860,7 @@ async fn start_with_writer_subscribes_to_real_supervisor_events() {
     );
 }
 
+#[ignore = "slow: hard-coded 4.5 s sleep waiting for supervisor refresh / capture flush"]
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn start_with_writer_records_fresh_manifest_on_supervisor_relogin() {
@@ -5039,6 +5042,7 @@ async fn handshake_timeout_emits_warn_event_before_reconnect() {
 ///    `ZwiftAuth::set_capture_sink` on the auth object it constructs (defect C,
 ///    `relay.rs:1326`). Phase 2d must add that call; only then will HTTP records
 ///    appear in the capture file.
+#[ignore = "slow: hard-coded 1.5 s sleep waiting for daemon HTTP exchanges before abort"]
 #[tokio::test]
 async fn login_http_exchange_appears_in_capture() {
     use prost::Message;

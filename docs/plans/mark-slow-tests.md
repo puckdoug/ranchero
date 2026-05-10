@@ -12,21 +12,21 @@ plan" section below.
 
 ### Step 1 — Mark Category B tests as slow (~42 s)
 
-- [ ] `crates/zwift-relay/tests/session.rs::supervisor_refresh_fires_at_configured_fraction_of_expiration`
-- [ ] `crates/zwift-relay/tests/session.rs::supervisor_refresh_failure_triggers_relogin`
-- [ ] `crates/zwift-relay/tests/session.rs::supervisor_relogin_failure_emits_login_failed_with_attempt_count`
-- [ ] `crates/zwift-relay/tests/session.rs::supervisor_shutdown_cancels_pending_refresh`
-- [ ] `crates/zwift-relay/tests/session.rs::supervisor_refresh_fire_emits_scheduled_delay_event`
-- [ ] `crates/zwift-relay/tests/session.rs::supervisor_refresh_failure_path_emits_refresh_failed_and_relogin_attempt`
-- [ ] `crates/zwift-relay/tests/session.rs::supervisor_relogin_success_emits_relogin_ok`
-- [ ] `crates/zwift-relay/tests/session.rs::supervisor_persistent_login_failure_emits_login_failed_warn`
-- [ ] `tests/relay_runtime.rs::start_with_writer_subscribes_to_real_supervisor_events`
-- [ ] `tests/relay_runtime.rs::start_with_writer_records_fresh_manifest_on_supervisor_relogin`
-- [ ] `tests/relay_runtime.rs::login_http_exchange_appears_in_capture`
-- [ ] `tests/relay_runtime.rs::start_all_inner_writes_udp_outbound_to_capture_file`
-- [ ] `crates/zwift-api/tests/auth.rs::preemptive_refresh_fires_at_half_expires_in`
-- [ ] `crates/zwift-relay/tests/capture.rs::follower_reads_records_as_they_are_written`
-- [ ] `crates/zwift-relay/tests/capture.rs::follower_with_poll_interval_respects_setting`
+- [x] `crates/zwift-relay/tests/session.rs::supervisor_refresh_fires_at_configured_fraction_of_expiration`
+- [x] `crates/zwift-relay/tests/session.rs::supervisor_refresh_failure_triggers_relogin`
+- [x] `crates/zwift-relay/tests/session.rs::supervisor_relogin_failure_emits_login_failed_with_attempt_count`
+- [x] `crates/zwift-relay/tests/session.rs::supervisor_shutdown_cancels_pending_refresh`
+- [x] `crates/zwift-relay/tests/session.rs::supervisor_refresh_fire_emits_scheduled_delay_event`
+- [x] `crates/zwift-relay/tests/session.rs::supervisor_refresh_failure_path_emits_refresh_failed_and_relogin_attempt`
+- [x] `crates/zwift-relay/tests/session.rs::supervisor_relogin_success_emits_relogin_ok`
+- [x] `crates/zwift-relay/tests/session.rs::supervisor_persistent_login_failure_emits_login_failed_warn`
+- [x] `tests/relay_runtime.rs::start_with_writer_subscribes_to_real_supervisor_events`
+- [x] `tests/relay_runtime.rs::start_with_writer_records_fresh_manifest_on_supervisor_relogin`
+- [x] `tests/relay_runtime.rs::login_http_exchange_appears_in_capture`
+- [x] `tests/relay_runtime.rs::start_all_inner_writes_udp_outbound_to_capture_file`
+- [x] `crates/zwift-api/tests/auth.rs::preemptive_refresh_fires_at_half_expires_in`
+- [x] `crates/zwift-relay/tests/capture.rs::follower_reads_records_as_they_are_written`
+- [x] `crates/zwift-relay/tests/capture.rs::follower_with_poll_interval_respects_setting`
 
 ### Step 2 — Mark Category C tests as slow (~25 s)
 

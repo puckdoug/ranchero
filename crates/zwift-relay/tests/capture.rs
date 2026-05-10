@@ -418,6 +418,7 @@ fn tcp_channel_config_default_capture_is_none() {
 use std::time::Duration;
 use zwift_relay::capture::CaptureFollower;
 
+#[ignore = "slow: follower observes records over real-time write cadence; collapsing the cadence collapses the test"]
 #[tokio::test]
 async fn follower_reads_records_as_they_are_written() {
     // Spawn a CaptureWriter that pushes one record every 50 ms
@@ -854,6 +855,7 @@ async fn record_session_manifest_can_be_called_again_after_rotation() {
     let _ = RecordKind::Frame;
 }
 
+#[ignore = "slow: 5 records × 25 ms write cadence; timing is the test invariant"]
 #[tokio::test]
 async fn follower_with_poll_interval_respects_setting() {
     // A follower with poll_interval = 5 ms retries faster than

@@ -457,6 +457,7 @@ async fn supervisor_initial_login_emits_logged_in_event() {
 
 // --- 11. supervisor: refresh fires at refresh_fraction × expires ---
 
+#[ignore = "slow: 3 s real-time supervisor refresh; virtual time deadlocks under wiremock multi-thread (see STEP-07 §20.1)"]
 #[tokio::test]
 async fn supervisor_refresh_fires_at_configured_fraction_of_expiration() {
     let server = MockServer::start().await;
@@ -496,6 +497,7 @@ async fn supervisor_refresh_fires_at_configured_fraction_of_expiration() {
 
 // --- 12. supervisor: refresh failure → re-login --------------------
 
+#[ignore = "slow: 3 s real-time supervisor refresh; virtual time deadlocks under wiremock multi-thread (see STEP-07 §20.1)"]
 #[tokio::test]
 async fn supervisor_refresh_failure_triggers_relogin() {
     let server = MockServer::start().await;
@@ -533,6 +535,7 @@ async fn supervisor_refresh_failure_triggers_relogin() {
 
 // --- 13. supervisor: re-login failure with attempt count ----------
 
+#[ignore = "slow: 3 s real-time supervisor refresh; virtual time deadlocks under wiremock multi-thread (see STEP-07 §20.1)"]
 #[tokio::test]
 async fn supervisor_relogin_failure_emits_login_failed_with_attempt_count() {
     let server = MockServer::start().await;
@@ -598,6 +601,7 @@ async fn supervisor_relogin_failure_emits_login_failed_with_attempt_count() {
 
 // --- 14. supervisor: shutdown cancels pending refresh -------------
 
+#[ignore = "slow: 3 s real-time supervisor refresh; virtual time deadlocks under wiremock multi-thread (see STEP-07 §20.1)"]
 #[tokio::test]
 async fn supervisor_shutdown_cancels_pending_refresh() {
     let server = MockServer::start().await;
@@ -789,6 +793,7 @@ async fn supervisor_loggedin_event_emits_supervisor_logged_in_trace() {
     );
 }
 
+#[ignore = "slow: 3 s real-time supervisor refresh; virtual time deadlocks under wiremock multi-thread (see STEP-07 §20.1)"]
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn supervisor_refresh_fire_emits_scheduled_delay_event() {
@@ -835,6 +840,7 @@ async fn supervisor_refresh_fire_emits_scheduled_delay_event() {
     }
 }
 
+#[ignore = "slow: 3 s real-time supervisor refresh; virtual time deadlocks under wiremock multi-thread (see STEP-07 §20.1)"]
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn supervisor_refresh_failure_path_emits_refresh_failed_and_relogin_attempt() {
@@ -891,6 +897,7 @@ async fn supervisor_refresh_failure_path_emits_refresh_failed_and_relogin_attemp
     }
 }
 
+#[ignore = "slow: 3 s real-time supervisor refresh; virtual time deadlocks under wiremock multi-thread (see STEP-07 §20.1)"]
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn supervisor_relogin_success_emits_relogin_ok() {
@@ -937,6 +944,7 @@ async fn supervisor_relogin_success_emits_relogin_ok() {
     );
 }
 
+#[ignore = "slow: 3 s real-time supervisor refresh; virtual time deadlocks under wiremock multi-thread (see STEP-07 §20.1)"]
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn supervisor_persistent_login_failure_emits_login_failed_warn() {
