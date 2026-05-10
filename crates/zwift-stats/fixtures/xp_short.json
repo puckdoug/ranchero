@@ -1,0 +1,29 @@
+{
+  "samples": [
+    {"time": 0.0, "power": 100.0},
+    {"time": 2.0, "power": 300.0},
+    {"time": 4.0, "power": 100.0},
+    {"time": 6.0, "power": 300.0},
+    {"time": 8.0, "power": 100.0},
+    {"time": 10.0, "power": 300.0},
+    {"time": 12.0, "power": 100.0},
+    {"time": 14.0, "power": 300.0},
+    {"time": 16.0, "power": 100.0},
+    {"time": 18.0, "power": 300.0},
+    {"time": 20.0, "power": 200.0},
+    {"time": 22.0, "power": 200.0},
+    {"time": 24.0, "power": 200.0},
+    {"time": 26.0, "power": 200.0},
+    {"time": 28.0, "power": 200.0},
+    {"time": 30.0, "power": 200.0},
+    {"time": 32.0, "power": 200.0},
+    {"time": 34.0, "power": 200.0},
+    {"time": 36.0, "power": 200.0},
+    {"time": 38.0, "power": 200.0},
+    {"time": 40.0, "power": 100.0},
+    {"time": 42.0, "power": 100.0},
+    {"time": 44.0, "power": 100.0},
+    {"time": 46.0, "power": 100.0},
+    {"time": 48.0, "power": 100.0}
+  ]
+}

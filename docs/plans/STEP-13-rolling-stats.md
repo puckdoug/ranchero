@@ -159,7 +159,7 @@ Inline NP:
 
 Inline XP:
 
-- [ ] **13.14-T** Add the XP-mirror counterparts of the inline-NP
+- [x] **13.14-T** Add the XP-mirror counterparts of the inline-NP
       tests against `fixtures/xp_short.json`. Tests fail.
 - [ ] **13.14-I** Implement the inline-XP state machine
       (`samplesPerWindow = 25 / ideal_gap`, attenuation /
