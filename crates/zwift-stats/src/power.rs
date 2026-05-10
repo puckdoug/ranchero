@@ -158,7 +158,11 @@ impl RollingPower {
     }
 }
 
-pub fn calc_tss(_np: f64, _seconds: f64, _ftp: f64) -> Option<f64> {
-    // Placeholder; to be implemented in 13.15-I.
-    None
+pub fn calc_tss(np: f64, seconds: f64, ftp: f64) -> Option<f64> {
+    if ftp <= 0.0 {
+        return None;
+    }
+
+    let tss = (seconds * np * (np / ftp)) / (ftp * 3600.0) * 100.0;
+    Some(tss)
 }

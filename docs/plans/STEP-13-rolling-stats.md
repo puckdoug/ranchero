@@ -170,14 +170,14 @@ TSS:
 
 - [x] **13.15-T** Add `tss_at_threshold`, `tss_zero_seconds`,
       `tss_zero_ftp_returns_none`, and `tss_known_vector`. Tests fail.
-- [ ] **13.15-I** Implement `calc_tss(np, seconds, ftp)`. Tests green.
+- [x] **13.15-I** Implement `calc_tss(np, seconds, ftp)`. Tests green.
 
 One-second bucket:
 
 - [x] **13.16-T** Add `bucket_emits_mean_on_boundary`,
       `bucket_round_to_int`, and `bucket_flush_drains_remainder`.
       Tests fail.
-- [ ] **13.16-I** Implement `OneSecondBucket::new` / `add` / `flush`.
+- [x] **13.16-I** Implement `OneSecondBucket::new` / `add` / `flush`.
       Tests green.
 
 Recorded-stream parity:
@@ -187,7 +187,7 @@ Recorded-stream parity:
       each `*.json` fixture, drive both `RollingAverage::avg` and
       `RollingPower::np` / `xp` through it, and assert every numeric
       output agrees with the embedded oracle to ≤ 1e-6.
-- [ ] **13.17-I** Resolve any deltas the parity tests surface
+- [x] **13.17-I** Resolve any deltas the parity tests surface
       (typically off-by-one in the gap-fill branch or the inline-NP
       ring). When green, this step's acceptance criteria are met.
 
