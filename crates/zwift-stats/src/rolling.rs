@@ -12,6 +12,7 @@ pub struct RollingAverageOptions {
     pub ignore_zeros: bool,
 }
 
+#[derive(Clone)]
 pub struct RollingAverage {
     #[allow(dead_code)]
     period: Option<f64>,      // Used in 13.8 (period eviction).
@@ -121,7 +122,12 @@ impl RollingAverage {
         for i in self.length..target_length {
             self.process_add(i);
             self.length += 1;
-            // Period eviction would go here (13.8).
+            if let Some(period) = self.period {
+                let current_ts = self.times[i];
+                while self.offt < self.length && current_ts - self.times[self.offt] > period {
+                    self.shift();
+                }
+            }
         }
     }
 
@@ -135,6 +141,26 @@ impl RollingAverage {
             };
             self.active_acc += gap;
             self.values_acc += value.as_f64() * gap;
+        }
+    }
+
+    fn shift(&mut self) {
+        if self.offt < self.length {
+            self.process_shift(self.offt);
+            self.offt += 1;
+        }
+    }
+
+    fn process_shift(&mut self, i: usize) {
+        let value = self.values[i];
+        if crate::is_active_value(value, self.ignore_zeros) {
+            let gap = if i + 1 < self.length {
+                self.times[i + 1] - self.times[i]
+            } else {
+                0.0
+            };
+            self.active_acc -= gap;
+            self.values_acc -= value.as_f64() * gap;
         }
     }
 
@@ -168,5 +194,66 @@ impl RollingAverage {
 
     pub fn size(&self) -> usize {
         self.length - self.offt
+    }
+
+    pub fn slice(&self, start: usize, end: usize) -> RollingAverage {
+        let mut sliced = self.clone();
+        let actual_end = std::cmp::min(end, sliced.size());
+        let actual_start = std::cmp::min(start, actual_end);
+        sliced.offt += actual_start;
+        sliced.length = sliced.offt + (actual_end - actual_start);
+        sliced
+    }
+
+    pub fn pop(&mut self) -> Option<(f64, Sample)> {
+        if self.length > self.offt {
+            self.length -= 1;
+            let ts = self.times[self.length];
+            let value = self.values[self.length];
+            self.process_shift(self.length);
+            Some((ts, value))
+        } else {
+            None
+        }
+    }
+
+    pub fn time_at(&self, index: i32) -> Option<f64> {
+        let size = self.size() as i32;
+        let actual_index = if index < 0 {
+            (size + index) as usize
+        } else {
+            index as usize
+        };
+        if actual_index < self.size() {
+            Some(self.times[self.offt + actual_index])
+        } else {
+            None
+        }
+    }
+
+    pub fn value_at(&self, index: i32) -> Option<Sample> {
+        let size = self.size() as i32;
+        let actual_index = if index < 0 {
+            (size + index) as usize
+        } else {
+            index as usize
+        };
+        if actual_index < self.size() {
+            Some(self.values[self.offt + actual_index])
+        } else {
+            None
+        }
+    }
+
+    pub fn times(&self) -> &[f64] {
+        &self.times[self.offt..self.length]
+    }
+
+    pub fn values(&self) -> &[Sample] {
+        &self.values[self.offt..self.length]
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (f64, Sample)> + '_ {
+        (self.offt..self.length).map(move |i| (self.times[i], self.values[i]))
     }
 }

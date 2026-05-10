@@ -118,12 +118,12 @@ Period eviction and accessors:
 - [x] **13.8-T** Add `period_eviction_keeps_window_bounded`,
       `eviction_decrements_accumulators`, and
       `full_with_offt_one_evicts_correctly`. Tests fail.
-- [ ] **13.8-I** Implement `resize`, `shift`, `process_shift`, and
+- [x] **13.8-I** Implement `resize`, `shift`, `process_shift`, and
       the `while full({offt: 1}) shift()` eviction loop. Tests green.
 - [x] **13.9-T** Add `clone_independent_writes`,
       `slice_returns_subwindow`, `time_at_negative_index`, and
       `entries_yields_offset_to_length`. Tests fail.
-- [ ] **13.9-I** Implement `clone_with`, `slice`, `pop`, `time_at` /
+- [x] **13.9-I** Implement `clone_with`, `slice`, `pop`, `time_at` /
       `value_at`, `times` / `values` slice accessors, and the
       `entries` iterator. Tests green.
 

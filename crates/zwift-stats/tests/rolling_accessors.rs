@@ -75,8 +75,9 @@ fn time_at_negative_index() {
 #[test]
 fn entries_yields_offset_to_length() {
     // Create rolling with samples at t=0, 10, 20, 30.
-    // After eviction with period=15, samples at t=0 are outside window (30-15)..30.
-    // entries() should yield only t=10, 20, 30 (the live samples after offt adjustment).
+    // After eviction with period=15, window is (30-15)..30 = 15..30.
+    // Samples t=0, 10 are outside window. Remaining: t=20, 30.
+    // entries() should yield only t=20, 30 (the live samples after offt adjustment).
     // Count should match size().
 
     let opts = RollingAverageOptions::default();
@@ -93,7 +94,7 @@ fn entries_yields_offset_to_length() {
         "entries() count should match size() after eviction"
     );
     assert_eq!(
-        entry_count, 3,
-        "should have 3 live entries after period eviction"
+        entry_count, 2,
+        "should have 2 live entries after period eviction (t=20, 30)"
     );
 }
