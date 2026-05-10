@@ -10,6 +10,7 @@ edition = "2024"
 [lib]
 name = "ranchero"
 path = "src/lib.rs"
+doctest = false
 
 [[bin]]
 name = "ranchero"

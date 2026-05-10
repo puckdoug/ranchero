@@ -186,7 +186,6 @@ fn read_log_until(path: &Path, needle: &str) -> String {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[ignore = "slow: ~5 s daemon teardown — child.wait_with_output blocks until piped stderr closes; root cause TBD (see plan Step 7)"]
 #[test]
 fn verbose_flag_emits_startup_info_to_stderr() {
     let mut h = LogHarness::new();
@@ -211,7 +210,6 @@ fn verbose_flag_emits_startup_info_to_stderr() {
     );
 }
 
-#[ignore = "slow: ~5 s daemon teardown — child.wait_with_output blocks until piped stderr closes; root cause TBD (see plan Step 7)"]
 #[test]
 fn default_silences_info_on_stderr() {
     // No flags → default level is warn. The startup/shutdown info events
@@ -235,7 +233,6 @@ fn default_silences_info_on_stderr() {
     );
 }
 
-#[ignore = "slow: ~5 s daemon teardown — child.wait_with_output blocks until piped stderr closes; root cause TBD (see plan Step 7)"]
 #[test]
 fn debug_flag_emits_control_debug_to_stderr() {
     let mut h = LogHarness::new();
@@ -270,7 +267,6 @@ fn debug_flag_emits_control_debug_to_stderr() {
     );
 }
 
-#[ignore = "slow: ~5 s daemon teardown — child.wait_with_output blocks until piped stderr closes; root cause TBD (see plan Step 7)"]
 #[test]
 fn rust_log_env_overrides_default_filter() {
     // Without RUST_LOG the default is warn and info is suppressed.

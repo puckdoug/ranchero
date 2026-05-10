@@ -5,6 +5,9 @@ edition = "2024"
 license = "AGPL-3.0-only"
 description = "Zwift stats engine: rolling windows, power/heart-rate/speed metrics, W' balance, zones."
 
+[lib]
+doctest = false
+
 [dependencies]
 thiserror = "1"
 

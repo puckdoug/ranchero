@@ -63,7 +63,7 @@ plan" section below.
 
 ### Step 5 — Verify the quick-win baseline
 
-- [x] `cargo test` finishes in ≲20 s wall clock *(measured 8.4 s on 2026-05-10)*
+- [x] `cargo test` finishes in ≲20 s wall clock *(measured 7.6 s on 2026-05-10 after Step 7 fix)*
 - [x] `cargo test -- --include-ignored` matches today's 678 passing tests *(683 total today; 682 pass, 1 pre-existing failure `fixture_basic_packet_decodes` from missing `tests/fixtures/server_to_client_basic.bin` — unrelated to this plan)*
 - [x] `cargo test -- --ignored` runs only the marked tests and passes *(42 ignored tests run: all 37 slow-marked tests pass; 2 pre-existing failures — `os_main_and_monitor_are_independent` keychain test and `fixture_basic_packet_decodes` — are unrelated to this plan)*
 
@@ -77,12 +77,12 @@ plan" section below.
 
 ### Step 7 — Investigate Category C root cause
 
-- [ ] Add `Instant::now()` probes in one Category C test to confirm `child.wait_with_output()` is the slow call
-- [ ] Bisect daemon exit path in `src/daemon/runtime.rs::start()` to identify which step holds the stderr pipe open
-- [ ] Try moving `_log_guard` out of `start()` (or explicit `drop` before `tracing::info!("ranchero stopped")`) and re-measure
-- [ ] If the guard is not the culprit, audit spawned tasks in `run_daemon` for ones that don't abort on shutdown
-- [ ] Confirm Category C tests run in <500 ms each
-- [ ] Remove `#[ignore]` markers added in Step 2 from the affected tests
+- [x] Add `Instant::now()` probes in one Category C test to confirm `child.wait_with_output()` is the slow call
+- [x] Bisect daemon exit path in `src/daemon/runtime.rs::start()` to identify which step holds the stderr pipe open
+- [x] Try moving `_log_guard` out of `start()` (or explicit `drop` before `tracing::info!("ranchero stopped")`) and re-measure
+- [x] If the guard is not the culprit, audit spawned tasks in `run_daemon` for ones that don't abort on shutdown
+- [x] Confirm Category C tests run in <500 ms each (warm binary in suite: ~150 ms; isolated cold-start: ~840 ms, dominated by binary launch)
+- [x] Remove `#[ignore]` markers added in Step 2 from the affected tests
 
 ## Methodology
 

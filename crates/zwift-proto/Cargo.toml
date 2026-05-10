@@ -5,6 +5,9 @@ edition = "2024"
 license = "AGPL-3.0-only"
 description = "Rust types for the Zwift relay protobuf schema (vendored from zwift-offline)."
 
+[lib]
+doctest = false
+
 [dependencies]
 prost = "0.13"
 prost-reflect = { version = "0.14", features = ["derive"] }

@@ -77,6 +77,11 @@ pub fn start(
         println!("{STOPPED_LINE}");
     }
 
+    // Worker threads are idle at this point (block_on already returned).
+    // Capping the shutdown wait avoids a multi-second block while the IO
+    // driver deregisters its kqueue interests on macOS.
+    rt.shutdown_timeout(Duration::from_millis(200));
+
     result?;
     Ok(ExitCode::SUCCESS)
 }
@@ -106,7 +111,12 @@ pub fn stop(cfg: &ResolvedConfig) -> Result<ExitCode, DaemonError> {
 
     let deadline = Instant::now() + SHUTDOWN_WAIT;
     while Instant::now() < deadline {
-        if !probe.is_alive(pid) {
+        // The daemon removes its pidfile before calling exit(). On macOS and
+        // Linux, kill(pid, 0) returns Ok for zombie processes (the daemon has
+        // called exit but the test parent hasn't called wait yet), so checking
+        // is_alive alone loops for the full SHUTDOWN_WAIT. Pidfile absence
+        // detects completed shutdown without that zombie race.
+        if !probe.is_alive(pid) || pidfile.read().ok().flatten().is_none() {
             break;
         }
         std::thread::sleep(SHUTDOWN_POLL);

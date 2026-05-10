@@ -5,6 +5,9 @@ edition = "2024"
 license = "AGPL-3.0-only"
 description = "Zwift relay protocol: AES-128-GCM-4 codec (no-I/O) plus async session login + refresh supervisor."
 
+[lib]
+doctest = false
+
 [dependencies]
 # Codec layer (no I/O). `aes-gcm` 0.10 caps tag size at 12-16 bytes
 # (RFC 5288); Zwift uses 4-byte tags, so we compose GCM ourselves from
