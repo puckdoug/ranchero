@@ -102,7 +102,7 @@ Gap-fill (soft, hard, catastrophic):
 - [x] **13.5-I** Implement the `gap > ideal_gap · 1.61803` soft-pad
       branch in `add` (insert `Pad(value)` at `ideal_gap` spacing).
       Tests green.
-- [ ] **13.6-T** Add `hard_gap_inserts_zero_filler` and
+- [x] **13.6-T** Add `hard_gap_inserts_zero_filler` and
       `explicit_active_false_zero_pads`. Tests fail.
 - [ ] **13.6-I** Implement the `max_gap` / `active == Some(false)`
       hard-gap branch (`ZERO` filler at `ideal_gap` spacing). Tests
