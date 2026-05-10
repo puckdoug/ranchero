@@ -13,9 +13,11 @@ pub struct RollingAverageOptions {
 }
 
 pub struct RollingAverage {
-    period: Option<f64>,
+    #[allow(dead_code)]
+    period: Option<f64>,      // Used in 13.8 (period eviction).
     ideal_gap: Option<f64>,
-    max_gap: Option<f64>,
+    #[allow(dead_code)]
+    max_gap: Option<f64>,     // Used in 13.6 (hard-gap zero-pad branch).
     active: bool,
     ignore_zeros: bool,
 
@@ -46,7 +48,24 @@ impl RollingAverage {
     }
 
     pub fn add(&mut self, ts: f64, value: Sample, _active: Option<bool>) {
-        // Placeholder: no-gap path only.
+        if self.length > 0 {
+            let prev_ts = self.times[self.length - 1];
+            let gap = ts - prev_ts;
+
+            // Soft-pad gap fill: gap > ideal_gap * 1.61803 (golden ratio).
+            if let Some(ideal_gap) = self.ideal_gap {
+                let pad_threshold = ideal_gap * 1.61803;
+                if gap > pad_threshold {
+                    let pad_value = crate::sample::soft_pad(value.as_f64());
+                    let mut i = ideal_gap;
+                    while i < gap {
+                        self.add_internal(prev_ts + i, pad_value);
+                        i += ideal_gap;
+                    }
+                }
+            }
+        }
+
         self.add_internal(ts, value);
     }
 

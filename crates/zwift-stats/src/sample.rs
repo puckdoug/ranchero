@@ -16,17 +16,23 @@ pub enum Sample {
 }
 
 /// The cached ZERO sentinel (hard pad at 0.0), used for max-gap and explicit-active-false paths.
+/// (Used in 13.6-I hard-gap branch.)
+#[allow(dead_code)]
 pub fn zero_pad() -> Sample {
     Sample::Pad(0.0)
 }
 
 /// Interner for soft pads. Returns a cached `Pad` instance keyed by `round(value * 10)`.
 /// Multiple calls with close values (within 0.05) return the same signature.
+#[allow(dead_code)]
 fn pad_interner() -> &'static Mutex<HashMap<i32, Sample>> {
     static INTERNER: OnceLock<Mutex<HashMap<i32, Sample>>> = OnceLock::new();
     INTERNER.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Returns a soft-pad instance keyed by the value (rounded to one decimal place).
+/// (Used in 13.5-I soft-pad gap-fill and elsewhere.)
+#[allow(dead_code)]
 pub fn soft_pad(value: f64) -> Sample {
     let sig = (value * 10.0).round() as i32;
     let mut cache = pad_interner().lock().unwrap();

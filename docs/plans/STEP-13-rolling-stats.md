@@ -99,7 +99,7 @@ Gap-fill (soft, hard, catastrophic):
 
 - [x] **13.5-T** Add `soft_pad_inserts_value_filler` and
       `pad_threshold_excludes_borderline`. Tests fail.
-- [ ] **13.5-I** Implement the `gap > ideal_gap · 1.61803` soft-pad
+- [x] **13.5-I** Implement the `gap > ideal_gap · 1.61803` soft-pad
       branch in `add` (insert `Pad(value)` at `ideal_gap` spacing).
       Tests green.
 - [ ] **13.6-T** Add `hard_gap_inserts_zero_filler` and
