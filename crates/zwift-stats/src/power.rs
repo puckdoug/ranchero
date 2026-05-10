@@ -10,6 +10,10 @@ pub struct RollingPower {
     qnpa_total: f64,
     qnpa_count: usize,
     qnpa_values: Vec<f64>,
+    xpa_total: f64,
+    xpa_count: usize,
+    xpa_values: Vec<f64>,
+    ideal_gap: Option<f64>,
 }
 
 impl RollingPower {
@@ -19,12 +23,17 @@ impl RollingPower {
             qnpa_total: 0.0,
             qnpa_count: 0,
             qnpa_values: Vec::new(),
+            xpa_total: 0.0,
+            xpa_count: 0,
+            xpa_values: Vec::new(),
+            ideal_gap: opts.ideal_gap,
         }
     }
 
     pub fn add(&mut self, ts: f64, value: Sample, active: Option<bool>) {
         self.rolling.add(ts, value, active);
         self.recompute_qnpa();
+        self.recompute_xpa();
     }
 
     fn recompute_qnpa(&mut self) {
@@ -68,6 +77,46 @@ impl RollingPower {
     }
 
 
+    fn recompute_xpa(&mut self) {
+        let size = self.rolling.size();
+        let ideal_gap = self.ideal_gap.unwrap_or(1.0);
+        let samples_per_window = (25.0 / ideal_gap).max(1.0) as usize;
+        let decay_rate = 0.1;
+
+        self.xpa_total = 0.0;
+        self.xpa_count = 0;
+        self.xpa_values.clear();
+
+        let values = self.rolling.values();
+
+        for i in 0..size {
+            let window_start = if i >= samples_per_window { i - samples_per_window } else { 0 };
+
+            let mut weighted_sum = 0.0;
+            let mut weight_total = 0.0;
+
+            for j in window_start..=i {
+                let distance = (i - j) as f64;
+                let weight = (-decay_rate * distance).exp();
+                let val = values[j];
+                if crate::is_active_value(val, false) {
+                    weighted_sum += val.as_f64() * weight;
+                    weight_total += weight;
+                }
+            }
+
+            let contribution = if weight_total > 0.0 {
+                weighted_sum / weight_total
+            } else {
+                0.0
+            };
+
+            self.xpa_values.push(contribution);
+            self.xpa_total += contribution;
+            self.xpa_count += 1;
+        }
+    }
+
     pub fn np(&self, force: bool) -> Option<f64> {
         let active_time = self.rolling.active();
         if !force && active_time < 300.0 {
@@ -80,6 +129,20 @@ impl RollingPower {
 
         let mean = self.qnpa_total / self.qnpa_count as f64;
         Some(mean.powf(0.25))
+    }
+
+    pub fn xp(&self, force: bool) -> Option<f64> {
+        let active_time = self.rolling.active();
+        if !force && active_time < 300.0 {
+            return None;
+        }
+
+        if self.xpa_count == 0 {
+            return None;
+        }
+
+        let mean = self.xpa_total / self.xpa_count as f64;
+        Some(mean)
     }
 
     pub fn size(&self) -> usize {

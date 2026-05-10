@@ -60,7 +60,7 @@ fn xp_from_fixture_short() {
     // Fixture contains alternating 100/300W pattern followed by constant 200W.
     // XP should reflect the weighted power over the session.
 
-    let fixture_path = "crates/zwift-stats/fixtures/xp_short.json";
+    let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/xp_short.json");
     let content = fs::read_to_string(fixture_path).expect("Failed to read fixture file");
     let data: serde_json::Value = serde_json::from_str(&content).expect("Failed to parse JSON");
 
