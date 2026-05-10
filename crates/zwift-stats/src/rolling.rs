@@ -47,13 +47,25 @@ impl RollingAverage {
         }
     }
 
-    pub fn add(&mut self, ts: f64, value: Sample, _active: Option<bool>) {
+    pub fn add(&mut self, ts: f64, value: Sample, active: Option<bool>) {
         if self.length > 0 {
             let prev_ts = self.times[self.length - 1];
             let gap = ts - prev_ts;
 
-            // Soft-pad gap fill: gap > ideal_gap * 1.61803 (golden ratio).
-            if let Some(ideal_gap) = self.ideal_gap {
+            // Hard-gap zero-pad: triggered by max_gap exceeded OR explicit active=false.
+            let trigger_hard_gap = (active.is_none() && self.max_gap.map_or(false, |mg| gap > mg))
+                || active == Some(false);
+
+            if trigger_hard_gap {
+                // Determine ideal_gap for hard-gap padding: use stored ideal_gap, else min(1, gap/2).
+                let hard_ideal_gap = self.ideal_gap.unwrap_or(1.0);
+                let mut i = hard_ideal_gap;
+                while i < gap {
+                    self.add_internal(prev_ts + i, crate::sample::zero_pad());
+                    i += hard_ideal_gap;
+                }
+            } else if let Some(ideal_gap) = self.ideal_gap {
+                // Soft-pad gap fill: gap > ideal_gap * 1.61803 (golden ratio).
                 let pad_threshold = ideal_gap * 1.61803;
                 if gap > pad_threshold {
                     let pad_value = crate::sample::soft_pad(value.as_f64());

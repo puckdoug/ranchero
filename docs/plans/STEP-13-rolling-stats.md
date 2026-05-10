@@ -104,7 +104,7 @@ Gap-fill (soft, hard, catastrophic):
       Tests green.
 - [x] **13.6-T** Add `hard_gap_inserts_zero_filler` and
       `explicit_active_false_zero_pads`. Tests fail.
-- [ ] **13.6-I** Implement the `max_gap` / `active == Some(false)`
+- [x] **13.6-I** Implement the `max_gap` / `active == Some(false)`
       hard-gap branch (`ZERO` filler at `ideal_gap` spacing). Tests
       green.
 - [ ] **13.7-T** Add `break_gap_splits_with_book_ends` covering the
