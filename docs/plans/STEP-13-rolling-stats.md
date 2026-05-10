@@ -109,7 +109,7 @@ Gap-fill (soft, hard, catastrophic):
       green.
 - [x] **13.7-T** Add `break_gap_splits_with_book_ends` covering the
       `gap > 3600 s` "Garmin glitch" path. Test fails.
-- [ ] **13.7-I** Implement the catastrophic-gap branch (zero-pad
+- [x] **13.7-I** Implement the catastrophic-gap branch (zero-pad
       half-hour book-ends + single `Break { pad }` sentinel). Test
       green.
 

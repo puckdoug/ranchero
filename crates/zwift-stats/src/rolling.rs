@@ -59,10 +59,36 @@ impl RollingAverage {
             if trigger_hard_gap {
                 // Determine ideal_gap for hard-gap padding: use stored ideal_gap, else min(1, gap/2).
                 let hard_ideal_gap = self.ideal_gap.unwrap_or(1.0);
-                let mut i = hard_ideal_gap;
-                while i < gap {
-                    self.add_internal(prev_ts + i, crate::sample::zero_pad());
-                    i += hard_ideal_gap;
+                let break_gap = 3600.0;
+
+                if gap > break_gap {
+                    // Catastrophic gap (Garmin glitch): split with Break sentinel.
+                    let book_end_time = (break_gap / 2.0).floor() - hard_ideal_gap;
+
+                    // Leading zero pads.
+                    let mut i = hard_ideal_gap;
+                    while i < book_end_time {
+                        self.add_internal(prev_ts + i, crate::sample::zero_pad());
+                        i += hard_ideal_gap;
+                    }
+
+                    // Break sentinel.
+                    let break_pad = gap - (book_end_time * 2.0);
+                    self.add_internal(prev_ts + book_end_time, Sample::Break { pad: break_pad });
+
+                    // Trailing zero pads.
+                    i = gap - book_end_time;
+                    while i < gap {
+                        self.add_internal(prev_ts + i, crate::sample::zero_pad());
+                        i += hard_ideal_gap;
+                    }
+                } else {
+                    // Normal hard-gap: just zero pads.
+                    let mut i = hard_ideal_gap;
+                    while i < gap {
+                        self.add_internal(prev_ts + i, crate::sample::zero_pad());
+                        i += hard_ideal_gap;
+                    }
                 }
             } else if let Some(ideal_gap) = self.ideal_gap {
                 // Soft-pad gap fill: gap > ideal_gap * 1.61803 (golden ratio).
