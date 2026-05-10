@@ -58,8 +58,8 @@ plan" section below.
 
 ### Step 4 — Document the convention
 
-- [ ] Add "Running tests" section (README or `docs/development.md`) covering the three commands and the `#[ignore = "slow: …"]` convention
-- [ ] Confirm CI runs `cargo test -- --include-ignored`
+- [x] Add "Running tests" section (README or `docs/development.md`) covering the three commands and the `#[ignore = "slow: …"]` convention
+- [x] Confirm CI runs `cargo test -- --include-ignored` *(no CI configured in this repo as of 2026-05-10; convention will apply once CI is added)*
 
 ### Step 5 — Verify the quick-win baseline
 
