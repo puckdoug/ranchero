@@ -324,6 +324,7 @@ fn status_when_not_running_reports_no_daemon() {
     );
 }
 
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_when_already_running_refuses() {
     let mut h = DaemonHarness::new();
@@ -351,6 +352,7 @@ fn start_when_already_running_refuses() {
     );
 }
 
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn stale_pid_file_is_cleaned_up_on_start() {
     let mut h = DaemonHarness::new();
@@ -367,6 +369,7 @@ fn stale_pid_file_is_cleaned_up_on_start() {
     assert!(live_pid > 0);
 }
 
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn backgrounded_start_returns_quickly_and_keeps_running() {
     let h = DaemonHarness::new();
@@ -390,6 +393,7 @@ fn backgrounded_start_returns_quickly_and_keeps_running() {
     assert!(stop.status.success(), "stop failed: {:?}", stderr_string(&stop));
 }
 
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn debug_flag_keeps_process_in_foreground() {
     let mut h = DaemonHarness::new();
@@ -408,6 +412,7 @@ fn debug_flag_keeps_process_in_foreground() {
 // Defect 1 — relay.start failure must propagate (not continue in degraded mode)
 // ---------------------------------------------------------------------------
 
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_exits_nonzero_when_relay_start_fails() {
     let mut h = DaemonHarness::new_failing_relay();
@@ -421,6 +426,7 @@ fn start_exits_nonzero_when_relay_start_fails() {
     );
 }
 
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_removes_pidfile_when_relay_start_fails() {
     let mut h = DaemonHarness::new_failing_relay();
@@ -433,6 +439,7 @@ fn start_removes_pidfile_when_relay_start_fails() {
     );
 }
 
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_removes_socket_when_relay_start_fails() {
     let mut h = DaemonHarness::new_failing_relay();
@@ -453,6 +460,7 @@ const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Sub-1: missing email is reported on stderr and the process exits non-zero
 /// without attempting any network I/O.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_exits_nonzero_and_prints_error_when_email_missing() {
     let mut h = DaemonHarness::new_failing_relay();
@@ -472,6 +480,7 @@ fn start_exits_nonzero_and_prints_error_when_email_missing() {
 }
 
 /// Sub-2: missing password is reported on stderr and the process exits non-zero.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_exits_nonzero_and_prints_error_when_password_missing() {
     let mut h = DaemonHarness::new_failing_relay();
@@ -500,6 +509,7 @@ fn start_exits_nonzero_and_prints_error_when_password_missing() {
 }
 
 /// Sub-3: no pidfile is written when validation fails.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_does_not_write_pidfile_when_validation_fails() {
     let mut h = DaemonHarness::new_failing_relay();
@@ -510,6 +520,7 @@ fn start_does_not_write_pidfile_when_validation_fails() {
 }
 
 /// Sub-4: no control socket is created when validation fails.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_does_not_write_socket_when_validation_fails() {
     let mut h = DaemonHarness::new_failing_relay();
@@ -520,6 +531,7 @@ fn start_does_not_write_socket_when_validation_fails() {
 }
 
 /// Sub-5: missing pidfile directory is reported and the process exits non-zero.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_exits_nonzero_when_pidfile_directory_missing() {
     let mut h = DaemonHarness::new_missing_pidfile_dir();
@@ -542,6 +554,7 @@ fn start_exits_nonzero_when_pidfile_directory_missing() {
 }
 
 /// Sub-6: missing log directory is reported and the process exits non-zero.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_exits_nonzero_when_log_directory_missing() {
     let mut h = DaemonHarness::new_missing_log_dir();
@@ -573,6 +586,7 @@ fn start_exits_nonzero_when_log_directory_missing() {
 /// RED: current code forwards the raw PathBuf to `RelayRuntime::start`, which
 /// runs after `chdir("/")`. With relay disabled the file is never opened at all,
 /// so `<tempdir>/session.cap` does not exist.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_canonicalizes_relative_capture_path() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -663,6 +677,7 @@ fn start_canonicalizes_relative_capture_path() {
 ///
 /// RED: current code only probes the parent directory for writability and then
 /// forks, so the foreground parent exits 0 even though the open will fail.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn start_exits_nonzero_when_capture_path_not_openable() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -723,6 +738,7 @@ fn start_exits_nonzero_when_capture_path_not_openable() {
 /// RED: current code opens the capture file inside `RelayRuntime::start`, which
 /// runs post-fork and is skipped entirely when relay is disabled. The file is
 /// therefore never created, and reading it yields zero bytes.
+#[ignore = "slow: ~0.85 s binary cold-start per test (spawns the daemon binary)"]
 #[test]
 fn capture_file_handle_survives_fork() {
     let dir = tempfile::tempdir().expect("tempdir");

@@ -38,23 +38,23 @@ plan" section below.
 
 ### Step 3 — Mark daemon-lifecycle outliers as slow (~14 s)
 
-- [ ] `tests/daemon_lifecycle.rs::start_canonicalizes_relative_capture_path`
-- [ ] `tests/daemon_lifecycle.rs::capture_file_handle_survives_fork`
-- [ ] `tests/daemon_lifecycle.rs::start_when_already_running_refuses`
-- [ ] `tests/daemon_lifecycle.rs::backgrounded_start_returns_quickly_and_keeps_running`
-- [ ] `tests/daemon_lifecycle.rs::stale_pid_file_is_cleaned_up_on_start`
-- [ ] `tests/daemon_lifecycle.rs::debug_flag_keeps_process_in_foreground`
-- [ ] `tests/daemon_lifecycle.rs::start_exits_nonzero_when_log_directory_missing`
-- [ ] `tests/daemon_lifecycle.rs::start_removes_socket_when_relay_start_fails`
-- [ ] `tests/daemon_lifecycle.rs::start_exits_nonzero_when_pidfile_directory_missing`
-- [ ] `tests/daemon_lifecycle.rs::start_exits_nonzero_and_prints_error_when_password_missing`
-- [ ] `tests/daemon_lifecycle.rs::start_does_not_write_socket_when_validation_fails`
-- [ ] `tests/daemon_lifecycle.rs::start_does_not_write_pidfile_when_validation_fails`
-- [ ] `tests/daemon_lifecycle.rs::start_exits_nonzero_and_prints_error_when_email_missing`
-- [ ] `tests/daemon_lifecycle.rs::start_removes_pidfile_when_relay_start_fails`
-- [ ] `tests/daemon_lifecycle.rs::start_exits_nonzero_when_relay_start_fails`
-- [ ] `tests/daemon_lifecycle.rs::start_exits_nonzero_when_capture_path_not_openable`
-- [ ] `tests/cli_args.rs::dispatch_start_passes_capture_path_to_daemon`
+- [x] `tests/daemon_lifecycle.rs::start_canonicalizes_relative_capture_path`
+- [x] `tests/daemon_lifecycle.rs::capture_file_handle_survives_fork`
+- [x] `tests/daemon_lifecycle.rs::start_when_already_running_refuses`
+- [x] `tests/daemon_lifecycle.rs::backgrounded_start_returns_quickly_and_keeps_running`
+- [x] `tests/daemon_lifecycle.rs::stale_pid_file_is_cleaned_up_on_start`
+- [x] `tests/daemon_lifecycle.rs::debug_flag_keeps_process_in_foreground`
+- [x] `tests/daemon_lifecycle.rs::start_exits_nonzero_when_log_directory_missing`
+- [x] `tests/daemon_lifecycle.rs::start_removes_socket_when_relay_start_fails`
+- [x] `tests/daemon_lifecycle.rs::start_exits_nonzero_when_pidfile_directory_missing`
+- [x] `tests/daemon_lifecycle.rs::start_exits_nonzero_and_prints_error_when_password_missing`
+- [x] `tests/daemon_lifecycle.rs::start_does_not_write_socket_when_validation_fails`
+- [x] `tests/daemon_lifecycle.rs::start_does_not_write_pidfile_when_validation_fails`
+- [x] `tests/daemon_lifecycle.rs::start_exits_nonzero_and_prints_error_when_email_missing`
+- [x] `tests/daemon_lifecycle.rs::start_removes_pidfile_when_relay_start_fails`
+- [x] `tests/daemon_lifecycle.rs::start_exits_nonzero_when_relay_start_fails`
+- [x] `tests/daemon_lifecycle.rs::start_exits_nonzero_when_capture_path_not_openable`
+- [x] `tests/cli_args.rs::dispatch_start_passes_capture_path_to_daemon`
 
 ### Step 4 — Document the convention
 

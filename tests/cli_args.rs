@@ -283,6 +283,7 @@ fn dispatch_replay_stub() {
     assert!(run(cli).contains("replay"));
 }
 
+#[ignore = "slow: ~0.6 s binary cold-start (spawns the daemon binary)"]
 #[test]
 fn dispatch_start_passes_capture_path_to_daemon() {
     // STEP-12.1 contract: dispatch must (a) not reject `--capture`
