@@ -142,7 +142,7 @@ Bulk import and free-function helpers:
 
 Inline NP:
 
-- [ ] **13.12-T** Add `np_returns_none_below_300s_active`,
+- [x] **13.12-T** Add `np_returns_none_below_300s_active`,
       `np_force_returns_value_below_min_time`,
       `np_constant_power_equals_power`, `np_known_vector`, and
       `np_with_soft_pads_matches_oracle`. Tests fail (no
@@ -151,7 +151,7 @@ Inline NP:
       state, the `process_add` contribution
       (`(rollSum / rollSize)^4`), and `np(force)` returning
       `(total / count)^(1/4)` once `active() ≥ 300 s`. Tests green.
-- [ ] **13.13-T** Add `np_after_eviction_matches_recompute`. Test
+- [x] **13.13-T** Add `np_after_eviction_matches_recompute`. Test
       fails (eviction does not yet reverse NP contributions).
 - [ ] **13.13-I** Implement `RollingPower::process_shift` to reverse
       one saved `qnpa` contribution per shifted sample (mirrors
