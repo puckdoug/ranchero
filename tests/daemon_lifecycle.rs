@@ -275,6 +275,7 @@ fn start_writes_pid_file_and_status_reports_running() {
     );
 }
 
+#[ignore = "slow: ~5 s daemon teardown — child.wait_with_output blocks until piped stderr closes; root cause TBD (see plan Step 7)"]
 #[test]
 fn stop_clears_pid_file_and_status_reports_shutdown() {
     let mut h = DaemonHarness::new();

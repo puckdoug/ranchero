@@ -30,11 +30,11 @@ plan" section below.
 
 ### Step 2 — Mark Category C tests as slow (~25 s)
 
-- [ ] `tests/logging.rs::default_silences_info_on_stderr`
-- [ ] `tests/logging.rs::verbose_flag_emits_startup_info_to_stderr`
-- [ ] `tests/logging.rs::debug_flag_emits_control_debug_to_stderr`
-- [ ] `tests/logging.rs::rust_log_env_overrides_default_filter`
-- [ ] `tests/daemon_lifecycle.rs::stop_clears_pid_file_and_status_reports_shutdown`
+- [x] `tests/logging.rs::default_silences_info_on_stderr`
+- [x] `tests/logging.rs::verbose_flag_emits_startup_info_to_stderr`
+- [x] `tests/logging.rs::debug_flag_emits_control_debug_to_stderr`
+- [x] `tests/logging.rs::rust_log_env_overrides_default_filter`
+- [x] `tests/daemon_lifecycle.rs::stop_clears_pid_file_and_status_reports_shutdown`
 
 ### Step 3 — Mark daemon-lifecycle outliers as slow (~14 s)
 
