@@ -347,21 +347,28 @@ Setup (no tests):
 
 `AthleteRegistry` and GC:
 
-- [ ] **14.18-T** `tests/athlete_registry.rs::insert_get_remove_round_trip`
+- [x] **14.18-T** `tests/athlete_registry.rs::insert_get_remove_round_trip`
       — `registry.upsert(state, now)` returns a mutable reference;
       a second `upsert` for the same `athlete_id` returns the same
       record (does not allocate a new one). `registry.get(id)` and
-      `registry.len()` work as expected.
+      `registry.len()` work as expected. **Done:** Test created
+      verifying upsert creates new athlete on first call, updates
+      on subsequent calls, get() retrieves athlete, len() works,
+      get_mut() allows mutation. Test currently fails (expected).
 - [ ] **14.18-I** Implement `pub struct AthleteRegistry { athletes:
     HashMap<u32, AthleteData> }` with `upsert`, `get`, `get_mut`,
       `len`, `is_empty`, and `iter`. `upsert` is the entry point
       that creates a new `AthleteData` on first sight and calls
       `record_update` on subsequent calls.
 
-- [ ] **14.19-T** `tests/athlete_registry.rs::gc_evicts_athletes_past_ttl`
+- [x] **14.19-T** `tests/athlete_registry.rs::gc_evicts_athletes_past_ttl`
       — insert two athletes, advance their `internal_accessed` to
       `now - 3601.0` and `now - 3599.0` respectively, call
-      `registry.gc(now)`, assert only the second survives.
+      `registry.gc(now)`, assert only the second survives. **Done:**
+      Test created with two athletes; manually sets internal_accessed
+      timestamps; verifies gc() evicts athlete past TTL (3600s) while
+      preserving younger one; checks gc_report. Test currently fails
+      (expected).
 - [ ] **14.19-I** Implement `pub fn gc(&mut self, now: f64)` that
       iterates `athletes`, drops every entry whose
       `internal_accessed < now - ATHLETE_GC_TTL_SECS`. Constants
@@ -371,12 +378,15 @@ Setup (no tests):
       claim is a test-side knob, not the production default — see
       "Open verification points").
 
-- [ ] **14.20-T** `tests/athlete_registry.rs::gc_evicts_groups_past_ttl`
+- [x] **14.20-T** `tests/athlete_registry.rs::gc_evicts_groups_past_ttl`
       — register two stub group metas with `accessed` at
       `now - 91.0` and `now - 89.0`, call `gc(now)`, assert only
       the second survives. (Group classification is STEP 15; this
       step ships the GC seam plus a `GroupMeta` placeholder so the
-      eviction logic is testable now.)
+      eviction logic is testable now.) **Done:** Test created with
+      two groups; uses touch_group() to set accessed timestamps;
+      verifies gc() evicts group past TTL (90s) while preserving
+      younger one; checks gc_report. Test currently fails (expected).
 - [ ] **14.20-I** Add `pub struct GroupMeta { id: u32, accessed: f64
     }` and `groups: HashMap<u32, GroupMeta>` to `AthleteRegistry`.
       Extend `gc` to drop groups past `GROUP_GC_TTL_SECS`. Group
