@@ -230,32 +230,39 @@ Setup (no tests):
 
 `DataBucket` (the five-signal aggregate):
 
-- [ ] **14.12-T** `tests/data_bucket.rs::default_construction_matches_js_signals`
+- [x] **14.12-T** `tests/data_bucket.rs::default_construction_matches_js_signals`
       — `DataBucket::new(start)` exposes the five signal collectors
       with the periods, `ignore_zeros`, and `round` flags from the
       JS table at `stats.mjs:2697-2714` (see the "Signal table"
       below). All time / kJ accumulators start at zero; `start` is
-      stored verbatim.
+      stored verbatim. **Done:** Test created verifying all 5 collectors
+      with correct periods and options per signal table; accumulators
+      at zero; start stored.
 - [ ] **14.12-I** Implement `DataBucket` with `start: f64`,
       `coffee_time / work_time / follow_time / solo_time: f64`,
       `work_kj / follow_kj / solo_kj: f64`, and the five collectors
       named `power`, `hr`, `speed`, `cadence`, `draft`. Construct
       each with the JS-matching options.
 
-- [ ] **14.13-T** `tests/data_bucket.rs::ingest_routes_to_correct_collector`
+- [x] **14.13-T** `tests/data_bucket.rs::ingest_routes_to_correct_collector`
       — `bucket.ingest_power(t, w)` lands in `bucket.power` only;
       assert `bucket.hr.max_value() == 0.0` after a power-only
-      stream. Mirror for HR / speed / cadence / draft.
+      stream. Mirror for HR / speed / cadence / draft. **Done:** Tests
+      created for all 5 ingest methods; each verifies data routes only
+      to its target collector while others remain empty.
 - [ ] **14.13-I** Implement `pub fn ingest_power(&mut self, t: f64,
     watts: f64)`, and matching methods for hr / speed / cadence /
       draft. Each method delegates to the corresponding collector's
       `add(t, value)`. No proto types; this is the seam the daemon
       (STEP 17) will wire.
 
-- [ ] **14.14-T** `tests/data_bucket.rs::clone_reset_creates_slice_template`
+- [x] **14.14-T** `tests/data_bucket.rs::clone_reset_creates_slice_template`
       and `clone_continue_preserves_session_totals` — pin the two
       clone behaviours used by `_createDataSlice` (reset for a fresh
-      lap / segment) versus session-wide carry-forward.
+      lap / segment) versus session-wide carry-forward. **Done:** Tests
+      created for clone_reset (zeroes accumulators, clears collectors)
+      and clone_continue (preserves state). Both verify independence
+      of cloned bucket via mutation.
 - [ ] **14.14-I** Implement `pub fn clone_reset(&self) -> Self` and
       `pub fn clone_continue(&self) -> Self` on `DataBucket`.
       `clone_reset` zeroes the time / kJ accumulators and calls
