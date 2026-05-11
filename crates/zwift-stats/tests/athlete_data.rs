@@ -57,6 +57,39 @@ fn touch_updates_internal_accessed() {
     assert_eq!(ad.internal_updated, internal_updated, "internal_updated should not change");
 }
 
+#[test]
+fn record_update_advances_updated_and_accessed() {
+    let world_time = 1_700_000_000.0;
+    let now = 100.0;
+    let mut ad = AthleteData::new(123, 6, 0, world_time, now);
+
+    let created = ad.created;
+    let internal_created = ad.internal_created;
+
+    let new_world_time = world_time + 5.0;
+    let new_now = now + 5.0;
+    ad.record_update(new_world_time, new_now);
+
+    assert_eq!(
+        ad.updated, new_world_time,
+        "record_update advances `updated` to the new world_time"
+    );
+    assert_eq!(
+        ad.internal_updated, new_now,
+        "record_update advances `internal_updated` to the new now"
+    );
+    assert_eq!(
+        ad.internal_accessed, new_now,
+        "record_update advances `internal_accessed` to the new now"
+    );
+
+    assert_eq!(ad.created, created, "`created` is unchanged");
+    assert_eq!(
+        ad.internal_created, internal_created,
+        "`internal_created` is unchanged"
+    );
+}
+
 // 14.17: AthleteData ingest routing
 #[test]
 fn ingest_routes_through_bucket() {
@@ -116,4 +149,29 @@ fn ingest_routes_through_bucket() {
         "draft ingest should route to bucket.draft"
     );
     assert_eq!(ad.bucket.power().max_value(), 0.0, "power should be empty");
+}
+
+#[test]
+fn ingest_bumps_internal_accessed() {
+    let now = 100.0;
+    let mut ad = AthleteData::new(123, 6, 0, 1_700_000_000.0, now);
+    let initial_accessed = ad.internal_accessed;
+
+    // Two samples a second apart so the buffer flushes on the second call.
+    let later_now = now + 5.0;
+    ad.ingest_power(now, 1.0, 200.0);
+    ad.ingest_power(later_now, 2.0, 200.0);
+
+    assert!(
+        ad.internal_accessed > initial_accessed,
+        "ingest must bump internal_accessed past its initial value"
+    );
+    assert_eq!(
+        ad.internal_accessed, later_now,
+        "internal_accessed reflects the latest call's `now`"
+    );
+    assert!(
+        ad.bucket.power().max_value() > 0.0,
+        "buffer flushed (sanity check that the test exercised the flush path)"
+    );
 }

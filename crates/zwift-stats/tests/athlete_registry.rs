@@ -89,6 +89,36 @@ fn gc_evicts_athletes_past_ttl() {
     );
 }
 
+#[test]
+fn gc_no_op_when_nothing_expired() {
+    let mut registry = AthleteRegistry::new();
+    let now = 5000.0;
+
+    // Three athletes and two groups, all well within their TTLs.
+    registry.upsert(101, 6, 0, 1_700_000_000.0, now);
+    registry.upsert(102, 6, 0, 1_700_000_000.0, now);
+    registry.upsert(103, 6, 0, 1_700_000_000.0, now);
+    registry.touch_group(201, now);
+    registry.touch_group(202, now);
+
+    let athletes_before = registry.len();
+    let groups_before = registry.groups_len();
+
+    let report = registry.gc(now);
+
+    assert_eq!(report.athletes_dropped, 0, "no athletes evicted");
+    assert_eq!(report.groups_dropped, 0, "no groups evicted");
+    assert_eq!(registry.len(), athletes_before, "athlete count unchanged");
+    assert_eq!(registry.groups_len(), groups_before, "group count unchanged");
+
+    // A second call with the same `now` is also a no-op (idempotency).
+    let report_again = registry.gc(now);
+    assert_eq!(report_again.athletes_dropped, 0);
+    assert_eq!(report_again.groups_dropped, 0);
+    assert_eq!(registry.len(), athletes_before);
+    assert_eq!(registry.groups_len(), groups_before);
+}
+
 // 14.20: AthleteRegistry GC for groups
 #[test]
 fn gc_evicts_groups_past_ttl() {
@@ -123,4 +153,45 @@ fn gc_evicts_groups_past_ttl() {
         gc_report.groups_dropped, 1,
         "gc_report should indicate one group dropped"
     );
+}
+
+#[test]
+fn gc_evicts_athletes_and_groups_in_one_pass() {
+    let mut registry = AthleteRegistry::new();
+    let now = 10_000.0;
+
+    // One athlete past the athlete TTL, one within it.
+    registry.upsert(111, 6, 0, 1_700_000_000.0, now);
+    registry.upsert(222, 6, 0, 1_700_000_000.0, now);
+    if let Some(ad) = registry.get_mut(111) {
+        ad.internal_accessed = now - 3601.0;
+    }
+    if let Some(ad) = registry.get_mut(222) {
+        ad.internal_accessed = now - 100.0;
+    }
+
+    // One group past the group TTL, one within it.
+    registry.touch_group(333, now - 91.0);
+    registry.touch_group(444, now - 10.0);
+
+    assert_eq!(registry.len(), 2);
+    assert_eq!(registry.groups_len(), 2);
+
+    let report = registry.gc(now);
+
+    assert_eq!(
+        report.athletes_dropped, 1,
+        "one athlete evicted in the combined pass"
+    );
+    assert_eq!(
+        report.groups_dropped, 1,
+        "one group evicted in the combined pass"
+    );
+
+    assert_eq!(registry.len(), 1, "only the within-TTL athlete remains");
+    assert_eq!(registry.groups_len(), 1, "only the within-TTL group remains");
+    assert!(registry.get(111).is_none());
+    assert!(registry.get(222).is_some());
+    assert!(registry.group(333).is_none());
+    assert!(registry.group(444).is_some());
 }

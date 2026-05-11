@@ -54,6 +54,23 @@ fn default_construction_matches_js_signals() {
     assert_eq!(bucket.draft().periodized()[3].period, 3600.0);
 }
 
+#[test]
+fn start_and_accumulators_initialise_correctly() {
+    let start = 9876.5;
+    let bucket = DataBucket::new(start);
+
+    assert_eq!(bucket.start(), start, "start stored verbatim");
+
+    assert_eq!(bucket.coffee_time(), 0.0, "coffee_time initialises to zero");
+    assert_eq!(bucket.work_time(), 0.0, "work_time initialises to zero");
+    assert_eq!(bucket.follow_time(), 0.0, "follow_time initialises to zero");
+    assert_eq!(bucket.solo_time(), 0.0, "solo_time initialises to zero");
+
+    assert_eq!(bucket.work_kj(), 0.0, "work_kj initialises to zero");
+    assert_eq!(bucket.follow_kj(), 0.0, "follow_kj initialises to zero");
+    assert_eq!(bucket.solo_kj(), 0.0, "solo_kj initialises to zero");
+}
+
 // 14.13: Ingest routes to correct collector
 #[test]
 fn ingest_routes_to_correct_collector() {

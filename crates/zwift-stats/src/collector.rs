@@ -79,13 +79,29 @@ pub struct PeriodizedEntry<R> {
     pub peak: Option<PeakSnapshot>,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct DataCollectorOptions {
     pub ideal_gap: f64,
     pub max_gap: f64,
     pub active: bool,
     pub ignore_zeros: bool,
     pub round: bool,
+}
+
+// Default values match the `defOptions` constant in
+// `sauce4zwift/src/stats.mjs:99` — `idealGap = 1`, `maxGap = 15`,
+// `active = true`. The rolling primitives in STEP 13 use the same
+// constants when no overrides are supplied.
+impl Default for DataCollectorOptions {
+    fn default() -> Self {
+        DataCollectorOptions {
+            ideal_gap: 1.0,
+            max_gap: 15.0,
+            active: true,
+            ignore_zeros: false,
+            round: false,
+        }
+    }
 }
 
 #[derive(Debug)]

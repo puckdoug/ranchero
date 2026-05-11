@@ -26,6 +26,14 @@ fn empty_periods_yields_primary_only() {
     assert!(collector.periodized().is_empty());
 }
 
+#[test]
+fn default_options_match_js_constants() {
+    let opts = DataCollectorOptions::default();
+    assert_eq!(opts.ideal_gap, 1.0, "ideal_gap default matches stats.mjs:99 defOptions");
+    assert_eq!(opts.max_gap, 15.0, "max_gap default matches stats.mjs:99 defOptions");
+    assert!(opts.active, "active default matches stats.mjs:99 defOptions");
+}
+
 // 14.6: 1 s buffering
 #[test]
 fn add_buffers_until_ideal_gap_boundary() {
@@ -103,6 +111,35 @@ fn tracks_max_value_across_flushes() {
     collector.add(2.0, 200.0);
     collector.add(3.0, 180.0);
     assert_eq!(collector.max_value(), 250.0);
+}
+
+#[test]
+fn max_value_unaffected_by_pad_fills() {
+    let opts = DataCollectorOptions {
+        ideal_gap: 1.0,
+        max_gap: 15.0,
+        ..Default::default()
+    };
+    let mut collector = DataCollector::<RollingAverage>::new(&[], opts);
+    collector.add(0.0, 100.0);
+    collector.add(1.0, 300.0);
+    collector.add(2.0, 250.0);
+    let max_before_gap = collector.max_value();
+    assert_eq!(max_before_gap, 300.0);
+
+    // Skip several seconds: 2.0 -> 10.0 is a gap well over ideal_gap but under
+    // max_gap, so the rolling will insert soft pads carrying the previous
+    // value. The collector's max_value must not move because it is gated on
+    // the post-flush f64 the collector itself pushes.
+    collector.add(10.0, 150.0);
+    collector.add(11.0, 120.0);
+    collector.flush();
+
+    assert_eq!(
+        collector.max_value(),
+        300.0,
+        "max_value reflects pushed values only, not pad fills"
+    );
 }
 
 // 14.8: Periodized peak snapshots

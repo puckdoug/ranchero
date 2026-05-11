@@ -1087,7 +1087,9 @@ were called out in the as-built notes inside the checklist itself.
    (the Normalized Power `>=` comparison, `record_update`, the
    idempotency of `gc`, and a combined athlete-and-group eviction in
    one call to `gc`). Either add the missing tests or remove them
-   from the detail tables.
+   from the detail tables. *(Resolved by R5 on 2026-05-11: all ten
+   tests added; `DataCollectorOptions::default()` now returns the
+   JavaScript-matching constants.)*
 
 6. **`approx::abs_diff_eq!` is not used.** The plan's design
    decisions specify `approx::abs_diff_eq!` with `epsilon = 1e-6` for
@@ -1180,7 +1182,7 @@ plan has been brought into agreement.
       or update the plan to record the accessor-method form. See
       concern #4.
 
-- [ ] **R5** Add the tests that the "Tests-first plan (detail)"
+- [x] **R5** Add the tests that the "Tests-first plan (detail)"
       tables list but the test files do not contain, or remove
       those tests from the detail tables. The tests are:
 
@@ -1197,7 +1199,16 @@ plan has been brought into agreement.
       - 14.18–14.20: `gc_no_op_when_nothing_expired`,
         `gc_evicts_athletes_and_groups_in_one_pass`
 
-      See concern #5.
+      See concern #5. **Done (2026-05-11):** All ten tests added to
+      the corresponding test files. To make
+      `default_options_match_js_constants` pass, `Default` for
+      `DataCollectorOptions` is now implemented manually (rather than
+      derived) to return `ideal_gap = 1.0`, `max_gap = 15.0`,
+      `active = true`, `ignore_zeros = false`, `round = false`, which
+      matches the `defOptions` constant at `stats.mjs:99`. Existing
+      tests that used `..Default::default()` continue to pass under
+      the new defaults. Total test count is now 92 (was 82); no
+      clippy warnings.
 
 - [ ] **R6** Either switch the comparison in `stream_parity.rs` to
       `approx::abs_diff_eq!` with `epsilon = 1e-6`, or update the

@@ -66,3 +66,94 @@ fn np_peak_survives_clone_continue() {
     let np_peaks_reset = reset_clone.np_peaks();
     assert!(np_peaks_reset[0].is_none(), "reset clone has no NP peaks");
 }
+
+#[test]
+fn np_peak_snapshot_records_lasttime() {
+    let periods = [300.0];
+    let opts = DataCollectorOptions {
+        ideal_gap: 1.0,
+        ..Default::default()
+    };
+    let mut collector = PowerDataCollector::new(&periods, opts);
+
+    // Drive 350 samples so the 300 s period becomes full and an NP peak is
+    // recorded. The latest flushed sample's timestamp must match the snapshot.
+    for t in 0..351 {
+        collector.add(t as f64, 250.0);
+    }
+
+    let np_peaks = collector.np_peaks();
+    let np_peak = np_peaks[0].as_ref().expect("NP peak should be present");
+
+    let last_time = collector.periodized()[0]
+        .roll
+        .last_time()
+        .expect("last_time should be available");
+
+    assert!(
+        (np_peak.snap_time - last_time).abs() < 1e-9,
+        "snap_time ({}) matches roll.last_time() ({})",
+        np_peak.snap_time,
+        last_time
+    );
+}
+
+#[test]
+fn np_peak_uses_geq_comparison() {
+    let periods = [300.0];
+    let opts = DataCollectorOptions {
+        ideal_gap: 1.0,
+        ..Default::default()
+    };
+    let mut collector = PowerDataCollector::new(&periods, opts);
+
+    // First batch: produces the initial NP peak.
+    for t in 0..351 {
+        collector.add(t as f64, 250.0);
+    }
+    let first_snap_time = collector.np_peaks()[0]
+        .as_ref()
+        .expect("first NP peak should be present")
+        .snap_time;
+
+    // Second batch: identical power, so NP value is the same. With a strict
+    // `>` comparison the snap_time would not advance; with `>=` it does.
+    for t in 351..401 {
+        collector.add(t as f64, 250.0);
+    }
+    let second_snap_time = collector.np_peaks()[0]
+        .as_ref()
+        .expect("second NP peak should be present")
+        .snap_time;
+
+    assert!(
+        second_snap_time > first_snap_time,
+        "NP peak snap_time advances on equal-value pushes (>= comparison): \
+         first={}, second={}",
+        first_snap_time,
+        second_snap_time
+    );
+}
+
+#[test]
+fn np_peak_cleared_by_clone_reset() {
+    let periods = [300.0, 1200.0];
+    let opts = DataCollectorOptions {
+        ideal_gap: 1.0,
+        ..Default::default()
+    };
+    let mut collector = PowerDataCollector::new(&periods, opts);
+
+    for t in 0..351 {
+        collector.add(t as f64, 250.0);
+    }
+    assert!(
+        collector.np_peaks()[0].is_some(),
+        "original collector has NP peak"
+    );
+
+    let reset_clone = collector.clone_reset();
+    let reset_peaks = reset_clone.np_peaks();
+    assert!(reset_peaks[0].is_none(), "clone_reset clears 300 s NP peak");
+    assert!(reset_peaks[1].is_none(), "clone_reset clears 1200 s NP peak");
+}
