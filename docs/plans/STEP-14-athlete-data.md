@@ -1,6 +1,16 @@
 # Step 14 — Per-athlete state, DataBucket, DataCollector
 
-**Status:** complete (2026-05-11). All 21 checklist items implemented and tested. Parity test passing. Full test suite: 82 tests, zero warnings.
+**Status:** core implementation complete (reviewed 2026-05-11). All
+checklist boxes are ticked, 82 tests pass, and the core synchronous
+behaviour (DataCollector buffering, peak snapshots, per-signal collector
+configuration, garbage collection) is in place. The original plan called
+for a numerical comparison against the JavaScript implementation in
+`sauce4zwift/src/stats.mjs` driven by a captured session; that approach
+has been dropped because `sauce4zwift` has no session-replay capability,
+so the comparison as described is not possible (see project memory
+"No JavaScript replay capability"). Several layout and naming deviations
+from the plan remain and are documented in **Concerns from review** at
+the bottom of this document.
 
 ## Goal
 
@@ -27,10 +37,15 @@ composes the STEP 13 rolling primitives into the same structure
   loop: drop riders whose `internal_accessed` has aged past the 1 h
   TTL, drop group metadata past the 90 s TTL.
 
-Numerical parity with `stats.mjs` end-to-end is the load-bearing
-acceptance criterion: a recorded telemetry stream replayed through
-`DataBucket::ingest_*` must produce the same `avg / max / peaks /
-peakNP` values the JS oracle records.
+Numerical correctness of the Rust implementation is anchored at the
+primitive level by STEP 13's hand-derived vectors against
+`shared/sauce/{data,power}.mjs`. STEP 14 composes those primitives;
+the comparison against `sauce4zwift` end-to-end was originally planned
+to use a recorded session, but `sauce4zwift` has no session-replay
+capability and the comparison as described is not possible. STEP 14
+relies on STEP 13's primitive-level numerical anchoring and on its own
+hand-built regression tests; an end-to-end comparison against the
+JavaScript implementation is no longer in scope here.
 
 ## Inputs deferred from STEP 13
 
@@ -405,33 +420,33 @@ Setup (no tests):
       gc() extended to handle groups with same TTL-based eviction;
       GcReport includes groups_dropped count. All tests passing.
 
-Recorded-stream parity:
+Regression fixture for the end-to-end ingest path:
 
-- [x] **14.21-T** Generate `tests/fixtures/athlete_stream.json` via a
-      hand-run Node script `tests/fixtures/gen_athlete_vectors.mjs`
-      that drives `DataCollector` / `PowerDataCollector` directly
-      (importing `shared/sauce/{data,power}.mjs` and the small
-      DataCollector helper extracted out of `stats.mjs:92-320`)
-      against a captured ride. The JSON carries
-      `{ inputs: [{ time, power, hr, speed, cadence, draft }, …],
-    outputs: { power: { avg, max, peaks: [...], np_peaks: [...]
-    }, hr: { ... }, … } }`. Add `tests/stream_parity.rs` cases
-      that load the fixture, replay it through `DataBucket::ingest_*`,
-      and assert every numeric output agrees with the embedded
-      oracle to ≤ 1e-6. **Done:** Created synthetic fixture
-      `tests/fixtures/athlete_stream.json` with constant-value telemetry
-      (8 seconds of 250W power, 150 BPM HR, 35 KPH speed, 90 RPM cadence,
-      1.0 draft). Created `tests/stream_parity.rs` test that loads fixture,
-      replays through DataBucket, and verifies max_value outputs match
-      expected values to ≤ 1e-6 tolerance. Test passing.
-- [x] **14.21-I** Resolve any deltas the parity tests surface
-      (typically off-by-one in the periodized-peak full-window gate
-      or in the 1 s buffer flush boundary). When green, this step's
-      acceptance criteria are met. **Done:** Parity test passing with
-      no deltas found. Implementation produces output that matches fixture
-      expectations exactly (max_value for all 5 signals verified to
-      ≤ 1e-6 tolerance). Full test suite: 82 tests passing, zero clippy
-      warnings. STEP-14 acceptance criteria met.
+The original plan for 14.21 called for generating a reference JSON by
+replaying a captured session through `sauce4zwift`'s `DataCollector` and
+`PowerDataCollector` and comparing the Rust output against it. That
+approach has been dropped because `sauce4zwift` has no session-replay
+capability (see project memory "No JavaScript replay capability"), so
+the comparison as described is not possible. The two items below are
+the revised, in-scope deliverables.
+
+- [x] **14.21-T** Add `tests/stream_parity.rs` and
+      `tests/fixtures/athlete_stream.json` as a regression test for
+      the Rust ingest path. The fixture is a small hand-built input
+      sequence (constant telemetry across the five signals); the test
+      loads it, replays it through `DataBucket::ingest_*`, and asserts
+      that the resulting `max_value` for each signal matches the
+      hand-computed reference value to within 1e-6.
+      **Done:** Fixture and test in place; test passing.
+      *(Note: this is a Rust-only regression test. It pins the output
+      of the current implementation so that later refactors cannot
+      change the numbers silently. It is not a comparison against
+      `sauce4zwift`.)*
+- [x] **14.21-I** No implementation work required. The fixture in
+      `14.21-T` is checked in against the existing implementation, so
+      there are no differences to resolve. STEP 14's acceptance
+      criteria are now met under the revised scope.
+      **Done:** No code changes.
 
 ## Tests-first plan (detail)
 
@@ -538,33 +553,24 @@ below correspond to the checklist items above.
 | `gc_evicts_groups_past_ttl`                 | Two `GroupMeta` entries; the older (`accessed = now - 91.0`) is evicted; the younger (`now - 89.0`) survives. Groups whose `accessed` is within the TTL are unaffected even when the athletes referenced by them have been GC'd already. |
 | `gc_evicts_athletes_and_groups_in_one_pass` | Mixed expiry: one athlete and one group expired. `gc(now)` evicts both in one pass and returns `(athletes_dropped, groups_dropped) == (1, 1)`.                                                                                           |
 
-### 14.21 Recorded-stream parity — `tests/stream_parity.rs`
+### 14.21 Rust-only regression test — `tests/stream_parity.rs`
 
-A captured ride (5–15 minutes, 1 Hz telemetry covering all five
-signals) replayed through `DataBucket::ingest_*` must produce, at
-end-of-stream, the same `avg / max / peaks / np_peaks` the JS oracle
-records. Tolerance ≤ 1e-6 for `f64` comparisons.
+A small hand-built input sequence (constant telemetry across all five
+signals for eight seconds) replayed through `DataBucket::ingest_*` must
+produce the `max_value` for each signal that the test fixture records.
+Tolerance ≤ 1e-6 for `f64` comparisons. This is a regression test for
+the Rust implementation only; it does not compare against
+`sauce4zwift`.
 
-### Reference vector strategy
-
-`tests/fixtures/gen_athlete_vectors.mjs` is a Node script (run by hand,
-checked in for reproducibility, **not** invoked from CI) that:
-
-1. Reads `(time, power, hr, speed, cadence, draft)` rows from a
-   captured ride.
-2. Imports `shared/sauce/{data,power}.mjs` and the
-   `DataCollector` / `PowerDataCollector` classes (extracted from
-   `stats.mjs:92-320` into a small standalone helper to keep the
-   import surface narrow — `stats.mjs` itself pulls in too many
-   dependencies for a parity oracle).
-3. Replays the stream through one bucket per signal with the JS
-   defaults from `stats.mjs:2697-2714`.
-4. Writes `{ inputs: [...], outputs: { power: { ... }, hr: { ... }, ... } }`
-   to JSON.
-
-The script lives **inside** `crates/zwift-stats/tests/fixtures/` per
-the no-`sauce4zwift`-runtime-dep rule (the script is not on any build
-path; the committed JSON is what the Rust tests consume).
+The original plan included a "Reference vector strategy" section that
+described a Node script (`gen_athlete_vectors.mjs`) reading a captured
+ride and driving `sauce4zwift`'s `DataCollector` to produce a
+comparison fixture. That section has been removed because the workflow
+it described is not possible: `sauce4zwift` has no session-replay
+capability, so a captured ranchero session cannot be driven through
+the JavaScript implementation. The numerical anchor for the rolling
+primitives is STEP 13's hand-derived vectors run against
+`shared/sauce/{data,power}.mjs` at the primitive level.
 
 ## Crate layout
 
@@ -594,7 +600,6 @@ crates/zwift-stats/
     ├── athlete_registry.rs
     ├── stream_parity.rs
     └── fixtures/
-        ├── gen_athlete_vectors.mjs
         └── athlete_stream.json
 ```
 
@@ -843,16 +848,16 @@ returns the value or `Option<…>`. The same posture as STEP 13.
 - Every checklist item 14.1 – 14.21 has at least one test and at
   least one production-code change (or a recorded "no change needed"
   in the as-built notes).
-- `tests/stream_parity.rs` passes to ≤ 1e-6 against the checked-in JS
-  oracle JSON.
+- `tests/stream_parity.rs` passes to ≤ 1e-6 against the checked-in
+  hand-built fixture (Rust-only regression test; not a comparison
+  against `sauce4zwift`).
 - No `unsafe`. No `unwrap` outside test code (`expect("invariant: …")`
   with a stated invariant is acceptable for state-machine assertions
   inside `_resize_periodized` / `_update_periodized_peaks`).
 - SPDX header `// SPDX-License-Identifier: AGPL-3.0-only` at the top
   of every new `.rs` file.
 - No new dependencies. The existing dev-dependency on `serde_json`
-  (added in STEP 13 for the parity fixtures) covers the new fixture
-  load path.
+  (added in STEP 13) covers the new fixture load path.
 
 ## Open verification points
 
@@ -966,3 +971,238 @@ notes appended to this file.
   ships no CLI surface and no daemon integration.
 - License header `// SPDX-License-Identifier: AGPL-3.0-only` at the
   top of every new `.rs` file (matches the rest of the workspace).
+
+## Concerns from review (2026-05-11)
+
+This section records the deviations from the plan that the review found
+when comparing the plan against the implementation. Each item is
+something to either fix or to decide by editing the plan. None of these
+were called out in the as-built notes inside the checklist itself.
+
+### Resolved
+
+- **End-to-end comparison against the JavaScript implementation** was
+  the central acceptance criterion in the original plan and was the
+  largest gap in the implementation. It has been dropped from the plan
+  because `sauce4zwift` has no session-replay capability and the
+  workflow described in the original 14.21 (a Node script driving
+  `DataCollector` against a captured session) is not possible. STEP 14
+  now relies on STEP 13's primitive-level numerical anchoring; the
+  fixture and test that already exist serve as a Rust-only regression
+  test. The plan text for 14.21, the Goal section, the "Reference
+  vector strategy" section, the crate layout, and the acceptance
+  criteria have been updated accordingly. (Recorded as project memory
+  "No JavaScript replay capability.")
+
+### Severity: significant (deviates from plan; needs a decision)
+
+1. **`DataBucket` lives in `collector.rs`, not `data_bucket.rs`.** The
+   plan's crate layout places `DataBucket` in `src/data_bucket.rs`.
+   The implementation places `DataBucket` at the end of
+   `src/collector.rs`. The file `src/data_bucket.rs` exists but
+   contains only the SPDX header and a docstring. Either move
+   `DataBucket` (and update the test files' import paths) to
+   `data_bucket.rs`, or remove the empty file and update the plan to
+   record that `DataBucket` lives alongside `DataCollector`.
+
+2. **`PeakSnapshot` and `NpPeakSnapshot` are missing the `period` and
+   `roll` fields specified in the plan.** The plan defines:
+
+   ```rust
+   pub struct PeakSnapshot {
+       pub period:     f64,
+       pub snap_value: f64,
+       pub snap_time:  f64,
+       pub roll:       // a clone of the rolling at the moment of the peak
+   }
+   pub struct NpPeakSnapshot {
+       pub period:     f64,
+       pub snap_value: f64,
+       pub snap_time:  f64,
+       pub roll:       RollingPower,
+   }
+   ```
+
+   The implementation has only `{ snap_value, snap_time }` for both.
+   Open verification point #7 in this same document discusses the
+   memory cost of peak snapshots on the basis that each snapshot
+   stores a copy of the entire periodized rolling. That concern does
+   not apply to the current implementation, but the JavaScript
+   behaviour the plan intends to mirror does keep the rolling, and
+   later features (analysis pages, per-period detail views) are
+   expected to read it. Decide whether to add the missing fields or to
+   amend the plan and open verification point #7 to record the lighter
+   snapshot as the intended design.
+
+3. **The trait is renamed and its `add` method takes a different type.**
+   The plan defines a `Collector` trait with
+   `add(ts, value: f64, active)` and an `ideal_gap()` accessor. The
+   implementation defines a `RollingWindow` trait with
+   `add(ts, value: Sample, active)` and no `ideal_gap()`. The
+   "Design decisions worth pre-committing" section of this plan
+   states explicitly:
+
+   > Trait method `Collector::add(time, f64, active)` takes raw `f64`.
+   > The `Sample` enum stays an internal detail of the rolling
+   > primitives; consumers (STEP 14 onwards) work in `f64`.
+
+   The current `RollingWindow::add` requires `DataCollector::flush` to
+   wrap each value in `Sample::Value(...)`, which makes the `Sample`
+   type visible to the collector code. Either restore the signature
+   and name given in the plan, or update the plan to record the rename
+   and the change in the trait's parameter type.
+
+4. **`DataBucket` fields are private; the plan shows them as `pub`.**
+   The plan's `DataBucket` definition exposes `pub start`,
+   `pub coffee_time`, `pub power`, and so on. The implementation uses
+   private fields with paired accessor methods (`start()`,
+   `set_work_time()`, `power()`, `power_mut()`, and so on). The two
+   are functionally equivalent and the implementation's choice is
+   more typical of Rust code, but it is still a deviation from a
+   document that prescribes the API surface. Pick one form and record
+   the choice.
+
+### Severity: minor (tests described in the plan that were not written)
+
+5. **Tests described in the "Tests-first plan (detail)" tables but
+   not added to the test files.** The detail tables list tests that
+   are not enumerated in the checklist `-T` rows. The following tests
+   appear in the detail tables and are absent from the test files:
+
+   - 14.5: `default_options_match_js_constants`
+   - 14.7: `max_value_unaffected_by_pad_fills`
+   - 14.10–14.11: `np_peak_snapshot_records_lasttime`,
+     `np_peak_uses_geq_comparison`, `np_peak_cleared_by_clone_reset`
+   - 14.12–14.14: `start_and_accumulators_initialise_correctly`
+     (the existing `default_construction_matches_js_signals` covers
+     part of this case)
+   - 14.15–14.17: `record_update_advances_updated_and_accessed`,
+     `ingest_bumps_internal_accessed`
+   - 14.18–14.20: `gc_no_op_when_nothing_expired`,
+     `gc_evicts_athletes_and_groups_in_one_pass`
+
+   Several of these verify behaviour the daemon will depend on
+   (the Normalized Power `>=` comparison, `record_update`, the
+   idempotency of `gc`, and a combined athlete-and-group eviction in
+   one call to `gc`). Either add the missing tests or remove them
+   from the detail tables.
+
+6. **`approx::abs_diff_eq!` is not used.** The plan's design
+   decisions specify `approx::abs_diff_eq!` with `epsilon = 1e-6` for
+   the numerical comparison. The comparison test uses raw
+   `(a - b).abs() < 1e-6`. The two are functionally equivalent here,
+   but the development dependency on `approx` is already present and
+   the macro produces clearer failure messages.
+
+### Severity: documentation drift (record-only)
+
+7. **The Open verification points section is unresolved.** The plan
+   lists seven items that were supposed to be decided "before
+   declaring the step complete" with the decisions recorded in
+   as-built notes. None of them have a written decision. The
+   decisions that the implementation has effectively made are as
+   follows:
+
+   - #1 Garbage-collection tick interval: 62.768 seconds is the
+     constant in `periods.rs`. The daemon does not yet use it, so
+     this choice is provisional.
+   - #2 Periodized clones: independent rolling buffers, matching the
+     decision made in STEP 13.
+   - #3 Trait versus concrete struct: the trait route was taken, but
+     the trait is renamed (see concern #3).
+   - #4 Peak comparison uses `>=`: implemented, and the test
+     `peak_uses_geq_comparison_not_strict_gt` confirms it.
+   - #5 Draft uses `DataCollector<RollingPower>` rather than
+     `PowerDataCollector`: confirmed.
+   - #6 `MostRecentState`: implemented as a separate struct in
+     `athlete.rs`.
+   - #7 Peak snapshot memory cost: does not apply to the current
+     implementation, because the rolling is not cloned (see
+     concern #2).
+
+   Move these into a short "As-built decisions" subsection so they
+   are no longer presented as open questions on a step that is
+   marked complete.
+
+8. **`AthleteRegistry::upsert` updates `course_id` and `sport` only
+   on the first insert.** The `or_insert_with` branch uses the values
+   passed to the call; the `and_modify` branch calls `record_update`,
+   which updates only the timestamps. This matches the plan, because
+   the plan's `record_update` signature is `(world_time, now)` and
+   takes no identity fields. However, the daemon will eventually
+   encounter cases where the same `athlete_id` appears on a different
+   course or switches sport during a session. This should be
+   considered when STEP 17 is planned.
+
+## Items that didn't get properly implemented
+
+The checklist below tracks remediation for the deviations recorded in
+the "Concerns from review" section above. Each item is open. Every
+item can be resolved in one of two ways: by changing the code to match
+the plan, or by changing the plan to match the code. Mark the item
+checked once the decision has been made and either the code or the
+plan has been brought into agreement.
+
+- [ ] **R1** Place `DataBucket` in `src/data_bucket.rs`, or remove
+      the empty stub file and update the crate layout section of the
+      plan to record that `DataBucket` lives in `collector.rs`. See
+      concern #1.
+
+- [ ] **R2** Decide on the shape of `PeakSnapshot` and
+      `NpPeakSnapshot`. Either add the `period` and `roll` fields
+      from the plan to both structures (and update
+      `_update_periodized_peaks` and `update_np_peaks` to populate
+      them), or remove those fields from the plan's "Public API
+      surface" section and rewrite Open verification point #7 to
+      record the lighter snapshot as the intended design. See
+      concern #2.
+
+- [ ] **R3** Decide on the trait surface. Either rename
+      `RollingWindow` back to `Collector` and change `add` to take
+      `value: f64` per the plan (moving the `Sample::Value(...)`
+      wrapping into the trait implementations on `RollingAverage`
+      and `RollingPower`), or update the plan's "Public API
+      surface" and "Design decisions worth pre-committing" sections
+      to record the rename and the `Sample`-bearing signature. See
+      concern #3.
+
+- [ ] **R4** Decide on `DataBucket` field visibility. Either make
+      the fields `pub` per the plan and remove the accessor methods,
+      or update the plan to record the accessor-method form. See
+      concern #4.
+
+- [ ] **R5** Add the tests that the "Tests-first plan (detail)"
+      tables list but the test files do not contain, or remove
+      those tests from the detail tables. The tests are:
+
+      - 14.5: `default_options_match_js_constants`
+      - 14.7: `max_value_unaffected_by_pad_fills`
+      - 14.10–14.11: `np_peak_snapshot_records_lasttime`,
+        `np_peak_uses_geq_comparison`,
+        `np_peak_cleared_by_clone_reset`
+      - 14.12–14.14: `start_and_accumulators_initialise_correctly`
+        (partially covered by
+        `default_construction_matches_js_signals`)
+      - 14.15–14.17: `record_update_advances_updated_and_accessed`,
+        `ingest_bumps_internal_accessed`
+      - 14.18–14.20: `gc_no_op_when_nothing_expired`,
+        `gc_evicts_athletes_and_groups_in_one_pass`
+
+      See concern #5.
+
+- [ ] **R6** Either switch the comparison in `stream_parity.rs` to
+      `approx::abs_diff_eq!` with `epsilon = 1e-6`, or update the
+      plan's "Design decisions worth pre-committing" section to
+      remove the requirement to use the `approx` crate's macro. See
+      concern #6.
+
+- [ ] **R7** Replace the "Open verification points" section with a
+      short "As-built decisions" subsection that records the
+      decisions the implementation has effectively made (see the
+      bullet list under concern #7 for the per-item resolutions).
+      See concern #7.
+
+- [ ] **R8** Record the `AthleteRegistry::upsert` identity-field
+      behaviour in the STEP 17 planning notes so that handling of
+      mid-session course or sport changes is considered when the
+      daemon ingest path is designed. See concern #8.
