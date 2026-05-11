@@ -1,0 +1,68 @@
+{
+  "inputs": [
+    {"time": 1.0, "power": 250.0, "hr": 150.0, "speed": 35.0, "cadence": 90.0, "draft": 1.0},
+    {"time": 2.0, "power": 250.0, "hr": 150.0, "speed": 35.0, "cadence": 90.0, "draft": 1.0},
+    {"time": 3.0, "power": 250.0, "hr": 150.0, "speed": 35.0, "cadence": 90.0, "draft": 1.0},
+    {"time": 4.0, "power": 250.0, "hr": 150.0, "speed": 35.0, "cadence": 90.0, "draft": 1.0},
+    {"time": 5.0, "power": 250.0, "hr": 150.0, "speed": 35.0, "cadence": 90.0, "draft": 1.0},
+    {"time": 6.0, "power": 250.0, "hr": 150.0, "speed": 35.0, "cadence": 90.0, "draft": 1.0},
+    {"time": 7.0, "power": 250.0, "hr": 150.0, "speed": 35.0, "cadence": 90.0, "draft": 1.0},
+    {"time": 8.0, "power": 250.0, "hr": 150.0, "speed": 35.0, "cadence": 90.0, "draft": 1.0}
+  ],
+  "outputs": {
+    "power": {
+      "avg": 250.0,
+      "max": 250.0,
+      "peaks": [
+        {"period": 5.0, "value": 250.0, "time": 5.0},
+        {"period": 15.0, "value": 250.0, "time": 8.0},
+        {"period": 60.0, "value": null, "time": null},
+        {"period": 300.0, "value": null, "time": null},
+        {"period": 1200.0, "value": null, "time": null},
+        {"period": 3600.0, "value": null, "time": null}
+      ],
+      "np_peaks": [
+        {"period": 5.0, "value": null},
+        {"period": 15.0, "value": null},
+        {"period": 60.0, "value": null},
+        {"period": 300.0, "value": null},
+        {"period": 1200.0, "value": null},
+        {"period": 3600.0, "value": null}
+      ]
+    },
+    "hr": {
+      "avg": 150.0,
+      "max": 150.0,
+      "peaks": [
+        {"period": 60.0, "value": null, "time": null},
+        {"period": 300.0, "value": null, "time": null},
+        {"period": 1200.0, "value": null, "time": null},
+        {"period": 3600.0, "value": null, "time": null}
+      ]
+    },
+    "speed": {
+      "avg": 35.0,
+      "max": 35.0,
+      "peaks": [
+        {"period": 60.0, "value": null, "time": null},
+        {"period": 300.0, "value": null, "time": null},
+        {"period": 1200.0, "value": null, "time": null},
+        {"period": 3600.0, "value": null, "time": null}
+      ]
+    },
+    "cadence": {
+      "avg": 90.0,
+      "max": 90.0
+    },
+    "draft": {
+      "avg": 1.0,
+      "max": 1.0,
+      "peaks": [
+        {"period": 60.0, "value": null, "time": null},
+        {"period": 300.0, "value": null, "time": null},
+        {"period": 1200.0, "value": null, "time": null},
+        {"period": 3600.0, "value": null, "time": null}
+      ]
+    }
+  }
+}
