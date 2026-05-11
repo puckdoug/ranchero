@@ -135,9 +135,11 @@ fn ingest_draft_routes_only_to_draft() {
 fn clone_reset_creates_slice_template() {
     let mut bucket = DataBucket::new(0.0);
 
-    // Add data to all collectors
+    // Add data to all collectors (need multiple samples to trigger flush with ideal_gap=1.0)
     bucket.ingest_power(1.0, 250.0);
+    bucket.ingest_power(2.0, 250.0);
     bucket.ingest_hr(1.0, 150.0);
+    bucket.ingest_hr(2.0, 150.0);
 
     // Set time accumulators
     bucket.set_work_time(100.0);

@@ -214,10 +214,14 @@ Setup (no tests):
       value. **Done:** Test created with 3602 samples to ensure all
       periods reach fullness. NP peaks correctly absent for periods
       < 300s and present for periods >= 300s. Test passing.
-- [ ] **14.10-I** Implement `PowerDataCollector` as
+- [x] **14.10-I** Implement `PowerDataCollector` as
       `DataCollector<RollingPower>` plus parallel NP peak tracking
       per period >= 300s. Override `update_np_peaks` to call
       `roll.np(false)` and snapshot when period >= 300s and full.
+      **Done:** PowerDataCollector wraps DataCollector<RollingPower>
+      with np_periodized tracking. update_np_peaks filters for
+      period >= 300.0 && full(0) && np value exists. Accessor methods
+      periodized() and max_value() added. All tests passing.
 
 - [x] **14.11-T** `tests/power_collector.rs::np_peak_survives_clone_continue`
       — drive a stream that produces real NP peaks, call
@@ -225,8 +229,11 @@ Setup (no tests):
       `np_peaks()`. After `clone_reset()`, NP peaks are `None`.
       **Done:** Test verifies both clone methods preserve and clear
       NP peaks appropriately. Test passing.
-- [ ] **14.11-I** Extend clone methods on `PowerDataCollector` to
+- [x] **14.11-I** Extend clone methods on `PowerDataCollector` to
       copy / clear `peak_np` in np_periodized entries per clone mode.
+      **Done:** clone_reset() zeros peak entries; clone_continue()
+      preserves them. Implementation mirrors pattern from DataCollector.
+      All tests passing.
 
 `DataBucket` (the five-signal aggregate):
 
@@ -238,11 +245,17 @@ Setup (no tests):
       stored verbatim. **Done:** Test created verifying all 5 collectors
       with correct periods and options per signal table; accumulators
       at zero; start stored.
-- [ ] **14.12-I** Implement `DataBucket` with `start: f64`,
+- [x] **14.12-I** Implement `DataBucket` with `start: f64`,
       `coffee_time / work_time / follow_time / solo_time: f64`,
       `work_kj / follow_kj / solo_kj: f64`, and the five collectors
       named `power`, `hr`, `speed`, `cadence`, `draft`. Construct
       each with the JS-matching options.
+      **Done:** DataBucket struct implemented with all fields per spec.
+      Constructor creates collectors with correct period arrays and
+      options (power: PowerDataCollector with ignore_zeros=false;
+      hr/speed/cadence/draft: DataCollector<RollingAverage> or
+      RollingPower with ignore_zeros/round flags per signal table).
+      All tests passing.
 
 - [x] **14.13-T** `tests/data_bucket.rs::ingest_routes_to_correct_collector`
       — `bucket.ingest_power(t, w)` lands in `bucket.power` only;
@@ -250,11 +263,14 @@ Setup (no tests):
       stream. Mirror for HR / speed / cadence / draft. **Done:** Tests
       created for all 5 ingest methods; each verifies data routes only
       to its target collector while others remain empty.
-- [ ] **14.13-I** Implement `pub fn ingest_power(&mut self, t: f64,
+- [x] **14.13-I** Implement `pub fn ingest_power(&mut self, t: f64,
     watts: f64)`, and matching methods for hr / speed / cadence /
       draft. Each method delegates to the corresponding collector's
       `add(t, value)`. No proto types; this is the seam the daemon
       (STEP 17) will wire.
+      **Done:** All 5 ingest_* methods implemented as delegating to
+      their respective collectors. Tested routing and independence.
+      All tests passing.
 
 - [x] **14.14-T** `tests/data_bucket.rs::clone_reset_creates_slice_template`
       and `clone_continue_preserves_session_totals` — pin the two
@@ -262,13 +278,18 @@ Setup (no tests):
       lap / segment) versus session-wide carry-forward. **Done:** Tests
       created for clone_reset (zeroes accumulators, clears collectors)
       and clone_continue (preserves state). Both verify independence
-      of cloned bucket via mutation.
-- [ ] **14.14-I** Implement `pub fn clone_reset(&self) -> Self` and
+      of cloned bucket via mutation. (Test updated to add second sample
+      to trigger buffer flush; all tests passing.)
+- [x] **14.14-I** Implement `pub fn clone_reset(&self) -> Self` and
       `pub fn clone_continue(&self) -> Self` on `DataBucket`.
       `clone_reset` zeroes the time / kJ accumulators and calls
       `clone_reset` on every collector; `clone_continue` carries
       everything forward. (Slice machinery itself is STEP 15; the
       methods exist now so that step has the seam.)
+      **Done:** Both clone methods implemented. clone_reset() zeroes
+      all time/kJ fields and calls clone_reset on all collectors;
+      clone_continue() preserves all fields by copying/cloning.
+      All tests passing.
 
 `AthleteData` (identity + bucket + GC timestamps):
 
