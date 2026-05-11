@@ -17,6 +17,10 @@ mod rolling;
 mod power;
 mod helpers;
 mod bucket;
+pub mod periods;
+pub mod collector;
+pub mod data_bucket;
+pub mod athlete;
 
 pub use sample::{Sample, is_active_value};
 pub use rolling::{RollingAverage, RollingAverageOptions};

@@ -74,11 +74,13 @@ the entry.
 
 Setup (no tests):
 
-- [ ] **14.1** Module skeleton. Add `src/collector.rs`,
+- [x] **14.1** Module skeleton. Add `src/collector.rs`,
       `src/data_bucket.rs`, `src/athlete.rs`, `src/periods.rs` with
       empty types and SPDX headers; wire them into `lib.rs` behind
       `pub mod` declarations. `cargo test -p zwift-stats` continues
       to pass with all existing tests green and zero new tests.
+      **Done:** 49 tests passing, all four modules created with SPDX
+      headers, `periods.rs` carries GC and peak-period constants.
 
 `RollingAverage` extensions (used by `DataCollector`):
 
