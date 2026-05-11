@@ -174,6 +174,22 @@ impl RollingAverage {
         }
     }
 
+    pub fn full(&self, offt: usize) -> bool {
+        if self.period.is_none() {
+            return false;
+        }
+        let period = self.period.unwrap();
+        if self.length - self.offt <= offt {
+            return false;
+        }
+        let elapsed = self.times[self.length - 1] - self.times[self.offt + offt];
+        elapsed >= period
+    }
+
+    pub fn last_time(&self) -> Option<f64> {
+        self.time_at(-1)
+    }
+
     pub fn active(&self) -> f64 {
         self.active_acc
     }
@@ -280,5 +296,14 @@ impl RollingAverage {
         }
 
         (peak_avg, peak_start..peak_end)
+    }
+
+    pub fn reset(&mut self) {
+        self.times.clear();
+        self.values.clear();
+        self.offt = 0;
+        self.length = 0;
+        self.active_acc = 0.0;
+        self.values_acc = 0.0;
     }
 }

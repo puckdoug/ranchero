@@ -156,6 +156,24 @@ impl RollingPower {
     pub fn values(&self) -> &[crate::Sample] {
         self.rolling.values()
     }
+
+    pub fn full(&self, offt: usize) -> bool {
+        self.rolling.full(offt)
+    }
+
+    pub fn last_time(&self) -> Option<f64> {
+        self.rolling.last_time()
+    }
+
+    pub fn reset(&mut self) {
+        self.rolling.reset();
+        self.qnpa_total = 0.0;
+        self.qnpa_count = 0;
+        self.qnpa_values.clear();
+        self.xpa_total = 0.0;
+        self.xpa_count = 0;
+        self.xpa_values.clear();
+    }
 }
 
 pub fn calc_tss(np: f64, seconds: f64, ftp: f64) -> Option<f64> {

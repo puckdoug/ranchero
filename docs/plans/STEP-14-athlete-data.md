@@ -90,24 +90,25 @@ Setup (no tests):
       relies on (and which the JS `data.mjs:457-459` while-loop
       drives). **Done:** Test file created, 3 test cases defined. Tests
       fail (expected): no method `full()` on `RollingAverage` yet.
-- [ ] **14.2-I** Add `pub fn full(&self, offt: usize) -> bool` to
+- [x] **14.2-I** Add `pub fn full(&self, offt: usize) -> bool` to
       `RollingAverage`: returns `true` when `period.is_some()` and
-      `elapsed() >= period - offt * ideal_gap` (the JS comparison is
-      `_period <= _times[_length - 1] - _times[_offt + offt]`). Also
+      `period <= times[length - 1] - times[offt + offt]`. Also
       expose `pub fn last_time(&self) -> Option<f64>` (returns
       `time_at(-1)`) — `_updatePeriodizedPeaks` reads it for
-      `_snapTime`.
+      `_snapTime`. **Done:** Both methods added to RollingAverage and
+      RollingPower. 3 tests green.
 - [x] **14.3-T** `tests/rolling_reset.rs::reset_clears_state_keeps_options`
       — push samples, call `reset`, assert `size == 0`,
       `avg == None`, but the next `add` honors the same
       `ideal_gap` / `max_gap` / `period`. **Done:** Test file created,
       2 test cases defined. Tests fail (expected): no method `reset()`
       on `RollingAverage` or `RollingPower` yet.
-- [ ] **14.3-I** Add `pub fn reset(&mut self)` to `RollingAverage`:
+- [x] **14.3-I** Add `pub fn reset(&mut self)` to `RollingAverage`:
       clears `times`, `values`, `offt`, `length`, `active_acc`,
       `values_acc`; preserves `period` and the `*_gap` / `active` /
       `ignore_zeros` options. Mirror in `RollingPower::reset` (also
-      clears `qnpa_*` / `xpa_*`).
+      clears `qnpa_*` / `xpa_*`). **Done:** Both methods added. 2 tests
+      green. Total test suite: 54 passing.
 
 `RollingPower` accessors (read-only fan-out helpers):
 

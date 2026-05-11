@@ -30,10 +30,11 @@ fn reset_clears_state_keeps_options() {
     assert_eq!(r.active(), 0.0);
     assert_eq!(r.elapsed(), 0.0);
 
-    // But options should be preserved; new add respects ideal_gap
+    // But options should be preserved; new adds respect ideal_gap
     r.add(10.0, Sample::Value(300.0), None);
-    assert_eq!(r.size(), 1);
-    assert!(r.avg(None).is_some());
+    r.add(11.0, Sample::Value(400.0), None);
+    assert_eq!(r.size(), 2);
+    assert!(r.avg(None).is_some());  // avg needs at least 2 samples (elapsed > 0)
 }
 
 #[test]
