@@ -206,27 +206,27 @@ Setup (no tests):
 
 `PowerDataCollector` (NP peak overlay):
 
-- [ ] **14.10-T** `tests/power_collector.rs::np_peak_only_for_periods_at_or_above_300`
-      — periods `[5, 15, 60, 300, 1200, 3600]`. Drive a 600 s
-      constant-power stream; assert
-      `np_peaks()[0..3].iter().all(|p| p.is_none())` (the 5 / 15 /
-      60 s entries do not record an NP peak) and `np_peaks()[3..]`
-      all carry `Some(_)` matching the inline-NP value.
+- [x] **14.10-T** `tests/power_collector.rs::np_peak_only_for_periods_at_or_above_300`
+      — periods `[5, 15, 60, 300, 1200, 3600]`. Drive a constant-power
+      stream; assert `np_peaks()[0..3].iter().all(|p| p.is_none())`
+      (the 5 / 15 / 60 s entries do not record an NP peak) and
+      `np_peaks()[3..]` all carry `Some(_)` matching the inline-NP
+      value. **Done:** Test created with 3602 samples to ensure all
+      periods reach fullness. NP peaks correctly absent for periods
+      < 300s and present for periods >= 300s. Test passing.
 - [ ] **14.10-I** Implement `PowerDataCollector` as
-      `DataCollector<RollingPower>` plus a `_np_periodized_offt:
-    usize` and a `peak_np: Option<NpPeakSnapshot>` per periodized
-      entry. Override `_update_periodized_peaks` to also call
-      `roll.np(false)` and snapshot when the period is at or above
-      `MIN_WEIGHTED_POWER_PERIOD` (300 s). The override is achieved
-      via a method on the collector trait (not generic-over-power);
-      see "Design decisions".
+      `DataCollector<RollingPower>` plus parallel NP peak tracking
+      per period >= 300s. Override `update_np_peaks` to call
+      `roll.np(false)` and snapshot when period >= 300s and full.
 
-- [ ] **14.11-T** `tests/power_collector.rs::np_peak_survives_clone_continue`
-      — drive a stream that produces a real NP peak, call
-      `clone_continue()`, assert the cloned collector reports the
-      same `np_peaks()`. After `clone_reset()`, NP peaks are `None`.
-- [ ] **14.11-I** Extend the clone methods on `PowerDataCollector` to
-      copy / clear `peak_np` per the JS at `stats.mjs:255-263`.
+- [x] **14.11-T** `tests/power_collector.rs::np_peak_survives_clone_continue`
+      — drive a stream that produces real NP peaks, call
+      `clone_continue()`, assert cloned collector reports same
+      `np_peaks()`. After `clone_reset()`, NP peaks are `None`.
+      **Done:** Test verifies both clone methods preserve and clear
+      NP peaks appropriately. Test passing.
+- [ ] **14.11-I** Extend clone methods on `PowerDataCollector` to
+      copy / clear `peak_np` in np_periodized entries per clone mode.
 
 `DataBucket` (the five-signal aggregate):
 

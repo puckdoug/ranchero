@@ -66,6 +66,12 @@ pub struct PeakSnapshot {
     pub snap_time: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct NpPeakSnapshot {
+    pub snap_value: f64,
+    pub snap_time: f64,
+}
+
 pub struct PeriodizedEntry<R> {
     pub period: f64,
     pub roll: R,
@@ -235,5 +241,100 @@ impl<R: RollingWindow> DataCollector<R> {
 
     pub fn periodized(&self) -> &[PeriodizedEntry<R>] {
         &self.periodized
+    }
+}
+
+pub struct NpPeriodizedEntry {
+    pub period: f64,
+    pub peak: Option<NpPeakSnapshot>,
+}
+
+pub struct PowerDataCollector {
+    inner: DataCollector<crate::RollingPower>,
+    np_periodized: Vec<NpPeriodizedEntry>,
+}
+
+impl PowerDataCollector {
+    pub fn new(periods: &[f64], opts: DataCollectorOptions) -> Self {
+        let inner = DataCollector::new(periods, opts);
+        let np_periodized = periods
+            .iter()
+            .map(|&period| NpPeriodizedEntry {
+                period,
+                peak: None,
+            })
+            .collect();
+
+        PowerDataCollector {
+            inner,
+            np_periodized,
+        }
+    }
+
+    pub fn add(&mut self, ts: f64, value: f64) -> usize {
+        let flushed = self.inner.add(ts, value);
+        if flushed > 0 {
+            self.update_np_peaks();
+        }
+        flushed
+    }
+
+    fn update_np_peaks(&mut self) {
+        let inner_periodized = self.inner.periodized();
+        for (i, entry) in inner_periodized.iter().enumerate() {
+            if entry.period >= 300.0 && entry.roll.full(0)
+                && let Some(np) = entry.roll.np(false)
+            {
+                let should_update = match &self.np_periodized[i].peak {
+                    None => true,
+                    Some(peak) => np >= peak.snap_value,
+                };
+
+                if should_update && let Some(snap_time) = entry.roll.last_time() {
+                    self.np_periodized[i].peak = Some(NpPeakSnapshot {
+                        snap_value: np,
+                        snap_time,
+                    });
+                }
+            }
+        }
+    }
+
+    pub fn np_peaks(&self) -> Vec<Option<NpPeakSnapshot>> {
+        self.np_periodized.iter().map(|e| e.peak.clone()).collect()
+    }
+
+    pub fn clone_reset(&self) -> Self {
+        let inner = self.inner.clone_reset();
+        let np_periodized = self
+            .np_periodized
+            .iter()
+            .map(|e| NpPeriodizedEntry {
+                period: e.period,
+                peak: None,
+            })
+            .collect();
+
+        PowerDataCollector {
+            inner,
+            np_periodized,
+        }
+    }
+
+    pub fn clone_continue(&self) -> Self {
+        let inner = self.inner.clone_continue();
+        let np_periodized = self
+            .np_periodized
+            .iter()
+            .map(|e| NpPeriodizedEntry {
+                period: e.period,
+                peak: e.peak.clone(),
+            })
+            .collect();
+
+        PowerDataCollector {
+            inner,
+            np_periodized,
+        }
     }
 }
