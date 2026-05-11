@@ -23,7 +23,8 @@ fn power_exposes_avg_active_elapsed_lasttime() {
 
     let avg = rp.avg(None);
     assert!(avg.is_some(), "avg returns Some");
-    assert!((avg.unwrap() - 150.0).abs() < 1e-9, "avg value correct");
+    // avg = (200*1 + 150*1) / 2.0 = 175.0
+    assert!((avg.unwrap() - 175.0).abs() < 1e-9, "avg value correct (weighted by gaps)");
 
     let last = rp.last_time();
     assert_eq!(last, Some(2.0), "last_time returns correct timestamp");

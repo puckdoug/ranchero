@@ -157,12 +157,40 @@ impl RollingPower {
         self.rolling.values()
     }
 
+    pub fn avg(&self, active: Option<bool>) -> Option<f64> {
+        self.rolling.avg(active)
+    }
+
+    pub fn active(&self) -> f64 {
+        self.rolling.active()
+    }
+
+    pub fn elapsed(&self) -> f64 {
+        self.rolling.elapsed()
+    }
+
     pub fn full(&self, offt: usize) -> bool {
         self.rolling.full(offt)
     }
 
     pub fn last_time(&self) -> Option<f64> {
         self.rolling.last_time()
+    }
+
+    pub fn time_at(&self, index: i32) -> Option<f64> {
+        self.rolling.time_at(index)
+    }
+
+    pub fn value_at(&self, index: i32) -> Option<crate::Sample> {
+        self.rolling.value_at(index)
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = (f64, crate::Sample)> + '_ {
+        self.rolling.entries()
+    }
+
+    pub fn rolling(&self) -> &RollingAverage {
+        &self.rolling
     }
 
     pub fn reset(&mut self) {

@@ -118,11 +118,12 @@ Setup (no tests):
       `RollingAverage` after a hand-driven sequence. **Done:** Test
       file created, 2 test cases defined. Tests fail (expected): no
       forwarder methods on `RollingPower` yet.
-- [ ] **14.4-I** Forward `avg`, `active`, `elapsed`, `last_time`,
+- [x] **14.4-I** Forward `avg`, `active`, `elapsed`, `last_time`,
       `full`, `time_at`, `value_at`, `reset`, `entries` from
       `RollingPower` to its inner `RollingAverage`. Also add
       `pub fn rolling(&self) -> &RollingAverage` for tests that need
-      direct access.
+      direct access. **Done:** All 9 forwarders added to RollingPower.
+      2 tests green. Total suite: 56 passing.
 
 `DataCollector` core (no NP yet):
 
