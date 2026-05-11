@@ -198,7 +198,7 @@ pub fn dispatch(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                         debug: cli.global.debug,
                     };
                     let capture = cli.global.capture.as_ref()
-                        .map(|p| std::path::absolute(p))
+                        .map(std::path::absolute)
                         .transpose()?;
                     Ok(daemon::start(
                         &resolved,
@@ -424,115 +424,115 @@ pub fn print_follow_to<W: std::io::Write>(
                     record.payload.len(),
                 )?;
 
-                if matches!(record.transport, TransportKind::Tcp | TransportKind::Udp) {
-                    if let Some(ref mf) = manifest {
-                        // Outbound TCP capture payload is frame_tcp() output and includes a
-                        // 2-byte BE length prefix. All other direction+transport combinations
-                        // store the frame body directly.
-                        let frame_body: &[u8] = if record.direction == Direction::Outbound
-                            && record.transport == TransportKind::Tcp
-                        {
-                            if record.payload.len() < 2 {
-                                writeln!(out, "  (frame error: outbound TCP payload too short)")?;
-                                idx += 1;
-                                continue;
-                            }
-                            &record.payload[2..]
-                        } else {
-                            record.payload.as_slice()
-                        };
+                if matches!(record.transport, TransportKind::Tcp | TransportKind::Udp)
+                    && let Some(ref mf) = manifest
+                {
+                    // Outbound TCP capture payload is frame_tcp() output and includes a
+                    // 2-byte BE length prefix. All other direction+transport combinations
+                    // store the frame body directly.
+                    let frame_body: &[u8] = if record.direction == Direction::Outbound
+                        && record.transport == TransportKind::Tcp
+                    {
+                        if record.payload.len() < 2 {
+                            writeln!(out, "  (frame error: outbound TCP payload too short)")?;
+                            idx += 1;
+                            continue;
+                        }
+                        &record.payload[2..]
+                    } else {
+                        record.payload.as_slice()
+                    };
 
-                        let parsed = match decode_header(frame_body) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                writeln!(out, "  (header error: {e})")?;
-                                idx += 1;
-                                continue;
-                            }
-                        };
+                    let parsed = match decode_header(frame_body) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            writeln!(out, "  (header error: {e})")?;
+                            idx += 1;
+                            continue;
+                        }
+                    };
 
-                        // If the frame header carries an explicit seqno, it overrides the
-                        // running counter (mirrors the seqno-override logic in tcp.rs and
-                        // udp.rs recv loops).
-                        let current_seqno = match (record.direction, record.transport) {
-                            (Direction::Outbound, TransportKind::Tcp) => seqno_out_tcp,
-                            (Direction::Inbound,  TransportKind::Tcp) => seqno_in_tcp,
-                            (Direction::Outbound, TransportKind::Udp) => seqno_out_udp,
-                            (Direction::Inbound,  TransportKind::Udp) => seqno_in_udp,
-                            _ => unreachable!(),
-                        };
-                        let effective_seqno = parsed.header.seqno.unwrap_or(current_seqno);
+                    // If the frame header carries an explicit seqno, it overrides the
+                    // running counter (mirrors the seqno-override logic in tcp.rs and
+                    // udp.rs recv loops).
+                    let current_seqno = match (record.direction, record.transport) {
+                        (Direction::Outbound, TransportKind::Tcp) => seqno_out_tcp,
+                        (Direction::Inbound,  TransportKind::Tcp) => seqno_in_tcp,
+                        (Direction::Outbound, TransportKind::Udp) => seqno_out_udp,
+                        (Direction::Inbound,  TransportKind::Udp) => seqno_in_udp,
+                        _ => unreachable!(),
+                    };
+                    let effective_seqno = parsed.header.seqno.unwrap_or(current_seqno);
 
-                        let channel = match (record.direction, record.transport) {
-                            (Direction::Outbound, TransportKind::Tcp) => ChannelType::TcpClient,
-                            (Direction::Inbound,  TransportKind::Tcp) => ChannelType::TcpServer,
-                            (Direction::Outbound, TransportKind::Udp) => ChannelType::UdpClient,
-                            (Direction::Inbound,  TransportKind::Udp) => ChannelType::UdpServer,
-                            _ => unreachable!(),
-                        };
-                        let iv = RelayIv {
-                            device: DeviceType::Relay,
-                            channel,
-                            conn_id: mf.conn_id as u16,
-                            seqno: effective_seqno,
-                        };
+                    let channel = match (record.direction, record.transport) {
+                        (Direction::Outbound, TransportKind::Tcp) => ChannelType::TcpClient,
+                        (Direction::Inbound,  TransportKind::Tcp) => ChannelType::TcpServer,
+                        (Direction::Outbound, TransportKind::Udp) => ChannelType::UdpClient,
+                        (Direction::Inbound,  TransportKind::Udp) => ChannelType::UdpServer,
+                        _ => unreachable!(),
+                    };
+                    let iv = RelayIv {
+                        device: DeviceType::Relay,
+                        channel,
+                        conn_id: mf.conn_id as u16,
+                        seqno: effective_seqno,
+                    };
 
-                        let aad    = &frame_body[..parsed.consumed];
-                        let cipher = &frame_body[parsed.consumed..];
+                    let aad    = &frame_body[..parsed.consumed];
+                    let cipher = &frame_body[parsed.consumed..];
 
-                        match decrypt(&mf.aes_key, &iv.to_bytes(), aad, cipher) {
-                            Err(e) => writeln!(out, "  (decrypt error: {e})")?,
-                            Ok(plaintext) => {
-                                // Outbound frames include a client-side plaintext envelope;
-                                // strip it to reach the raw proto bytes. Inbound frames from
-                                // the server carry no envelope — plaintext is proto bytes directly.
-                                let proto_result: Result<Vec<u8>, String> =
-                                    match (record.direction, record.transport) {
-                                        (Direction::Outbound, TransportKind::Tcp) => {
-                                            parse_tcp_plaintext(&plaintext)
-                                                .map(|p| p.proto_bytes.to_vec())
-                                                .map_err(|e| e.to_string())
+                    match decrypt(&mf.aes_key, &iv.to_bytes(), aad, cipher) {
+                        Err(e) => writeln!(out, "  (decrypt error: {e})")?,
+                        Ok(plaintext) => {
+                            // Outbound frames include a client-side plaintext envelope;
+                            // strip it to reach the raw proto bytes. Inbound frames from
+                            // the server carry no envelope — plaintext is proto bytes directly.
+                            let proto_result: Result<Vec<u8>, String> =
+                                match (record.direction, record.transport) {
+                                    (Direction::Outbound, TransportKind::Tcp) => {
+                                        parse_tcp_plaintext(&plaintext)
+                                            .map(|p| p.proto_bytes.to_vec())
+                                            .map_err(|e| e.to_string())
+                                    }
+                                    (Direction::Outbound, TransportKind::Udp) => {
+                                        parse_udp_plaintext(&plaintext)
+                                            .map(|p| p.proto_bytes.to_vec())
+                                            .map_err(|e| e.to_string())
+                                    }
+                                    _ => Ok(plaintext),
+                                };
+
+                            match proto_result {
+                                Err(e) => writeln!(out, "  (envelope error: {e})")?,
+                                Ok(proto_bytes) => match record.direction {
+                                    Direction::Inbound => {
+                                        match zwift_proto::ServerToClient::decode(
+                                            proto_bytes.as_slice(),
+                                        ) {
+                                            Ok(msg) => print_message(&mut out, &msg, 0)?,
+                                            Err(e) => writeln!(out, "  (decode error: {e})")?,
                                         }
-                                        (Direction::Outbound, TransportKind::Udp) => {
-                                            parse_udp_plaintext(&plaintext)
-                                                .map(|p| p.proto_bytes.to_vec())
-                                                .map_err(|e| e.to_string())
+                                    }
+                                    Direction::Outbound => {
+                                        match zwift_proto::ClientToServer::decode(
+                                            proto_bytes.as_slice(),
+                                        ) {
+                                            Ok(msg) => print_message(&mut out, &msg, 0)?,
+                                            Err(e) => writeln!(out, "  (decode error: {e})")?,
                                         }
-                                        _ => Ok(plaintext),
-                                    };
-
-                                match proto_result {
-                                    Err(e) => writeln!(out, "  (envelope error: {e})")?,
-                                    Ok(proto_bytes) => match record.direction {
-                                        Direction::Inbound => {
-                                            match zwift_proto::ServerToClient::decode(
-                                                proto_bytes.as_slice(),
-                                            ) {
-                                                Ok(msg) => print_message(&mut out, &msg, 0)?,
-                                                Err(e) => writeln!(out, "  (decode error: {e})")?,
-                                            }
-                                        }
-                                        Direction::Outbound => {
-                                            match zwift_proto::ClientToServer::decode(
-                                                proto_bytes.as_slice(),
-                                            ) {
-                                                Ok(msg) => print_message(&mut out, &msg, 0)?,
-                                                Err(e) => writeln!(out, "  (decode error: {e})")?,
-                                            }
-                                        }
-                                    },
-                                }
+                                    }
+                                },
                             }
                         }
+                    }
 
-                        let next_seqno = effective_seqno.wrapping_add(1);
-                        match (record.direction, record.transport) {
-                            (Direction::Outbound, TransportKind::Tcp) => seqno_out_tcp = next_seqno,
-                            (Direction::Inbound,  TransportKind::Tcp) => seqno_in_tcp  = next_seqno,
-                            (Direction::Outbound, TransportKind::Udp) => seqno_out_udp = next_seqno,
-                            (Direction::Inbound,  TransportKind::Udp) => seqno_in_udp  = next_seqno,
-                            _ => unreachable!(),
-                        }
+                    let next_seqno = effective_seqno.wrapping_add(1);
+                    match (record.direction, record.transport) {
+                        (Direction::Outbound, TransportKind::Tcp) => seqno_out_tcp = next_seqno,
+                        (Direction::Inbound,  TransportKind::Tcp) => seqno_in_tcp  = next_seqno,
+                        (Direction::Outbound, TransportKind::Udp) => seqno_out_udp = next_seqno,
+                        (Direction::Inbound,  TransportKind::Udp) => seqno_in_udp  = next_seqno,
+                        _ => unreachable!(),
                     }
                 }
                 if record.transport == TransportKind::Http {

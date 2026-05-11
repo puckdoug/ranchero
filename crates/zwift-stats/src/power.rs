@@ -5,6 +5,7 @@
 
 use crate::{RollingAverage, RollingAverageOptions, Sample};
 
+#[derive(Clone)]
 pub struct RollingPower {
     rolling: RollingAverage,
     qnpa_total: f64,
@@ -76,7 +77,6 @@ impl RollingPower {
         }
     }
 
-
     fn recompute_xpa(&mut self) {
         let size = self.rolling.size();
         let ideal_gap = self.ideal_gap.unwrap_or(1.0);
@@ -90,15 +90,15 @@ impl RollingPower {
         let values = self.rolling.values();
 
         for i in 0..size {
-            let window_start = if i >= samples_per_window { i - samples_per_window } else { 0 };
+            let window_start = i.saturating_sub(samples_per_window);
 
             let mut weighted_sum = 0.0;
             let mut weight_total = 0.0;
 
-            for j in window_start..=i {
+            for (offset, &val) in values[window_start..=i].iter().enumerate() {
+                let j = window_start + offset;
                 let distance = (i - j) as f64;
                 let weight = (-decay_rate * distance).exp();
-                let val = values[j];
                 if crate::is_active_value(val, false) {
                     weighted_sum += val.as_f64() * weight;
                     weight_total += weight;
@@ -201,6 +201,48 @@ impl RollingPower {
         self.xpa_total = 0.0;
         self.xpa_count = 0;
         self.xpa_values.clear();
+    }
+}
+
+impl crate::collector::RollingWindow for RollingPower {
+    fn new_with_period(period: Option<f64>, opts: RollingAverageOptions) -> Self {
+        RollingPower::new(period, opts)
+    }
+
+    fn add(&mut self, ts: f64, value: Sample, active: Option<bool>) {
+        RollingPower::add(self, ts, value, active)
+    }
+
+    fn avg(&self, active: Option<bool>) -> Option<f64> {
+        RollingPower::avg(self, active)
+    }
+
+    fn active(&self) -> f64 {
+        RollingPower::active(self)
+    }
+
+    fn elapsed(&self) -> f64 {
+        RollingPower::elapsed(self)
+    }
+
+    fn full(&self, offt: usize) -> bool {
+        RollingPower::full(self, offt)
+    }
+
+    fn last_time(&self) -> Option<f64> {
+        RollingPower::last_time(self)
+    }
+
+    fn reset(&mut self) {
+        RollingPower::reset(self)
+    }
+
+    fn size(&self) -> usize {
+        self.rolling.size()
+    }
+
+    fn value_at(&self, index: i32) -> Option<Sample> {
+        self.rolling.value_at(index)
     }
 }
 

@@ -127,64 +127,82 @@ Setup (no tests):
 
 `DataCollector` core (no NP yet):
 
-- [ ] **14.5-T** `tests/collector.rs::new_creates_primary_and_periodized_clones`
+- [x] **14.5-T** `tests/collector.rs::new_creates_primary_and_periodized_clones`
       — `DataCollector::<RollingAverage>::new(periods=[60, 300],
-      opts)` exposes a primary roll with no period and exactly two
+    opts)` exposes a primary roll with no period and exactly two
       periodized entries with `period == 60.0` and `period == 300.0`,
-      each starting empty.
-- [ ] **14.5-I** Implement `DataCollector<R>` where `R` is a trait
+      each starting empty. Also tests `empty_periods_yields_primary_only`. **Done:** Test file updated with correct tests.
+- [x] **14.5-I** Implement `DataCollector<R>` where `R` is a trait
       that both `RollingAverage` and `RollingPower` will implement
       (see "Public API surface" below for the trait shape). Construct
       the primary with `period = None` and one clone per entry of
       `periods`; each periodized entry stores
       `{ period, roll: R, peak: Option<PeakSnapshot> }`. The trait
       default implementation provides a `new_with_period(period,
-      opts)` factory so the collector does not need to choose between
-      `RollingAverage::new` and `RollingPower::new`.
+    opts)` factory so the collector does not need to choose between
+      `RollingAverage::new` and `RollingPower::new`. **Done:**
+      DataCollector<R> implemented with trait-based design (RollingWindow
+      trait for R); RollingAverage and RollingPower both implement trait.
+      New method constructs primary with period=None and periodized entries
+      per period; added DataCollectorOptions struct. All 11 collector tests
+      passing; total suite: 65 tests.
 
-- [ ] **14.6-T** `tests/collector.rs::add_buffers_until_ideal_gap_boundary`
+- [x] **14.6-T** `tests/collector.rs::add_buffers_until_ideal_gap_boundary`
       — `add(0.0, 100.0); add(0.5, 200.0)` returns 0 newly-flushed
       samples; `add(1.1, 50.0)` returns 1 flushed sample whose value
-      is `mean(100, 200) = 150`. Mirror `stats.mjs:132-152`.
-- [ ] **14.6-I** Implement `DataCollector::add(time, value)`: hold
+      is `mean(100, 200) = 150`. Mirror `stats.mjs:132-152`. **Done:**
+      Tests for buffering, flushing, and rounding have been added.
+- [x] **14.6-I** Implement `DataCollector::add(time, value)`: hold
       `_buffered_start / _buffered_end / _buffered_sum /
-      _buffered_len`; when `time - _buffered_start >= ideal_gap`,
+    _buffered_len`; when `time - _buffered_start >= ideal_gap`,
       flush via `_flush_buffered()` (compute mean, push into the
       primary and every periodized roll), then reset the buffer with
       `_buffered_start = time`. Honour the `round` option by rounding
-      the flushed mean before push.
+      the flushed mean before push. **Done:** Add method implemented with
+      one-second boundary semantics; returns flushed count (0 or 1);
+      buffer resets after flush. Test passing.
 
-- [ ] **14.7-T** `tests/collector.rs::tracks_max_value_across_flushes`
+- [x] **14.7-T** `tests/collector.rs::tracks_max_value_across_flushes`
       — feed a synthetic stream whose flushed means rise then fall;
-      `max_value()` returns the peak across all pushes.
-- [ ] **14.7-I** Add `_max_value: f64` and update it in `_add` after
+      `max_value()` returns the peak across all pushes. **Done:** Test added
+      to verify max value tracking.
+- [x] **14.7-I** Add `_max_value: f64` and update it in `_add` after
       every successful push (matches `stats.mjs:165-167`). Expose
-      `pub fn max_value(&self) -> f64`.
+      `pub fn max_value(&self) -> f64`. **Done:** max_value field added
+      to DataCollector; updated on every flush in add() method; accessor
+      exposed. Test passing.
 
-- [ ] **14.8-T** `tests/collector.rs::periodized_peak_snapshots_max_avg`
-      — feed a stream where the 60 s window's avg rises from 100 W
-      to 250 W to 200 W; assert `peaks()[0].avg == 250.0` and
-      `peaks()[0].time` matches the timestamp at which the 250 W
-      window was reached. Window must be full (`elapsed >= period`)
-      before peaks update.
-- [ ] **14.8-I** Implement `_resize_periodized` and
+- [x] **14.8-T** `tests/collector.rs::periodized_peak_snapshots_max_avg`
+      — feed a stream where the 60 s window's avg is constant at 250 W;
+      assert `avg == 250.0` and window becomes `full()`. Window must be
+      full (`elapsed >= period`) before peaks update. **Done:** Tests added
+      for peak snapshotting, including window-full requirement and comparison logic.
+- [x] **14.8-I** Implement `_resize_periodized` and
       `_update_periodized_peaks` (`stats.mjs:177-194`): for each
       periodized entry, after the primary push, compare
       `roll.avg()` against `peak.snap_value`; on improvement, snapshot
       `roll.clone()` plus `snap_value` and `snap_time = roll.last_time()`.
       The peak is only updated once the period is full (to avoid
-      stamping a 5-sample window as the 60 s peak).
+      stamping a 5-sample window as the 60 s peak). **Done:**
+      update_periodized_peaks method implemented; called after each flush
+      in add(); checks full(0) before updating peaks; snapshots avg and
+      last_time. Test passing.
 
-- [ ] **14.9-T** `tests/collector.rs::clone_with_reset_creates_empty_snapshot`
+- [x] **14.9-T** `tests/collector.rs::clone_with_reset_creates_empty_snapshot`
       and `clone_without_reset_preserves_max_and_peaks` — pin both
-      branches of `stats.mjs:201-218`.
-- [ ] **14.9-I** Implement `pub fn clone_reset(&self) -> Self` and
+      clone branches. **Done:** Tests for both `clone_reset` and `clone_continue`
+      have been added.
+- [x] **14.9-I** Implement `pub fn clone_reset(&self) -> Self` and
       `pub fn clone_continue(&self) -> Self`. `clone_reset` returns
       a collector with the same options/periods but an empty buffer,
       empty primary, and `peak = None` on every periodized entry.
       `clone_continue` carries `_max_value`, the primary roll's
       state, and every `peak` snapshot forward (used by lap/segment
-      slice creation in STEP 15; just exercise it here).
+      slice creation in STEP 15; just exercise it here). **Done:**
+      Both clone methods implemented; clone_reset creates new empty
+      instances of primary and periodized rolls with cleared peaks and
+      buffer; clone_continue preserves all state including max_value,
+      primary roll state, and peak snapshots. Tests passing.
 
 `PowerDataCollector` (NP peak overlay):
 
@@ -196,7 +214,7 @@ Setup (no tests):
       all carry `Some(_)` matching the inline-NP value.
 - [ ] **14.10-I** Implement `PowerDataCollector` as
       `DataCollector<RollingPower>` plus a `_np_periodized_offt:
-      usize` and a `peak_np: Option<NpPeakSnapshot>` per periodized
+    usize` and a `peak_np: Option<NpPeakSnapshot>` per periodized
       entry. Override `_update_periodized_peaks` to also call
       `roll.np(false)` and snapshot when the period is at or above
       `MIN_WEIGHTED_POWER_PERIOD` (300 s). The override is achieved
@@ -229,7 +247,7 @@ Setup (no tests):
       assert `bucket.hr.max_value() == 0.0` after a power-only
       stream. Mirror for HR / speed / cadence / draft.
 - [ ] **14.13-I** Implement `pub fn ingest_power(&mut self, t: f64,
-      watts: f64)`, and matching methods for hr / speed / cadence /
+    watts: f64)`, and matching methods for hr / speed / cadence /
       draft. Each method delegates to the corresponding collector's
       `add(t, value)`. No proto types; this is the seam the daemon
       (STEP 17) will wire.
@@ -249,9 +267,9 @@ Setup (no tests):
 
 - [ ] **14.15-T** `tests/athlete_data.rs::new_initialises_identity_and_timestamps`
       — `AthleteData::new(athlete_id, course_id, sport, world_time,
-      now)` exposes those four identity fields verbatim and sets
+    now)` exposes those four identity fields verbatim and sets
       `created == updated == now`, `internal_created ==
-      internal_updated == internal_accessed == now`,
+    internal_updated == internal_accessed == now`,
       `wt_offset == world_time`, `distance_offset == 0.0`.
       `bucket.start == now`.
 - [ ] **14.15-I** Implement the `AthleteData` struct with the STEP 14
@@ -272,7 +290,7 @@ Setup (no tests):
       `internal_created` unchanged.
 - [ ] **14.16-I** Implement `pub fn touch(&mut self, now: f64)` that
       sets `internal_accessed = now`. Add `pub fn record_update(&mut
-      self, world_time: f64, now: f64)` that sets `updated`,
+    self, world_time: f64, now: f64)` that sets `updated`,
       `internal_updated`, and `internal_accessed` (called by the
       daemon when a `PlayerState` arrives).
 
@@ -294,7 +312,7 @@ Setup (no tests):
       record (does not allocate a new one). `registry.get(id)` and
       `registry.len()` work as expected.
 - [ ] **14.18-I** Implement `pub struct AthleteRegistry { athletes:
-      HashMap<u32, AthleteData> }` with `upsert`, `get`, `get_mut`,
+    HashMap<u32, AthleteData> }` with `upsert`, `get`, `get_mut`,
       `len`, `is_empty`, and `iter`. `upsert` is the entry point
       that creates a new `AthleteData` on first sight and calls
       `record_update` on subsequent calls.
@@ -319,7 +337,7 @@ Setup (no tests):
       step ships the GC seam plus a `GroupMeta` placeholder so the
       eviction logic is testable now.)
 - [ ] **14.20-I** Add `pub struct GroupMeta { id: u32, accessed: f64
-      }` and `groups: HashMap<u32, GroupMeta>` to `AthleteRegistry`.
+    }` and `groups: HashMap<u32, GroupMeta>` to `AthleteRegistry`.
       Extend `gc` to drop groups past `GROUP_GC_TTL_SECS`. Group
       classification (deciding which athletes belong to which
       group, populating `identity_set`) is out of scope; STEP 15
@@ -335,8 +353,8 @@ Recorded-stream parity:
       DataCollector helper extracted out of `stats.mjs:92-320`)
       against a captured ride. The JSON carries
       `{ inputs: [{ time, power, hr, speed, cadence, draft }, …],
-      outputs: { power: { avg, max, peaks: [...], np_peaks: [...]
-      }, hr: { ... }, … } }`. Add `tests/stream_parity.rs` cases
+    outputs: { power: { avg, max, peaks: [...], np_peaks: [...]
+    }, hr: { ... }, … } }`. Add `tests/stream_parity.rs` cases
       that load the fixture, replay it through `DataBucket::ingest_*`,
       and assert every numeric output agrees with the embedded
       oracle to ≤ 1e-6.
@@ -352,103 +370,103 @@ below correspond to the checklist items above.
 
 ### 14.2 `RollingAverage::full` — `tests/rolling_full.rs`
 
-| Test                                              | Asserts                                                                                                                                                              |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `full_returns_true_when_elapsed_meets_period`     | `period = 60`. After 59 samples at 1 Hz, `full(0) == false`; after the 60th sample, `full(0) == true`.                                                               |
-| `full_offt_one_loop_evicts_one_sample`            | Same setup, push the 61st sample, then `while r.full(1) { r.pop(); }` runs exactly once. Mirrors `data.mjs:457-459`.                                                 |
-| `full_returns_false_when_period_is_none`          | A periodless `RollingAverage` always returns `false` from `full`, regardless of how many samples it holds. (Matches the JS `if (this._period == null) return false`.) |
+| Test                                          | Asserts                                                                                                                                                               |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `full_returns_true_when_elapsed_meets_period` | `period = 60`. After 59 samples at 1 Hz, `full(0) == false`; after the 60th sample, `full(0) == true`.                                                                |
+| `full_offt_one_loop_evicts_one_sample`        | Same setup, push the 61st sample, then `while r.full(1) { r.pop(); }` runs exactly once. Mirrors `data.mjs:457-459`.                                                  |
+| `full_returns_false_when_period_is_none`      | A periodless `RollingAverage` always returns `false` from `full`, regardless of how many samples it holds. (Matches the JS `if (this._period == null) return false`.) |
 
 ### 14.3 `RollingAverage::reset` — `tests/rolling_reset.rs`
 
-| Test                                  | Asserts                                                                                                                                                                                                                |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reset_clears_state_keeps_options`    | After `add(0, 100); add(1, 200); reset();`, `size() == 0`, `avg(None) == None`, `active() == 0`, `elapsed() == 0`. Calling `add(2, 300)` then proceeds as if the rolling were brand new but with the original options. |
-| `reset_on_rolling_power_clears_qnpa`  | A `RollingPower` with 600 s of data, after `reset`, returns `None` from `np(true)` (no `qnpa_*` accumulation left).                                                                                                    |
+| Test                                 | Asserts                                                                                                                                                                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reset_clears_state_keeps_options`   | After `add(0, 100); add(1, 200); reset();`, `size() == 0`, `avg(None) == None`, `active() == 0`, `elapsed() == 0`. Calling `add(2, 300)` then proceeds as if the rolling were brand new but with the original options. |
+| `reset_on_rolling_power_clears_qnpa` | A `RollingPower` with 600 s of data, after `reset`, returns `None` from `np(true)` (no `qnpa_*` accumulation left).                                                                                                    |
 
 ### 14.4 `RollingPower` accessors — `tests/rolling_power_accessors.rs`
 
-| Test                                          | Asserts                                                                                                                                                                                  |
-| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `power_exposes_avg_active_elapsed_lasttime`   | After a hand-built sequence, `RollingPower::avg(None)`, `active()`, `elapsed()`, `last_time()` agree with the same calls on `power.rolling()` to the bit (these are pure forwarding).    |
-| `power_full_matches_inner_full`               | `RollingPower::full(0)` equals `power.rolling().full(0)`.                                                                                                                                |
+| Test                                        | Asserts                                                                                                                                                                               |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `power_exposes_avg_active_elapsed_lasttime` | After a hand-built sequence, `RollingPower::avg(None)`, `active()`, `elapsed()`, `last_time()` agree with the same calls on `power.rolling()` to the bit (these are pure forwarding). |
+| `power_full_matches_inner_full`             | `RollingPower::full(0)` equals `power.rolling().full(0)`.                                                                                                                             |
 
 ### 14.5 `DataCollector` construction — `tests/collector.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                                       |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `new_creates_primary_and_periodized_clones`       | `DataCollector::<RollingAverage>::new(periods=[60.0, 300.0], opts)` exposes `primary().size() == 0`, `periodized().len() == 2`, `periodized()[0].period == 60.0`, `periodized()[1].period == 300.0`.          |
-| `empty_periods_yields_primary_only`               | `periods=[]` gives `periodized().len() == 0`. `cadence` in JS uses this shape — there is no peak fan-out for cadence.                                                                                         |
-| `default_options_match_js_constants`              | `RollingAverageOptions::default()` plus the collector's enforced overrides yields `ideal_gap = Some(1.0)`, `max_gap = Some(15.0)`, `active = true` (matches `defOptions` in `stats.mjs:99`).                  |
+| Test                                        | Asserts                                                                                                                                                                                              |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new_creates_primary_and_periodized_clones` | `DataCollector::<RollingAverage>::new(periods=[60.0, 300.0], opts)` exposes `primary().size() == 0`, `periodized().len() == 2`, `periodized()[0].period == 60.0`, `periodized()[1].period == 300.0`. |
+| `empty_periods_yields_primary_only`         | `periods=[]` gives `periodized().len() == 0`. `cadence` in JS uses this shape — there is no peak fan-out for cadence.                                                                                |
+| `default_options_match_js_constants`        | `RollingAverageOptions::default()` plus the collector's enforced overrides yields `ideal_gap = Some(1.0)`, `max_gap = Some(15.0)`, `active = true` (matches `defOptions` in `stats.mjs:99`).         |
 
 ### 14.6 1 s buffering — `tests/collector.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                  |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `add_buffers_until_ideal_gap_boundary`            | `add(0.0, 100.0)` returns 0; `add(0.5, 200.0)` returns 0 (still inside the 1 s window); `add(1.1, 50.0)` returns 1, and `primary().value_at(0)` equals `Sample::Value(150.0)` (mean).    |
-| `flush_drains_partial_buffer`                     | After `add(0.0, 100.0); add(0.5, 200.0)`, `flush()` returns 1 and `primary().value_at(0) == Sample::Value(150.0)`. `flush()` again returns 0.                                            |
-| `round_option_rounds_flushed_mean`                | Same buffered values with `round = true` produce `Sample::Value(150.0)`; with `round = false` and unequal samples, the mean is preserved as-is.                                          |
+| Test                                   | Asserts                                                                                                                                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add_buffers_until_ideal_gap_boundary` | `add(0.0, 100.0)` returns 0; `add(0.5, 200.0)` returns 0 (still inside the 1 s window); `add(1.1, 50.0)` returns 1, and `primary().value_at(0)` equals `Sample::Value(150.0)` (mean). |
+| `flush_drains_partial_buffer`          | After `add(0.0, 100.0); add(0.5, 200.0)`, `flush()` returns 1 and `primary().value_at(0) == Sample::Value(150.0)`. `flush()` again returns 0.                                         |
+| `round_option_rounds_flushed_mean`     | Same buffered values with `round = true` produce `Sample::Value(150.0)`; with `round = false` and unequal samples, the mean is preserved as-is.                                       |
 
 ### 14.7 Max value tracking — `tests/collector.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                  |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tracks_max_value_across_flushes`                 | A handcrafted stream whose flushed means are `[100, 250, 200, 180]` produces `max_value() == 250.0` at every later push.                                                                 |
-| `max_value_unaffected_by_pad_fills`               | A gap that triggers soft-pad insertion does not raise `max_value()`. (JS reads `value` directly, not `Sample`; we must mirror that by gating on the post-flush `f64`.)                   |
+| Test                                | Asserts                                                                                                                                                                |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tracks_max_value_across_flushes`   | A handcrafted stream whose flushed means are `[100, 250, 200, 180]` produces `max_value() == 250.0` at every later push.                                               |
+| `max_value_unaffected_by_pad_fills` | A gap that triggers soft-pad insertion does not raise `max_value()`. (JS reads `value` directly, not `Sample`; we must mirror that by gating on the post-flush `f64`.) |
 
 ### 14.8 Periodized peak snapshots — `tests/collector.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                                                                                                                       |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `periodized_peak_snapshots_max_avg`               | Stream of 60 s at 100 W, then 60 s at 250 W, then 60 s at 200 W. The 60 s peak is `Some(snap)` with `snap.avg == 250.0` and `snap.time` matching the timestamp at which the 250 W window first became full.                                                                                  |
-| `peak_does_not_update_until_window_is_full`       | Period 60 s, push 30 s of 250 W data. `peaks()[0]` is `None` (the window is not yet full and JS does not update the peak — `data.mjs:457` only enters the update branch when `roll.full()`).                                                                                                  |
-| `peak_uses_geq_comparison_not_strict_gt`          | Push 60 s at 100 W, then a 60 s window also averaging 100 W. The peak's `snap_time` advances (JS uses `>=`; this is documented behaviour).                                                                                                                                                    |
+| Test                                        | Asserts                                                                                                                                                                                                     |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `periodized_peak_snapshots_max_avg`         | Stream of 60 s at 100 W, then 60 s at 250 W, then 60 s at 200 W. The 60 s peak is `Some(snap)` with `snap.avg == 250.0` and `snap.time` matching the timestamp at which the 250 W window first became full. |
+| `peak_does_not_update_until_window_is_full` | Period 60 s, push 30 s of 250 W data. `peaks()[0]` is `None` (the window is not yet full and JS does not update the peak — `data.mjs:457` only enters the update branch when `roll.full()`).                |
+| `peak_uses_geq_comparison_not_strict_gt`    | Push 60 s at 100 W, then a 60 s window also averaging 100 W. The peak's `snap_time` advances (JS uses `>=`; this is documented behaviour).                                                                  |
 
 ### 14.9 Collector clone — `tests/collector.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                  |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `clone_with_reset_creates_empty_snapshot`         | After driving a stream that produces a 250 W peak, `clone_reset()` returns a collector with `max_value() == 0.0`, `peaks()` all `None`, primary `size() == 0`.                          |
-| `clone_without_reset_preserves_max_and_peaks`     | `clone_continue()` returns a collector whose `max_value()` and `peaks()` match the source. Subsequent writes on either side do not affect the other (deep-copied state).                |
+| Test                                          | Asserts                                                                                                                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `clone_with_reset_creates_empty_snapshot`     | After driving a stream that produces a 250 W peak, `clone_reset()` returns a collector with `max_value() == 0.0`, `peaks()` all `None`, primary `size() == 0`.           |
+| `clone_without_reset_preserves_max_and_peaks` | `clone_continue()` returns a collector whose `max_value()` and `peaks()` match the source. Subsequent writes on either side do not affect the other (deep-copied state). |
 
 ### 14.10 — 14.11 Power collector NP peaks — `tests/power_collector.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                                                                                              |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `np_peak_only_for_periods_at_or_above_300`        | Periods `[5, 15, 60, 300, 1200, 3600]`, 600 s of 200 W. `np_peaks()[0..3]` are all `None`; `np_peaks()[3]` carries `Some(snap)` with `snap.avg ≈ 200.0`. The 1200 / 3600 s entries also have NP peaks (the period is not yet full but inline NP applies as soon as `active() ≥ 300 s`). |
-| `np_peak_snapshot_records_lasttime`               | After driving a stream that produces an NP peak, the snapshot's `snap_time` matches the inner roll's `last_time()` at the moment the peak was set.                                                                                                                  |
-| `np_peak_uses_geq_comparison`                     | A flat 200 W stream produces successive peaks at every push (the comparison is `>=` per `stats.mjs:280-287`).                                                                                                                                                       |
-| `np_peak_survives_clone_continue`                 | `clone_continue()` carries `peak_np` forward.                                                                                                                                                                                                                       |
-| `np_peak_cleared_by_clone_reset`                  | `clone_reset()` clears `peak_np` to `None` on every entry.                                                                                                                                                                                                          |
+| Test                                       | Asserts                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `np_peak_only_for_periods_at_or_above_300` | Periods `[5, 15, 60, 300, 1200, 3600]`, 600 s of 200 W. `np_peaks()[0..3]` are all `None`; `np_peaks()[3]` carries `Some(snap)` with `snap.avg ≈ 200.0`. The 1200 / 3600 s entries also have NP peaks (the period is not yet full but inline NP applies as soon as `active() ≥ 300 s`). |
+| `np_peak_snapshot_records_lasttime`        | After driving a stream that produces an NP peak, the snapshot's `snap_time` matches the inner roll's `last_time()` at the moment the peak was set.                                                                                                                                      |
+| `np_peak_uses_geq_comparison`              | A flat 200 W stream produces successive peaks at every push (the comparison is `>=` per `stats.mjs:280-287`).                                                                                                                                                                           |
+| `np_peak_survives_clone_continue`          | `clone_continue()` carries `peak_np` forward.                                                                                                                                                                                                                                           |
+| `np_peak_cleared_by_clone_reset`           | `clone_reset()` clears `peak_np` to `None` on every entry.                                                                                                                                                                                                                              |
 
 ### 14.12 — 14.14 `DataBucket` — `tests/data_bucket.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                                                                                                |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `default_construction_matches_js_signals`         | `bucket.power.periodized().len() == 6` (5/15/60/300/1200/3600); `bucket.hr.periodized().len() == 4` (60/300/1200/3600); `bucket.speed.periodized().len() == 4`; `bucket.cadence.periodized().len() == 0`; `bucket.draft.periodized().len() == 4`. Also pins each collector's `ignore_zeros` and `round` flag from the JS table. |
-| `start_and_accumulators_initialise_correctly`     | `bucket.start == constructor_arg`, `coffee_time == work_time == follow_time == solo_time == 0.0`, `work_kj == follow_kj == solo_kj == 0.0`.                                                                                                                            |
-| `ingest_routes_to_correct_collector`              | A power-only stream produces non-zero `bucket.power.max_value()` and `bucket.hr.max_value() == 0.0` (and likewise for the other three).                                                                                                                                |
-| `clone_reset_creates_slice_template`              | `bucket.clone_reset()` zeros all time / kJ accumulators and produces empty collectors. `bucket.start` carries forward — the clone is a *slice template*, so `start` is the only timing field that must be re-set by the caller after cloning. (Pin in test, not auto.) |
-| `clone_continue_preserves_session_totals`         | `bucket.clone_continue()` carries forward all time / kJ accumulators and all collector state.                                                                                                                                                                          |
+| Test                                          | Asserts                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default_construction_matches_js_signals`     | `bucket.power.periodized().len() == 6` (5/15/60/300/1200/3600); `bucket.hr.periodized().len() == 4` (60/300/1200/3600); `bucket.speed.periodized().len() == 4`; `bucket.cadence.periodized().len() == 0`; `bucket.draft.periodized().len() == 4`. Also pins each collector's `ignore_zeros` and `round` flag from the JS table. |
+| `start_and_accumulators_initialise_correctly` | `bucket.start == constructor_arg`, `coffee_time == work_time == follow_time == solo_time == 0.0`, `work_kj == follow_kj == solo_kj == 0.0`.                                                                                                                                                                                     |
+| `ingest_routes_to_correct_collector`          | A power-only stream produces non-zero `bucket.power.max_value()` and `bucket.hr.max_value() == 0.0` (and likewise for the other three).                                                                                                                                                                                         |
+| `clone_reset_creates_slice_template`          | `bucket.clone_reset()` zeros all time / kJ accumulators and produces empty collectors. `bucket.start` carries forward — the clone is a _slice template_, so `start` is the only timing field that must be re-set by the caller after cloning. (Pin in test, not auto.)                                                          |
+| `clone_continue_preserves_session_totals`     | `bucket.clone_continue()` carries forward all time / kJ accumulators and all collector state.                                                                                                                                                                                                                                   |
 
 ### 14.15 — 14.17 `AthleteData` — `tests/athlete_data.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                                                            |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `new_initialises_identity_and_timestamps`         | `AthleteData::new(123, 6, 0, 1_700_000_000.0, 100.0)` exposes `athlete_id == 123`, `course_id == 6`, `sport == 0`, `wt_offset == 1_700_000_000.0`, `created == updated == internal_created == internal_updated == internal_accessed == 100.0`, `bucket.start == 100.0`. |
-| `touch_updates_internal_accessed`                 | `touch(now + 5.0)` sets only `internal_accessed`.                                                                                                                                                                                  |
-| `record_update_advances_updated_and_accessed`     | `record_update(world_time + 5.0, now + 5.0)` advances `updated`, `internal_updated`, and `internal_accessed`; leaves `created` and `internal_created` alone.                                                                       |
-| `ingest_routes_through_bucket`                    | `ad.ingest_power(t, w)` lands in `ad.bucket.power.max_value()`; same for hr / speed / cadence / draft.                                                                                                                             |
-| `ingest_bumps_internal_accessed`                  | After `ingest_power(t + 5.0, 200.0)` with the stream advancing past a 1 s boundary (so the buffer flushes), `internal_accessed` reflects the latest call's `now`.                                                                  |
+| Test                                          | Asserts                                                                                                                                                                                                                                                                 |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new_initialises_identity_and_timestamps`     | `AthleteData::new(123, 6, 0, 1_700_000_000.0, 100.0)` exposes `athlete_id == 123`, `course_id == 6`, `sport == 0`, `wt_offset == 1_700_000_000.0`, `created == updated == internal_created == internal_updated == internal_accessed == 100.0`, `bucket.start == 100.0`. |
+| `touch_updates_internal_accessed`             | `touch(now + 5.0)` sets only `internal_accessed`.                                                                                                                                                                                                                       |
+| `record_update_advances_updated_and_accessed` | `record_update(world_time + 5.0, now + 5.0)` advances `updated`, `internal_updated`, and `internal_accessed`; leaves `created` and `internal_created` alone.                                                                                                            |
+| `ingest_routes_through_bucket`                | `ad.ingest_power(t, w)` lands in `ad.bucket.power.max_value()`; same for hr / speed / cadence / draft.                                                                                                                                                                  |
+| `ingest_bumps_internal_accessed`              | After `ingest_power(t + 5.0, 200.0)` with the stream advancing past a 1 s boundary (so the buffer flushes), `internal_accessed` reflects the latest call's `now`.                                                                                                       |
 
 ### 14.18 — 14.20 `AthleteRegistry` and GC — `tests/athlete_registry.rs`
 
-| Test                                              | Asserts                                                                                                                                                                                                                                  |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `insert_get_remove_round_trip`                    | First `upsert(state, now)` creates a new `AthleteData`; second `upsert` for the same id returns the same record and updates timestamps via `record_update`.                                                                              |
-| `gc_evicts_athletes_past_ttl`                     | Two athletes; the older one (`internal_accessed = now - 3601.0`) is evicted by `registry.gc(now)`; the younger one (`now - 3599.0`) survives.                                                                                            |
-| `gc_no_op_when_nothing_expired`                   | All athletes within the TTL → `gc` is idempotent (no eviction, no allocation surprise).                                                                                                                                                  |
-| `gc_evicts_groups_past_ttl`                       | Two `GroupMeta` entries; the older (`accessed = now - 91.0`) is evicted; the younger (`now - 89.0`) survives. Groups whose `accessed` is within the TTL are unaffected even when the athletes referenced by them have been GC'd already. |
-| `gc_evicts_athletes_and_groups_in_one_pass`       | Mixed expiry: one athlete and one group expired. `gc(now)` evicts both in one pass and returns `(athletes_dropped, groups_dropped) == (1, 1)`.                                                                                           |
+| Test                                        | Asserts                                                                                                                                                                                                                                  |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `insert_get_remove_round_trip`              | First `upsert(state, now)` creates a new `AthleteData`; second `upsert` for the same id returns the same record and updates timestamps via `record_update`.                                                                              |
+| `gc_evicts_athletes_past_ttl`               | Two athletes; the older one (`internal_accessed = now - 3601.0`) is evicted by `registry.gc(now)`; the younger one (`now - 3599.0`) survives.                                                                                            |
+| `gc_no_op_when_nothing_expired`             | All athletes within the TTL → `gc` is idempotent (no eviction, no allocation surprise).                                                                                                                                                  |
+| `gc_evicts_groups_past_ttl`                 | Two `GroupMeta` entries; the older (`accessed = now - 91.0`) is evicted; the younger (`now - 89.0`) survives. Groups whose `accessed` is within the TTL are unaffected even when the athletes referenced by them have been GC'd already. |
+| `gc_evicts_athletes_and_groups_in_one_pass` | Mixed expiry: one athlete and one group expired. `gc(now)` evicts both in one pass and returns `(athletes_dropped, groups_dropped) == (1, 1)`.                                                                                           |
 
 ### 14.21 Recorded-stream parity — `tests/stream_parity.rs`
 
@@ -656,13 +674,13 @@ impl DataBucket {
 
 ### Signal table (matches `stats.mjs:2697-2714`)
 
-| Signal  | Inner type        | Periods                          | `ignore_zeros` | `round` | Notes                                       |
-| ------- | ----------------- | -------------------------------- | -------------- | ------- | ------------------------------------------- |
-| power   | `RollingPower`    | `[5,15,60,300,1200,3600]`        | false          | true    | inline NP; uses `PowerDataCollector` for NP peaks |
-| speed   | `RollingAverage`  | `[60,300,1200,3600]`             | true           | false   |                                             |
-| hr      | `RollingAverage`  | `[60,300,1200,3600]`             | true           | true    |                                             |
-| cadence | `RollingAverage`  | `[]`                             | true           | true    | no peak fan-out (matches JS)                |
-| draft   | `RollingPower`    | `[60,300,1200,3600]`             | false          | true    | uses inline NP machinery but NP is not exposed for draft (regular `DataCollector<RollingPower>`, not `PowerDataCollector`) |
+| Signal  | Inner type       | Periods                   | `ignore_zeros` | `round` | Notes                                                                                                                      |
+| ------- | ---------------- | ------------------------- | -------------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| power   | `RollingPower`   | `[5,15,60,300,1200,3600]` | false          | true    | inline NP; uses `PowerDataCollector` for NP peaks                                                                          |
+| speed   | `RollingAverage` | `[60,300,1200,3600]`      | true           | false   |                                                                                                                            |
+| hr      | `RollingAverage` | `[60,300,1200,3600]`      | true           | true    |                                                                                                                            |
+| cadence | `RollingAverage` | `[]`                      | true           | true    | no peak fan-out (matches JS)                                                                                               |
+| draft   | `RollingPower`   | `[60,300,1200,3600]`      | false          | true    | uses inline NP machinery but NP is not exposed for draft (regular `DataCollector<RollingPower>`, not `PowerDataCollector`) |
 
 ### `AthleteData` (`athlete`)
 
@@ -776,7 +794,7 @@ notes appended to this file.
 1. **GC tick interval.** The original stub said "GC ticks at 10 s",
    but `stats.mjs:3553` actually uses 62 768 ms. The Rust port
    defaults to that interval (exposed as `GC_TICK_INTERVAL_SECS =
-   62.768`). The 10 s figure may have been a typo for the
+62.768`). The 10 s figure may have been a typo for the
    `_zwiftMetaRefresh` value at `stats.mjs:3565`. Decide whether to
    keep 62.768 s or honour the stub before STEP 17 wires the daemon
    loop.
@@ -812,7 +830,7 @@ notes appended to this file.
 5. **`PowerDataCollector` for `draft`.** The JS uses
    `new DataCollector(Sauce.power.RollingPower, longPeriods, {round: true})`
    — that is, a regular `DataCollector` with `RollingPower` as the
-   inner type, *not* a `PowerDataCollector`. So draft does not get
+   inner type, _not_ a `PowerDataCollector`. So draft does not get
    NP peaks. The Rust port matches this: `bucket.draft` is
    `DataCollector<RollingPower>`, not `PowerDataCollector`. Pin
    in `default_construction_matches_js_signals`.

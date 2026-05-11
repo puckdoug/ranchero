@@ -109,25 +109,25 @@ pub fn validate_startup(
     }
 
     // S-2: Pidfile directory writability
-    if let Some(parent) = cfg.pidfile.parent() {
-        if let Err(reason) = probe_writable(parent) {
-            errors.push(StartupValidationError::DirectoryNotWritable {
-                label: "pidfile",
-                path: parent.to_path_buf(),
-                reason,
-            });
-        }
+    if let Some(parent) = cfg.pidfile.parent()
+        && let Err(reason) = probe_writable(parent)
+    {
+        errors.push(StartupValidationError::DirectoryNotWritable {
+            label: "pidfile",
+            path: parent.to_path_buf(),
+            reason,
+        });
     }
 
     // S-3: Log file directory writability
-    if let Some(parent) = cfg.log_file.parent() {
-        if let Err(reason) = probe_writable(parent) {
-            errors.push(StartupValidationError::DirectoryNotWritable {
-                label: "log file",
-                path: parent.to_path_buf(),
-                reason,
-            });
-        }
+    if let Some(parent) = cfg.log_file.parent()
+        && let Err(reason) = probe_writable(parent)
+    {
+        errors.push(StartupValidationError::DirectoryNotWritable {
+            label: "log file",
+            path: parent.to_path_buf(),
+            reason,
+        });
     }
 
     // S-4: Capture file validation — probe parent directory, then open

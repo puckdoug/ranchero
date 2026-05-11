@@ -54,7 +54,7 @@ impl RollingAverage {
             let gap = ts - prev_ts;
 
             // Hard-gap zero-pad: triggered by max_gap exceeded OR explicit active=false.
-            let trigger_hard_gap = (active.is_none() && self.max_gap.map_or(false, |mg| gap > mg))
+            let trigger_hard_gap = (active.is_none() && self.max_gap.is_some_and(|mg| gap > mg))
                 || active == Some(false);
 
             if trigger_hard_gap {
@@ -286,12 +286,10 @@ impl RollingAverage {
 
         for (ts, val) in data {
             self.add(*ts, *val, None);
-            if let Some(avg) = self.avg(Some(false)) {
-                if avg > peak_avg {
-                    peak_avg = avg;
-                    peak_start = self.times[self.offt];
-                    peak_end = *ts;
-                }
+            if let Some(avg) = self.avg(Some(false)).filter(|a| a > &peak_avg) {
+                peak_avg = avg;
+                peak_start = self.times[self.offt];
+                peak_end = *ts;
             }
         }
 

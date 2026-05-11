@@ -1243,6 +1243,7 @@ impl RelayRuntime {
     /// sequence. Emits `relay.capture.opened` on success and, on the error
     /// path, flushes the writer (which causes the writer task itself to
     /// emit `relay.capture.writer.closed`) before propagating.
+    #[allow(clippy::too_many_arguments)]
     async fn start_with_retry<A, SF, F, U>(
         cfg: &ResolvedConfig,
         capture_path: Option<PathBuf>,
@@ -2780,11 +2781,11 @@ pub struct DefaultUdpTransportFactory;
 impl UdpTransportFactory for DefaultUdpTransportFactory {
     type Transport = zwift_relay::TokioUdpTransport;
 
-    fn connect(
+    async fn connect(
         &self,
         addr: std::net::SocketAddr,
-    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
-        async move { zwift_relay::TokioUdpTransport::connect(addr).await }
+    ) -> std::io::Result<Self::Transport> {
+        zwift_relay::TokioUdpTransport::connect(addr).await
     }
 }
 
@@ -2796,6 +2797,7 @@ impl UdpTransportFactory for DefaultUdpTransportFactory {
 /// from recv_loop, sleeps for a back-off period, reconnects TCP, and starts
 /// a new recv_loop.  Exits cleanly when `stopping` is true.
 /// (STEP-12.16 §F7 Phase 4b)
+#[allow(clippy::too_many_arguments)]
 async fn connection_manager<Tcp>(
     current_recv_handle: tokio::task::JoinHandle<Result<(), RelayRuntimeError>>,
     tcp_factory: Tcp,
@@ -3046,6 +3048,7 @@ where
 /// the heartbeat, clears the suspended flag, and emits
 /// `relay.runtime.resumed` with a `course_id` field.
 /// (STEP-12.16 §F6 Phase 3b)
+#[allow(clippy::too_many_arguments)]
 async fn resume_udp<Udp>(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<i32>,
     inner: Arc<RuntimeInner>,
@@ -3183,6 +3186,7 @@ async fn resume_udp<Udp>(
     drop(tcp_sender);
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn recv_loop<T>(
     channel: Arc<zwift_relay::TcpChannel<T>>,
     mut events_rx: tokio::sync::broadcast::Receiver<zwift_relay::TcpChannelEvent>,
@@ -3332,10 +3336,10 @@ where
                                 let generic = pools
                                     .iter()
                                     .find(|p| p.lb_course == 0 && p.lb_realm == 0);
-                                if let Some(g) = generic {
-                                    if let Some(addr) = pick_initial_udp_target(&g.addresses) {
-                                        *inner.initial_udp_addr.lock().unwrap() = Some(addr);
-                                    }
+                                if let Some(g) = generic
+                                    && let Some(addr) = pick_initial_udp_target(&g.addresses)
+                                {
+                                    *inner.initial_udp_addr.lock().unwrap() = Some(addr);
                                 }
                             }
                         }
