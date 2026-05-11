@@ -293,14 +293,14 @@ Setup (no tests):
 
 `AthleteData` (identity + bucket + GC timestamps):
 
-- [ ] **14.15-T** `tests/athlete_data.rs::new_initialises_identity_and_timestamps`
+- [x] **14.15-T** `tests/athlete_data.rs::new_initialises_identity_and_timestamps`
       — `AthleteData::new(athlete_id, course_id, sport, world_time,
     now)` exposes those four identity fields verbatim and sets
       `created == updated == now`, `internal_created ==
     internal_updated == internal_accessed == now`,
       `wt_offset == world_time`, `distance_offset == 0.0`.
-      `bucket.start == now`.
-- [ ] **14.15-I** Implement the `AthleteData` struct with the STEP 14
+      `bucket.start == now`. **Done:** Test created and passing.
+- [x] **14.15-I** Implement the `AthleteData` struct with the STEP 14
       subset of fields from spec §5.2:
       `athlete_id: u32`, `course_id: u32`, `sport: u8`,
       `created: f64`, `updated: f64`, `wt_offset: f64`,
@@ -311,26 +311,39 @@ Setup (no tests):
       fields STEP 14 needs — see "Open verification points"),
       `bucket: DataBucket`. Fields deferred to STEP 15 are
       explicitly enumerated in a `// STEP 15:` comment block.
+      **Done:** Struct implemented with all STEP 14 fields; MostRecentState
+      placeholder created; exported from lib.rs; Debug derives added to
+      DataBucket, DataCollector, PowerDataCollector, PeriodizedEntry,
+      NpPeriodizedEntry, RollingAverage, RollingPower to support AthleteData
+      Debug impl.
 
-- [ ] **14.16-T** `tests/athlete_data.rs::touch_updates_internal_accessed`
+- [x] **14.16-T** `tests/athlete_data.rs::touch_updates_internal_accessed`
       — call `touch(now + 5.0)`, assert
       `internal_accessed == now + 5.0`, `internal_updated` and
-      `internal_created` unchanged.
-- [ ] **14.16-I** Implement `pub fn touch(&mut self, now: f64)` that
+      `internal_created` unchanged. **Done:** Test created and passing.
+- [x] **14.16-I** Implement `pub fn touch(&mut self, now: f64)` that
       sets `internal_accessed = now`. Add `pub fn record_update(&mut
     self, world_time: f64, now: f64)` that sets `updated`,
       `internal_updated`, and `internal_accessed` (called by the
-      daemon when a `PlayerState` arrives).
+      daemon when a `PlayerState` arrives). **Done:** Both methods
+      implemented on AthleteData; touch() updates only internal_accessed;
+      record_update() advances updated, internal_updated, and
+      internal_accessed.
 
-- [ ] **14.17-T** `tests/athlete_data.rs::ingest_routes_through_bucket`
+- [x] **14.17-T** `tests/athlete_data.rs::ingest_routes_through_bucket`
       — call `ad.ingest_power(t, watts)` and assert
       `ad.bucket.power.max_value() == watts` (after one full
       `ideal_gap` flush). Mirror for HR / speed / cadence / draft.
-- [ ] **14.17-I** Add forwarding methods on `AthleteData` that
+      **Done:** Test created covering all 5 ingest methods with proper
+      routing verification; test passing.
+- [x] **14.17-I** Add forwarding methods on `AthleteData` that
       delegate straight to `self.bucket.ingest_*` and bump
       `internal_updated` / `internal_accessed`. The daemon never
       reaches into `bucket` directly (encapsulation: future step may
-      route to slice collectors as well).
+      route to slice collectors as well). **Done:** All 5 ingest_*
+      methods implemented (power, hr, speed, cadence, draft);
+      each delegates to bucket and updates internal_updated/
+      internal_accessed; test passing.
 
 `AthleteRegistry` and GC:
 

@@ -12,7 +12,7 @@ pub struct RollingAverageOptions {
     pub ignore_zeros: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RollingAverage {
     #[allow(dead_code)]
     period: Option<f64>,      // Used in 13.8 (period eviction).

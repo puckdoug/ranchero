@@ -5,7 +5,7 @@
 
 use crate::{RollingAverage, RollingAverageOptions, Sample};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RollingPower {
     rolling: RollingAverage,
     qnpa_total: f64,

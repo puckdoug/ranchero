@@ -72,6 +72,7 @@ pub struct NpPeakSnapshot {
     pub snap_time: f64,
 }
 
+#[derive(Debug)]
 pub struct PeriodizedEntry<R> {
     pub period: f64,
     pub roll: R,
@@ -87,6 +88,7 @@ pub struct DataCollectorOptions {
     pub round: bool,
 }
 
+#[derive(Debug)]
 pub struct DataCollector<R: RollingWindow> {
     primary: R,
     periodized: Vec<PeriodizedEntry<R>>,
@@ -244,11 +246,13 @@ impl<R: RollingWindow> DataCollector<R> {
     }
 }
 
+#[derive(Debug)]
 pub struct NpPeriodizedEntry {
     pub period: f64,
     pub peak: Option<NpPeakSnapshot>,
 }
 
+#[derive(Debug)]
 pub struct PowerDataCollector {
     inner: DataCollector<crate::RollingPower>,
     np_periodized: Vec<NpPeriodizedEntry>,
@@ -347,6 +351,7 @@ impl PowerDataCollector {
     }
 }
 
+#[derive(Debug)]
 pub struct DataBucket {
     start: f64,
     coffee_time: f64,
