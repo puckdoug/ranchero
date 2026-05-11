@@ -84,11 +84,12 @@ Setup (no tests):
 
 `RollingAverage` extensions (used by `DataCollector`):
 
-- [ ] **14.2-T** `tests/rolling_full.rs::full_returns_true_when_elapsed_meets_period`
+- [x] **14.2-T** `tests/rolling_full.rs::full_returns_true_when_elapsed_meets_period`
       and `full_offt_one_loop_evicts_one_sample` — pin the
       `roll.full()` semantics that `DataCollector._resizePeriodized`
       relies on (and which the JS `data.mjs:457-459` while-loop
-      drives).
+      drives). **Done:** Test file created, 3 test cases defined. Tests
+      fail (expected): no method `full()` on `RollingAverage` yet.
 - [ ] **14.2-I** Add `pub fn full(&self, offt: usize) -> bool` to
       `RollingAverage`: returns `true` when `period.is_some()` and
       `elapsed() >= period - offt * ideal_gap` (the JS comparison is
@@ -96,10 +97,12 @@ Setup (no tests):
       expose `pub fn last_time(&self) -> Option<f64>` (returns
       `time_at(-1)`) — `_updatePeriodizedPeaks` reads it for
       `_snapTime`.
-- [ ] **14.3-T** `tests/rolling_reset.rs::reset_clears_state_keeps_options`
+- [x] **14.3-T** `tests/rolling_reset.rs::reset_clears_state_keeps_options`
       — push samples, call `reset`, assert `size == 0`,
       `avg == None`, but the next `add` honors the same
-      `ideal_gap` / `max_gap` / `period`.
+      `ideal_gap` / `max_gap` / `period`. **Done:** Test file created,
+      2 test cases defined. Tests fail (expected): no method `reset()`
+      on `RollingAverage` or `RollingPower` yet.
 - [ ] **14.3-I** Add `pub fn reset(&mut self)` to `RollingAverage`:
       clears `times`, `values`, `offt`, `length`, `active_acc`,
       `values_acc`; preserves `period` and the `*_gap` / `active` /
