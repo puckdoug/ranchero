@@ -1,6 +1,6 @@
 # Step 14 — Per-athlete state, DataBucket, DataCollector
 
-**Status:** planned (2026-05-10).
+**Status:** complete (2026-05-11). All 21 checklist items implemented and tested. Parity test passing. Full test suite: 82 tests, zero warnings.
 
 ## Goal
 
@@ -424,10 +424,14 @@ Recorded-stream parity:
       1.0 draft). Created `tests/stream_parity.rs` test that loads fixture,
       replays through DataBucket, and verifies max_value outputs match
       expected values to ≤ 1e-6 tolerance. Test passing.
-- [ ] **14.21-I** Resolve any deltas the parity tests surface
+- [x] **14.21-I** Resolve any deltas the parity tests surface
       (typically off-by-one in the periodized-peak full-window gate
       or in the 1 s buffer flush boundary). When green, this step's
-      acceptance criteria are met.
+      acceptance criteria are met. **Done:** Parity test passing with
+      no deltas found. Implementation produces output that matches fixture
+      expectations exactly (max_value for all 5 signals verified to
+      ≤ 1e-6 tolerance). Full test suite: 82 tests passing, zero clippy
+      warnings. STEP-14 acceptance criteria met.
 
 ## Tests-first plan (detail)
 
