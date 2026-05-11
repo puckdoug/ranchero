@@ -355,11 +355,15 @@ Setup (no tests):
       verifying upsert creates new athlete on first call, updates
       on subsequent calls, get() retrieves athlete, len() works,
       get_mut() allows mutation. Test currently fails (expected).
-- [ ] **14.18-I** Implement `pub struct AthleteRegistry { athletes:
+- [x] **14.18-I** Implement `pub struct AthleteRegistry { athletes:
     HashMap<u32, AthleteData> }` with `upsert`, `get`, `get_mut`,
       `len`, `is_empty`, and `iter`. `upsert` is the entry point
       that creates a new `AthleteData` on first sight and calls
-      `record_update` on subsequent calls.
+      `record_update` on subsequent calls. **Done:** AthleteRegistry
+      struct implemented with HashMap<u32, AthleteData>; all methods
+      implemented (upsert creates or updates via entry API, get/get_mut
+      for retrieval, len/is_empty/iter for queries). Exported from lib.rs.
+      All tests passing.
 
 - [x] **14.19-T** `tests/athlete_registry.rs::gc_evicts_athletes_past_ttl`
       — insert two athletes, advance their `internal_accessed` to
@@ -367,16 +371,18 @@ Setup (no tests):
       `registry.gc(now)`, assert only the second survives. **Done:**
       Test created with two athletes; manually sets internal_accessed
       timestamps; verifies gc() evicts athlete past TTL (3600s) while
-      preserving younger one; checks gc_report. Test currently fails
-      (expected).
-- [ ] **14.19-I** Implement `pub fn gc(&mut self, now: f64)` that
+      preserving younger one; checks gc_report. Test passing.
+- [x] **14.19-I** Implement `pub fn gc(&mut self, now: f64)` that
       iterates `athletes`, drops every entry whose
       `internal_accessed < now - ATHLETE_GC_TTL_SECS`. Constants
       live in `periods.rs`: `ATHLETE_GC_TTL_SECS = 3600.0`,
       `GROUP_GC_TTL_SECS = 90.0`, `GC_TICK_INTERVAL_SECS = 62.768`
       (the JS interval at `stats.mjs:3553`; the stub's "10 s"
       claim is a test-side knob, not the production default — see
-      "Open verification points").
+      "Open verification points"). **Done:** gc() method implemented
+      on AthleteRegistry, counts dropped athletes before/after retain,
+      returns athlete_dropped count in GcReport. Test verifies correct
+      TTL-based eviction. All tests passing.
 
 - [x] **14.20-T** `tests/athlete_registry.rs::gc_evicts_groups_past_ttl`
       — register two stub group metas with `accessed` at
@@ -386,14 +392,18 @@ Setup (no tests):
       eviction logic is testable now.) **Done:** Test created with
       two groups; uses touch_group() to set accessed timestamps;
       verifies gc() evicts group past TTL (90s) while preserving
-      younger one; checks gc_report. Test currently fails (expected).
-- [ ] **14.20-I** Add `pub struct GroupMeta { id: u32, accessed: f64
+      younger one; checks gc_report. Test passing.
+- [x] **14.20-I** Add `pub struct GroupMeta { id: u32, accessed: f64
     }` and `groups: HashMap<u32, GroupMeta>` to `AthleteRegistry`.
       Extend `gc` to drop groups past `GROUP_GC_TTL_SECS`. Group
       classification (deciding which athletes belong to which
       group, populating `identity_set`) is out of scope; STEP 15
       will populate the map (see STEP 15's "Inputs deferred from
-      STEP 14").
+      STEP 14"). **Done:** GroupMeta struct with Debug/Copy derives;
+      groups HashMap added to AthleteRegistry; touch_group() method
+      for upsert-or-touch semantics; group() and groups_len() accessors;
+      gc() extended to handle groups with same TTL-based eviction;
+      GcReport includes groups_dropped count. All tests passing.
 
 Recorded-stream parity:
 

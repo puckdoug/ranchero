@@ -19,13 +19,15 @@ fn insert_get_remove_round_trip() {
     assert_eq!(registry.len(), 1, "registry should have one athlete");
 
     // Second upsert for same athlete_id returns the same record
-    let ad2 = registry.upsert(athlete_id, course_id, sport, world_time, now + 5.0);
-    assert_eq!(ad2.athlete_id, athlete_id);
+    {
+        let ad2 = registry.upsert(athlete_id, course_id, sport, world_time, now + 5.0);
+        assert_eq!(ad2.athlete_id, athlete_id);
+        assert_eq!(
+            ad2.internal_accessed, now + 5.0,
+            "second upsert should update internal_accessed"
+        );
+    }
     assert_eq!(registry.len(), 1, "registry should still have one athlete");
-    assert_eq!(
-        ad2.internal_accessed, now + 5.0,
-        "second upsert should update internal_accessed"
-    );
 
     // get() retrieves the athlete
     let ad_get = registry.get(athlete_id);
@@ -49,7 +51,6 @@ fn gc_evicts_athletes_past_ttl() {
     let mut registry = AthleteRegistry::new();
 
     let now = 100.0;
-    let athlete_ttl = 3600.0; // ATHLETE_GC_TTL_SECS = 3600.0
 
     // Insert two athletes
     let athlete_old = 111u32;
@@ -94,7 +95,6 @@ fn gc_evicts_groups_past_ttl() {
     let mut registry = AthleteRegistry::new();
 
     let now = 100.0;
-    let group_ttl = 90.0; // GROUP_GC_TTL_SECS = 90.0
 
     let group_old = 111u32;
     let group_young = 222u32;

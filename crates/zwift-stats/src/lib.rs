@@ -28,4 +28,5 @@ pub use power::{RollingPower, calc_tss};
 pub use helpers::{recommended_time_gaps, corrected_rolling_average, corrected_rolling_power, peak_average, peak_np};
 pub use bucket::OneSecondBucket;
 pub use collector::{DataCollector, PowerDataCollector, PeakSnapshot, NpPeakSnapshot, DataCollectorOptions, RollingWindow, DataBucket};
-pub use athlete::{AthleteData, MostRecentState};
+pub use athlete::{AthleteData, MostRecentState, AthleteRegistry, GroupMeta, GcReport};
+pub use periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, GC_TICK_INTERVAL_SECS};
