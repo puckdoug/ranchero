@@ -112,10 +112,12 @@ Setup (no tests):
 
 `RollingPower` accessors (read-only fan-out helpers):
 
-- [ ] **14.4-T** `tests/rolling_power_accessors.rs::power_exposes_avg_active_elapsed_lasttime`
+- [x] **14.4-T** `tests/rolling_power_accessors.rs::power_exposes_avg_active_elapsed_lasttime`
       — assert `RollingPower::avg(None)`, `active()`, `elapsed()`,
       `last_time()`, and `full(0)` agree with the inner
-      `RollingAverage` after a hand-driven sequence.
+      `RollingAverage` after a hand-driven sequence. **Done:** Test
+      file created, 2 test cases defined. Tests fail (expected): no
+      forwarder methods on `RollingPower` yet.
 - [ ] **14.4-I** Forward `avg`, `active`, `elapsed`, `last_time`,
       `full`, `time_at`, `value_at`, `reset`, `entries` from
       `RollingPower` to its inner `RollingAverage`. Also add
