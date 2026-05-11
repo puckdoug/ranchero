@@ -1004,6 +1004,8 @@ were called out in the as-built notes inside the checklist itself.
    `DataBucket` (and update the test files' import paths) to
    `data_bucket.rs`, or remove the empty file and update the plan to
    record that `DataBucket` lives alongside `DataCollector`.
+   *(Resolved by R1 on 2026-05-11: `DataBucket` now lives in
+   `src/data_bucket.rs`.)*
 
 2. **`PeakSnapshot` and `NpPeakSnapshot` are missing the `period` and
    `roll` fields specified in the plan.** The plan defines:
@@ -1143,10 +1145,17 @@ the plan, or by changing the plan to match the code. Mark the item
 checked once the decision has been made and either the code or the
 plan has been brought into agreement.
 
-- [ ] **R1** Place `DataBucket` in `src/data_bucket.rs`, or remove
+- [x] **R1** Place `DataBucket` in `src/data_bucket.rs`, or remove
       the empty stub file and update the crate layout section of the
       plan to record that `DataBucket` lives in `collector.rs`. See
-      concern #1.
+      concern #1. **Done (2026-05-11):** Moved the `DataBucket` struct
+      and its implementation block from `src/collector.rs` into
+      `src/data_bucket.rs`, matching the original crate layout in the
+      plan. `lib.rs` now re-exports `DataBucket` from
+      `crate::data_bucket` rather than `crate::collector`. The import
+      in `tests/data_bucket.rs` was changed from
+      `zwift_stats::collector::DataBucket` to `zwift_stats::DataBucket`.
+      All 82 tests still pass; no clippy warnings.
 
 - [ ] **R2** Decide on the shape of `PeakSnapshot` and
       `NpPeakSnapshot`. Either add the `period` and `roll` fields

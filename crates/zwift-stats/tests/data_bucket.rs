@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use zwift_stats::collector::DataBucket;
+use zwift_stats::DataBucket;
 
 // 14.12: DataBucket default construction
 #[test]
