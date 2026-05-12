@@ -158,7 +158,7 @@ Setup (no tests):
 
 - [x] **15.11-T** `tests/athlete_data_extensions.rs::new_initialises_accumulators_and_streams`,
       `initial_lap_slice_has_clone_reset_bucket`.
-- [ ] **15.11-I** Add the following fields to `AthleteData`:
+- [x] **15.11-I** Add the following fields to `AthleteData`:
       `w_bal: WBalAccumulator`,
       `time_in_power_zones: ZonesAccumulator`,
       `smooth_grade: ExpWeightedAvg`,

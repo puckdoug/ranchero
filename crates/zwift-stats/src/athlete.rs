@@ -3,7 +3,22 @@
 //! [`AthleteData`] and [`AthleteRegistry`] — per-athlete state and garbage collection.
 
 use std::collections::HashMap;
-use crate::{DataBucket, periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS}};
+use crate::{
+    DataBucket, DataSlice, ExpWeightedAvg,
+    wbal::WBalAccumulator, zones::ZonesAccumulator,
+    streams::Streams, road_history::RoadHistory,
+    periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS},
+};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EventSubgroup {
+    // Placeholder: event subgroup tracking
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct EventPrivacy {
+    // Placeholder: event privacy flags
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct MostRecentState {
@@ -32,14 +47,29 @@ pub struct AthleteData {
     pub most_recent_state: Option<MostRecentState>,
     pub bucket: DataBucket,
     pub slice_counter: u32,
-
-    // STEP 15: wBal, timeInPowerZones, smoothGrade, streams, roadHistory,
-    // lapSlices, eventSlices, segmentSlices, activeSegments
+    pub w_bal: WBalAccumulator,
+    pub time_in_power_zones: ZonesAccumulator,
+    pub smooth_grade: ExpWeightedAvg,
+    pub streams: Streams,
+    pub road_history: RoadHistory,
+    pub lap_slices: Vec<DataSlice>,
+    pub event_slices: Vec<DataSlice>,
+    pub segment_slices: Vec<DataSlice>,
+    pub active_segments: HashMap<u32, DataSlice>,
+    pub gap: Option<f64>,
+    pub gap_distance: Option<f64>,
+    pub is_gap_est: bool,
+    pub group_id: Option<u32>,
+    pub event_subgroup: Option<EventSubgroup>,
+    pub event_privacy: EventPrivacy,
+    pub disabled_by_event: bool,
+    pub event_start_pending: bool,
+    pub auto_lap_mark: Option<f64>,
 }
 
 impl AthleteData {
     pub fn new(athlete_id: u32, course_id: u32, sport: u8, world_time: f64, now: f64) -> Self {
-        AthleteData {
+        let mut ad = AthleteData {
             athlete_id,
             course_id,
             sport,
@@ -53,7 +83,31 @@ impl AthleteData {
             most_recent_state: None,
             bucket: DataBucket::new(now),
             slice_counter: 0,
-        }
+            w_bal: WBalAccumulator::new(),
+            time_in_power_zones: ZonesAccumulator::new(),
+            smooth_grade: ExpWeightedAvg::new(8.0, 0.0),
+            streams: Streams::new(),
+            road_history: RoadHistory::new(),
+            lap_slices: Vec::new(),
+            event_slices: Vec::new(),
+            segment_slices: Vec::new(),
+            active_segments: HashMap::new(),
+            gap: None,
+            gap_distance: None,
+            is_gap_est: false,
+            group_id: None,
+            event_subgroup: None,
+            event_privacy: EventPrivacy::default(),
+            disabled_by_event: false,
+            event_start_pending: false,
+            auto_lap_mark: None,
+        };
+
+        // Push initial lap slice
+        let initial_lap = DataSlice::new_from(&mut ad, now);
+        ad.lap_slices.push(initial_lap);
+
+        ad
     }
 
     pub fn touch(&mut self, now: f64) {
