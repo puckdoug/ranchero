@@ -195,7 +195,7 @@ Setup (no tests):
 
 `RoadHistory` (the three-tier ladder):
 
-- [ ] **15.13-T** `tests/road_history.rs::same_road_no_shift_appends_to_a`,
+- [x] **15.13-T** `tests/road_history.rs::same_road_no_shift_appends_to_a`,
       `road_change_shifts_a_to_b_b_to_c`,
       `direction_change_shifts_when_delta_below_minus_001`,
       `direction_change_wipes_a_when_delta_in_minus_001_to_0`,
