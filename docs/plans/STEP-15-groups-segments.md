@@ -218,7 +218,7 @@ Event detection and privacy:
       `auto_end_by_wall_clock_closes_slice`,
       `behavior_auto_reset_resets_athlete_data_on_event_start`,
       `behavior_auto_lap_starts_a_lap_on_event_start_when_not_resetting`.
-- [ ] **15.14-I** Implement `apply_event_state(ad, state,
+- [x] **15.14-I** Implement `apply_event_state(ad, state,
   self_athlete_id, sg_lookup, behavior, now, wall_clock_ms)`
       in `src/events.rs`. `sg_lookup: &HashMap<u32,
   EventSubgroup>` is provided by the caller (the daemon,
