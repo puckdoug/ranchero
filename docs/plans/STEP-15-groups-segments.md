@@ -148,7 +148,7 @@ Setup (no tests):
       `id, start, end, course_id, sport, bucket` plus the
       segment / event-specific extension fields named in the
       Public API section. `DataSlice::new_from(ad: &mut
-    AthleteData, start: f64)` calls `ad.bucket.clone_reset()`
+  AthleteData, start: f64)` calls `ad.bucket.clone_reset()`
       and pulls the next id from a per-`AthleteData` `u32`
       counter, then packs it as
       `((ad.athlete_id as u64) << 32) | (counter as u64)` so the
@@ -156,7 +156,7 @@ Setup (no tests):
 
 `AthleteData` extension — supporting fields:
 
-- [ ] **15.11-T** `tests/athlete_data_extensions.rs::new_initialises_accumulators_and_streams`,
+- [x] **15.11-T** `tests/athlete_data_extensions.rs::new_initialises_accumulators_and_streams`,
       `initial_lap_slice_has_clone_reset_bucket`.
 - [ ] **15.11-I** Add the following fields to `AthleteData`:
       `w_bal: WBalAccumulator`,
@@ -189,7 +189,7 @@ Setup (no tests):
       `road_time`, `reverse`, `event_subgroup_id`, `group_id`,
       `time`, `event_distance`) and implement `PlayerStateView`
       for it. Every STEP 15 detector that reads state takes `&dyn
-    PlayerStateView` (or `impl PlayerStateView`) so STEP 17 can
+  PlayerStateView` (or `impl PlayerStateView`) so STEP 17 can
       later implement the trait on the `zwift-proto::PlayerState`
       type without changing call sites.
 
@@ -219,9 +219,9 @@ Event detection and privacy:
       `behavior_auto_reset_resets_athlete_data_on_event_start`,
       `behavior_auto_lap_starts_a_lap_on_event_start_when_not_resetting`.
 - [ ] **15.14-I** Implement `apply_event_state(ad, state,
-    self_athlete_id, sg_lookup, behavior, now, wall_clock_ms)`
+  self_athlete_id, sg_lookup, behavior, now, wall_clock_ms)`
       in `src/events.rs`. `sg_lookup: &HashMap<u32,
-    EventSubgroup>` is provided by the caller (the daemon,
+  EventSubgroup>` is provided by the caller (the daemon,
       STEP 17, owns the subgroup cache). `behavior: EventBehavior`
       carries `auto_reset` and `auto_lap` flags. The function
       calls `trigger_event_start(...)`,
@@ -248,7 +248,7 @@ Manual and automatic laps:
       `start_athlete_lap_returns_new_slice_id`,
       `start_athlete_lap_clones_bucket_via_clone_reset`.
 - [ ] **15.16-I** Implement `start_athlete_lap(ad: &mut
-    AthleteData, now: f64) -> u64` in `src/laps.rs`. Stamp the
+  AthleteData, now: f64) -> u64` in `src/laps.rs`. Stamp the
       current open lap's `end = Some(now)`, create a new
       `DataSlice` via `clone_reset`, push, return its id.
 - [ ] **15.17-T** `tests/laps.rs::auto_lap_by_distance_threshold_triggers_at_each_interval`,
@@ -256,7 +256,7 @@ Manual and automatic laps:
       `auto_lap_mark_resets_on_course_change`,
       `auto_lap_first_call_seeds_mark_without_lapping`.
 - [ ] **15.17-I** Implement `auto_lap_check(ad, state, cfg, now)
-    -> bool` returning `true` when a lap was started.
+  -> bool` returning `true` when a lap was started.
       Mirrors `_autoLapCheck` (stats.mjs:3032-3041).
 
 Segment detection:
@@ -267,9 +267,9 @@ Segment detection:
       `exit_after_open_stops_segment`,
       `multiple_concurrent_segments_tracked_independently`.
 - [ ] **15.18-I** Implement `active_segment_check(ad, state, env,
-    now)` in `src/segments.rs`. `env: &dyn SegmentLookup` is a
+  now)` in `src/segments.rs`. `env: &dyn SegmentLookup` is a
       trait with `road_segments(course_id, road_id, reverse) ->
-    &[Segment]` and `segment(id) -> Option<&Segment>`; STEP 15
+  &[Segment]` and `segment(id) -> Option<&Segment>`; STEP 15
       ships a test-only in-memory implementation. The real
       table-backed implementation lands in `zwift-routes`
       (STEP 17).
@@ -294,12 +294,12 @@ Gap computation (`compare_road_positions`):
       `no_connection_returns_none`,
       `boundary_error_term_001_admits_near_matches`.
 - [ ] **15.20-I** Implement `compare_road_positions(p1, p2, env)
-    -> Option<RoadComparison>` in `src/road_history.rs`.
+  -> Option<RoadComparison>` in `src/road_history.rs`.
       `RoadGeometry` is a trait with `road_distance(road,
-    start_pct, end_pct) -> f64` (test stub returns straight-line
+  start_pct, end_pct) -> f64` (test stub returns straight-line
       `(end - start) * road.length_metres`).
       `RoadComparison { world_time: f64, distance: f64,
-    reversed: bool }`.
+  reversed: bool }`.
 - [ ] **15.21-T** `tests/gap.rs::gap_field_set_from_world_time_delta_in_seconds`,
       `gap_negated_when_reversed_and_positive`,
       `gap_distance_signed_by_direction`,
@@ -318,7 +318,7 @@ Group classification:
       `gap_above_0_8_without_draft_splits_group`,
       `gap_at_or_below_0_8_with_no_draft_keeps_group`.
 - [ ] **15.22-I** Implement `compute_groups(nearby, watching_idx,
-    prior_groups, next_id, now) -> Vec<Group>` in
+  prior_groups, next_id, now) -> Vec<Group>` in
       `src/groups.rs`. First pass: clump by gap thresholds
       (2.0 s, or 0.8 s when `draft == 0`).
 - [ ] **15.23-T** `tests/groups.rs::aggregate_weight_skips_zero_weight_athletes`,
@@ -369,7 +369,7 @@ Streams:
       JS `[lat, lng]` array):
       `pub struct LatLng { pub lat: f64, pub lng: f64 }`.
       `Streams { pub distance: Vec<f64>, pub altitude: Vec<f64>,
-    pub latlng: Vec<LatLng>, pub wbal: Vec<Option<f64>> }`.
+  pub latlng: Vec<LatLng>, pub wbal: Vec<Option<f64>> }`.
       Add `AthleteData::record_streams(state)` that appends one
       entry per call.
 
@@ -602,14 +602,14 @@ below correspond to the checklist items above.
 
 ### 15.24 Jaccard identity — `tests/groups_identity.rs`
 
-| Test                                                                   | Asserts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `singleton_group_does_not_create_group_meta`                           | Single-rider group; `prior_groups.len()` unchanged after `compute_groups`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `multi_rider_group_creates_fresh_meta_when_no_prior_match`             | No prior groups. After compute, `prior_groups.len() == 1`, the group's `id == initial_next_id`. `next_id` incremented.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `jaccard_above_0_5_reuses_prior_group_id`                              | Prior group `{1, 2, 3}` with id 100. New group `{1, 2, 3, 4}`. Jaccard = `3/4 = 0.75`. Matches; new group's `id == 100`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `jaccard_exactly_0_5_creates_fresh_meta_strict_threshold`              | Prior group `{1, 2, 3}` with id 100. New group `{1, 2, 4}`. Jaccard = `2/4 = 0.5`, _not_ `> 0.5`. New group mints a fresh id; `prior_groups` has both entries (the old one until GC, the new one with the fresh id).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `members_who_left_get_group_id_cleared_only_if_still_pointing_to_meta` | Prior meta id=100, identity_set `{1, 2, 3}`. Athletes 1/2/3 carry `group_id = Some(100)` from prior tick. New group `{1, 2, 4, 5}` matches at Jaccard 2/5 = 0.4 → does _not_ match. Adjust the test so Jaccard is `> 0.5` (new group `{1, 2, 3, 4, 5}` ∩ `{1,2,3}` = 3, ∪ = 5, Jaccard = 0.6 → match). Athlete 3 was in the prior set but is still in the new set, so its `group_id` stays. Modify: new group `{1, 2, 4, 5, 6}` ∩ `{1,2,3}` = 2, ∪ = 6, Jaccard = 0.33 → does not match. Use a setup that meets `> 0.5` while leaving someone behind: prior `{1, 2, 3, 4}`, new `{1, 2, 3, 5}`. Jaccard = 3/5 = 0.6 → match. Athlete 4 (left behind) had `group_id = Some(100)`; after compute, `athlete_4.group_id == None`. A second athlete with `group_id = Some(999)` (unrelated) stays `Some(999)`. |
-| `prior_meta_used_once_per_tick_greedy_first_wins`                      | Two new groups both score `> 0.5` against the same prior meta. The first iterated group wins the id; the second mints a fresh one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Test                                                                   | Asserts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `singleton_group_does_not_create_group_meta`                           | Single-rider group; `prior_groups.len()` unchanged after `compute_groups`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `multi_rider_group_creates_fresh_meta_when_no_prior_match`             | No prior groups. After compute, `prior_groups.len() == 1`, the group's `id == initial_next_id`. `next_id` incremented.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `jaccard_above_0_5_reuses_prior_group_id`                              | Prior group `{1, 2, 3}` with id 100. New group `{1, 2, 3, 4}`. Jaccard = `3/4 = 0.75`. Matches; new group's `id == 100`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `jaccard_exactly_0_5_creates_fresh_meta_strict_threshold`              | Prior group `{1, 2, 3}` with id 100. New group `{1, 2, 4}`. Jaccard = `2/4 = 0.5`, _not_ `> 0.5`. New group mints a fresh id; `prior_groups` has both entries (the old one until GC, the new one with the fresh id).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `members_who_left_get_group_id_cleared_only_if_still_pointing_to_meta` | Prior meta id=100, identity*set `{1, 2, 3}`. Athletes 1/2/3 carry `group_id = Some(100)` from prior tick. New group `{1, 2, 4, 5}` matches at Jaccard 2/5 = 0.4 → does \_not* match. Adjust the test so Jaccard is `> 0.5` (new group `{1, 2, 3, 4, 5}` ∩ `{1,2,3}` = 3, ∪ = 5, Jaccard = 0.6 → match). Athlete 3 was in the prior set but is still in the new set, so its `group_id` stays. Modify: new group `{1, 2, 4, 5, 6}` ∩ `{1,2,3}` = 2, ∪ = 6, Jaccard = 0.33 → does not match. Use a setup that meets `> 0.5` while leaving someone behind: prior `{1, 2, 3, 4}`, new `{1, 2, 3, 5}`. Jaccard = 3/5 = 0.6 → match. Athlete 4 (left behind) had `group_id = Some(100)`; after compute, `athlete_4.group_id == None`. A second athlete with `group_id = Some(999)` (unrelated) stays `Some(999)`. |
+| `prior_meta_used_once_per_tick_greedy_first_wins`                      | Two new groups both score `> 0.5` against the same prior meta. The first iterated group wins the id; the second mints a fresh one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### 15.25 GroupMeta identity_set — `tests/groups_identity.rs`
 
