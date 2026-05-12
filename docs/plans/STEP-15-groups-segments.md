@@ -287,7 +287,7 @@ Segment detection:
 
 Gap computation (`compare_road_positions`):
 
-- [ ] **15.20-T** `tests/gap.rs::same_road_same_direction_uses_delta_rpct`,
+- [x] **15.20-T** `tests/gap.rs::same_road_same_direction_uses_delta_rpct`,
       `same_road_negative_delta_marks_reversed`,
       `cross_tier_two_back_resolves_via_b_road`,
       `cross_tier_three_back_resolves_via_c_road`,
@@ -300,7 +300,7 @@ Gap computation (`compare_road_positions`):
       `(end - start) * road.length_metres`).
       `RoadComparison { world_time: f64, distance: f64,
   reversed: bool }`.
-- [ ] **15.21-T** `tests/gap.rs::gap_field_set_from_world_time_delta_in_seconds`,
+- [x] **15.21-T** `tests/gap.rs::gap_field_set_from_world_time_delta_in_seconds`,
       `gap_negated_when_reversed_and_positive`,
       `gap_distance_signed_by_direction`,
       `is_gap_est_false_when_world_time_match`,
@@ -312,7 +312,7 @@ Gap computation (`compare_road_positions`):
 
 Group classification:
 
-- [ ] **15.22-T** `tests/groups.rs::singleton_riders_get_group_id_none`,
+- [x] **15.22-T** `tests/groups.rs::singleton_riders_get_group_id_none`,
       `two_riders_within_2_second_gap_form_one_group`,
       `gap_above_2_seconds_splits_group`,
       `gap_above_0_8_without_draft_splits_group`,
@@ -321,7 +321,7 @@ Group classification:
   prior_groups, next_id, now) -> Vec<Group>` in
       `src/groups.rs`. First pass: clump by gap thresholds
       (2.0 s, or 0.8 s when `draft == 0`).
-- [ ] **15.23-T** `tests/groups.rs::aggregate_weight_skips_zero_weight_athletes`,
+- [x] **15.23-T** `tests/groups.rs::aggregate_weight_skips_zero_weight_athletes`,
       `aggregate_power_and_draft_use_member_count`,
       `aggregate_speed_uses_median_not_mean`,
       `aggregate_heartrate_skips_none_entries`,
@@ -334,7 +334,7 @@ Group classification:
       Compute `length_time` / `length_distance` consistently for
       every group, including the last one (fix the JS bug at
       `stats.mjs:4506-4509` which produces 0 for the last group).
-- [ ] **15.24-T** `tests/groups_identity.rs::singleton_group_does_not_create_group_meta`,
+- [x] **15.24-T** `tests/groups_identity.rs::singleton_group_does_not_create_group_meta`,
       `multi_rider_group_creates_fresh_meta_when_no_prior_match`,
       `jaccard_above_0_5_reuses_prior_group_id`,
       `jaccard_exactly_0_5_creates_fresh_meta_strict_threshold`,
