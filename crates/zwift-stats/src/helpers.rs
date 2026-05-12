@@ -70,3 +70,42 @@ pub fn peak_np(_: f64, _: &[f64], _: &[f64]) -> Option<f64> {
     // Placeholder; to be implemented in 13.12-I.
     None
 }
+
+#[derive(Debug, Clone)]
+pub struct ExpWeightedAvg {
+    size: f64,
+    avg: f64,
+    c_next: f64,
+    c_prev: f64,
+}
+
+impl ExpWeightedAvg {
+    pub fn new(size: f64, seed: f64) -> Self {
+        let c_next = 1.0 - (-1.0 / size).exp();
+        let c_prev = 1.0 - c_next;
+
+        ExpWeightedAvg {
+            size,
+            avg: seed,
+            c_next,
+            c_prev,
+        }
+    }
+
+    pub fn update(&mut self, value: f64) -> f64 {
+        self.avg = self.avg * self.c_prev + value * self.c_next;
+        self.avg
+    }
+
+    pub fn get(&self) -> f64 {
+        self.avg
+    }
+
+    pub fn size(&self) -> f64 {
+        self.size
+    }
+}
+
+pub fn exp_weighted_avg(size: f64, seed: f64) -> ExpWeightedAvg {
+    ExpWeightedAvg::new(size, seed)
+}

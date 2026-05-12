@@ -132,7 +132,7 @@ Setup (no tests):
 - [x] **15.9-T** `tests/exp_weighted_avg.rs::seed_returns_seed_until_first_input`,
       `alpha_matches_js_for_size_8`,
       `successive_updates_track_em_a_formula`.
-- [ ] **15.9-I** Add `pub fn exp_weighted_avg(size: f64, seed: f64) -> ExpWeightedAvg`
+- [x] **15.9-I** Add `pub fn exp_weighted_avg(size: f64, seed: f64) -> ExpWeightedAvg`
       to `src/helpers.rs`. `ExpWeightedAvg::update(value) -> f64`,
       `ExpWeightedAvg::get() -> f64`, `ExpWeightedAvg::size() -> f64`.
       Matches `expWeightedAvg(size=2, seed=0)` (data.mjs:19-27).
