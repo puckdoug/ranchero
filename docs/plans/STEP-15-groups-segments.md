@@ -201,7 +201,7 @@ Setup (no tests):
       `direction_change_wipes_a_when_delta_in_minus_001_to_0`,
       `course_change_resets_b_and_c`,
       `first_state_seeds_aroad_without_shift`.
-- [ ] **15.13-I** Implement `RoadHistory::record(state, prev)`
+- [x] **15.13-I** Implement `RoadHistory::record(state, prev)`
       mirroring `_recordAthleteRoadHistory` (stats.mjs:3043-3084).
       Use a `road_sig(course_id, road_id, reverse)` free function
       defined alongside `RoadHistory`; the long-term home for
