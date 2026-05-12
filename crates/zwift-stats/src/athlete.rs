@@ -12,7 +12,11 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct EventSubgroup {
-    // Placeholder: event subgroup tracking
+    pub id: u32,
+    pub hide_w_bal: bool,
+    pub hide_ftp: bool,
+    pub hide_the_hud: bool,
+    pub no_overlays: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

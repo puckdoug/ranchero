@@ -21,3 +21,20 @@ pub fn apply_event_state(
 ) {
     // Placeholder: will implement event detection and privacy in STEP 15.14-I
 }
+
+#[allow(dead_code)]
+fn apply_privacy_flags(
+    athlete_id: u32,
+    self_athlete_id: u32,
+    sg: &EventSubgroup,
+) -> (bool, bool, bool) {
+    if athlete_id == self_athlete_id {
+        (false, false, false)
+    } else {
+        (
+            sg.hide_w_bal,
+            sg.hide_ftp,
+            sg.hide_the_hud || sg.no_overlays,
+        )
+    }
+}

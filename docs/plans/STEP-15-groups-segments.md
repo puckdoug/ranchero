@@ -236,7 +236,7 @@ Event detection and privacy:
       `non_self_hideftp_sets_hide_ftp`,
       `hidethehud_sets_disabled_by_event`,
       `nooverlays_sets_disabled_by_event`.
-- [ ] **15.15-I** Apply the four tag rules from
+- [x] **15.15-I** Apply the four tag rules from
       `stats.mjs:2985-2989`: skip privacy assignment when
       `state.athlete_id == self_athlete_id`; otherwise stamp
       `event_privacy.hide_w_bal`, `event_privacy.hide_ftp`,
