@@ -139,7 +139,7 @@ Setup (no tests):
 
 `DataSlice` (snapshot wrapper around `DataBucket`):
 
-- [ ] **15.10-T** `tests/data_slice.rs::new_clones_bucket_reset_and_carries_identity`,
+- [x] **15.10-T** `tests/data_slice.rs::new_clones_bucket_reset_and_carries_identity`,
       `id_is_assigned_monotonically_per_athlete`,
       `id_carries_athlete_prefix_in_upper_32_bits`,
       `end_starts_none_and_can_be_stamped_once`,
