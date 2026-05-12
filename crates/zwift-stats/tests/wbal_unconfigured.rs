@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+use zwift_stats::{WBalAccumulator, Sample};
+
+#[test]
+fn unconfigured_yields_none() {
+    let mut acc = WBalAccumulator::new();
+
+    // Fresh accumulator should return None
+    assert_eq!(acc.value(), None, "Unconfigured accumulator should return None");
+
+    // Accumulating without configuration should still return None
+    acc.accumulate(0.0, Sample::Value(200.0));
+    assert_eq!(acc.value(), None, "Accumulating on unconfigured accumulator should return None");
+}
+
+#[test]
+fn accumulator_clone_continue_carries_w_bal() {
+    let mut acc = WBalAccumulator::new();
+    acc.configure(200.0, 20000.0);
+
+    // Drive wBal to approximately 5000
+    for _ in 0..1000 {
+        acc.accumulate(0.0, Sample::Value(400.0));
+    }
+
+    let wbal_source = acc.value().unwrap();
+    assert!(wbal_source < 5500.0 && wbal_source > 4500.0, "wBal should be ~5000, got {}", wbal_source);
+
+    // Clone the accumulator
+    let mut acc_clone = acc.clone_continue();
+
+    // Clone should carry the same wBal state
+    assert_eq!(acc_clone.value().unwrap(), wbal_source, "clone_continue should carry wBal state");
+
+    // Subsequent writes should diverge
+    acc.accumulate(1.0, Sample::Value(100.0)); // Recovery
+    acc_clone.accumulate(1.0, Sample::Value(500.0)); // Depletion
+
+    let wbal_source_after = acc.value().unwrap();
+    let wbal_clone_after = acc_clone.value().unwrap();
+
+    assert!(wbal_source_after > wbal_source, "Source should recover");
+    assert!(wbal_clone_after < wbal_source, "Clone should deplete");
+}
