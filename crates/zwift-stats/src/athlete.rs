@@ -28,11 +28,13 @@ pub struct EventPrivacy {
 pub trait PlayerStateView {
     fn lat(&self) -> f64;
     fn lng(&self) -> f64;
+    fn course_id(&self) -> u32;
     fn road_id(&self) -> u32;
     fn road_time(&self) -> f64;
     fn reverse(&self) -> bool;
     fn event_subgroup_id(&self) -> u32;
     fn group_id(&self) -> u32;
+    fn world_time(&self) -> f64;
     fn time(&self) -> f64;
     fn event_distance(&self) -> f64;
     fn is_empty(&self) -> bool;
@@ -50,6 +52,7 @@ pub struct MostRecentState {
     pub altitude: f64,
     pub lat: f64,
     pub lng: f64,
+    pub course_id: u32,
     pub road_id: u32,
     pub road_time: f64,
     pub reverse: bool,
@@ -66,6 +69,10 @@ impl PlayerStateView for MostRecentState {
 
     fn lng(&self) -> f64 {
         self.lng
+    }
+
+    fn course_id(&self) -> u32 {
+        self.course_id
     }
 
     fn road_id(&self) -> u32 {
@@ -86,6 +93,10 @@ impl PlayerStateView for MostRecentState {
 
     fn group_id(&self) -> u32 {
         self.group_id
+    }
+
+    fn world_time(&self) -> f64 {
+        self.world_time
     }
 
     fn time(&self) -> f64 {

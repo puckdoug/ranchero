@@ -266,7 +266,7 @@ Segment detection:
       `outside_progress_does_not_open_slice`,
       `exit_after_open_stops_segment`,
       `multiple_concurrent_segments_tracked_independently`.
-- [ ] **15.18-I** Implement `active_segment_check(ad, state, env,
+- [x] **15.18-I** Implement `active_segment_check(ad, state, env,
   now)` in `src/segments.rs`. `env: &dyn SegmentLookup` is a
       trait with `road_segments(course_id, road_id, reverse) ->
   &[Segment]` and `segment(id) -> Option<&Segment>`; STEP 15
@@ -279,7 +279,7 @@ Segment detection:
       `stop_thresholds_60_percent_for_400_to_1000m`,
       `stop_thresholds_25_percent_for_below_400m`,
       `stop_walks_road_history_a_b_c_until_match`.
-- [ ] **15.19-I** Implement `stop_segment(...)` per
+- [x] **15.19-I** Implement `stop_segment(...)` per
       `stats.mjs:1997-2045`. Walk `road_history` tiers, compute
       completion fraction over `(road_start, road_finish)`
       (mirroring reverse), apply the 0.90 / 0.60 / 0.25 threshold

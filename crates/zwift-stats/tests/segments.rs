@@ -48,6 +48,7 @@ fn make_state(course_id: u32, road_id: u32, road_time: f64) -> MostRecentState {
         altitude: 0.0,
         lat: 0.0,
         lng: 0.0,
+        course_id,
         road_id,
         road_time,
         reverse: false,

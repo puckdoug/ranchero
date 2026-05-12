@@ -10,6 +10,9 @@ pub struct DataSlice {
     pub course_id: u32,
     pub sport: u8,
     pub bucket: DataBucket,
+    pub incomplete: bool,
+    pub segment_id: Option<u32>,
+    pub start_world_time: f64,
 }
 
 impl DataSlice {
@@ -28,6 +31,9 @@ impl DataSlice {
             course_id: ad.course_id,
             sport: ad.sport,
             bucket: ad.bucket.clone_reset(),
+            incomplete: false,
+            segment_id: None,
+            start_world_time: 0.0,
         }
     }
 
