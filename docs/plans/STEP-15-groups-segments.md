@@ -261,7 +261,7 @@ Manual and automatic laps:
 
 Segment detection:
 
-- [ ] **15.18-T** `tests/segments.rs::start_within_first_5_percent_opens_slice`,
+- [x] **15.18-T** `tests/segments.rs::start_within_first_5_percent_opens_slice`,
       `start_within_first_150m_overrides_5_percent_for_short_segments`,
       `outside_progress_does_not_open_slice`,
       `exit_after_open_stops_segment`,
@@ -273,7 +273,7 @@ Segment detection:
       ships a test-only in-memory implementation. The real
       table-backed implementation lands in `zwift-routes`
       (STEP 17).
-- [ ] **15.19-T** `tests/segments.rs::stop_marks_incomplete_when_no_road_history`,
+- [x] **15.19-T** `tests/segments.rs::stop_marks_incomplete_when_no_road_history`,
       `stop_marks_complete_when_long_segment_at_or_above_90_percent`,
       `stop_marks_incomplete_when_long_segment_below_90_percent`,
       `stop_thresholds_60_percent_for_400_to_1000m`,
