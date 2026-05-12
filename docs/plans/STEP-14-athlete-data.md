@@ -1166,7 +1166,9 @@ plan has been brought into agreement.
       them), or remove those fields from the plan's "Public API
       surface" section and rewrite Open verification point #7 to
       record the lighter snapshot as the intended design. See
-      concern #2.
+      concern #2. *Decision: Path A (add the fields). Work tracked
+      as R2A-T1 through R2A-I6 in the "R2 elaboration" section
+      below.*
 
 - [ ] **R3** Decide on the trait surface. Either rename
       `RollingWindow` back to `Collector` and change `add` to take
@@ -1226,3 +1228,153 @@ plan has been brought into agreement.
       behaviour in the STEP 17 planning notes so that handling of
       mid-session course or sport changes is considered when the
       daemon ingest path is designed. See concern #8.
+
+## R2 elaboration: `PeakSnapshot` and `NpPeakSnapshot` shape
+
+### Decision: Path A (chosen 2026-05-12)
+
+The original plan defines the two snapshot structures with four fields
+each:
+
+```rust
+pub struct PeakSnapshot {
+    pub period:     f64,
+    pub snap_value: f64,
+    pub snap_time:  f64,
+    pub roll:       /* clone of the rolling at peak time */,
+}
+
+pub struct NpPeakSnapshot {
+    pub period:     f64,
+    pub snap_value: f64,
+    pub snap_time:  f64,
+    pub roll:       RollingPower,
+}
+```
+
+The implementation has only `{ snap_value, snap_time }`. Path A
+(implement the full shape) has been chosen over Path B (amend the
+plan to record the lighter snapshot).
+
+**Why:** the purpose of ranchero is to feed visualization. Discarding
+the rolling buffer at peak time would force a re-implementation as
+soon as the first analysis-page feature needs it (graphs of the peak
+window, recomputed statistics over the window, cross-signal queries
+against the peak interval). The `roll` field carries the actual
+sixty 1 Hz samples (or 3,600 for the 1 h period) that produced the
+peak — per-sample timestamps, active versus elapsed bookkeeping,
+inline Normalized Power state — and that data has no other home once
+the window has scrolled past.
+
+**Cost (accepted):** every peak snapshot carries a copy of the
+rolling. Open verification point #7 estimates the worst case at
+roughly 174 MB at 100 athletes × 5 signals × 6 periods × 3,600 s
+window. Allocation pressure rises on every peak update because the
+rolling is cloned rather than just having two `f64` fields written.
+If STEP 19 measures pressure here, the lighter snapshot remains a
+viable fallback.
+
+Path B is recorded below as the named fallback but is not the path
+being implemented.
+
+### Path A implementation (the chosen path)
+
+TDD pairs in the same style as the rest of the document. Each `-T`
+item adds a failing test; each `-I` item adds the production code
+that turns it green.
+
+- [ ] **R2A-T1** `tests/collector.rs::peak_snapshot_carries_period_and_roll`
+      — drive a stream that fills the 60 s period and triggers a peak
+      update. Assert that the snapshot's `period` equals `60.0` and
+      that its `roll.avg(None)` and `roll.last_time()` match the
+      periodized entry's rolling at the moment the peak was set.
+      The test fails to compile because `period` and `roll` do not
+      exist on `PeakSnapshot`.
+
+- [ ] **R2A-I1** Make `PeakSnapshot` generic over `R: RollingWindow`,
+      add `pub period: f64` and `pub roll: R` fields, and update
+      `DataCollector::flush` to populate them when the peak is set.
+      Cascade the generic through `PeriodizedEntry<R>`'s `peak`
+      field (`Option<PeakSnapshot<R>>`) and through the return type
+      of `DataCollector::peaks()`
+      (`Vec<Option<PeakSnapshot<R>>>`). Update the two existing
+      tests that read `peaks()[0]` to take the generic into account
+      where needed.
+
+- [ ] **R2A-T2** `tests/collector.rs::peak_snapshot_roll_is_independent_of_source`
+      — drive a stream that produces a peak on the 60 s period.
+      Capture the snapshot (by cloning it). Push more samples that
+      would otherwise change the rolling's `avg` and `last_time`.
+      Assert that the captured snapshot's `roll.avg(None)` and
+      `roll.last_time()` are unchanged. This pins the deep-clone
+      property that the rest of Path A depends on.
+
+- [ ] **R2A-I2** No new code is expected here: STEP 13 chose copy
+      on `RollingWindow::clone`, so the snapshot's `roll` is already
+      independent of the source. The test serves to record that
+      property at the snapshot boundary so a later optimisation
+      (such as `Arc<Vec<f64>>` shared storage) cannot quietly break
+      it. If the test fails, replace the implicit clone with an
+      explicit deep clone.
+
+- [ ] **R2A-T3** `tests/power_collector.rs::np_peak_snapshot_carries_period_and_roll`
+      — drive a constant-power stream long enough to fill the 300 s
+      period and produce an NP peak. Assert that the snapshot's
+      `period` equals `300.0` and that its `roll.np(false)` matches
+      the inner roll's `np(false)` at the moment the peak was set.
+
+- [ ] **R2A-I3** Add `pub period: f64` and `pub roll: RollingPower`
+      fields to `NpPeakSnapshot`. Update
+      `PowerDataCollector::update_np_peaks` to populate them. The
+      type stays concrete (NP peaks are only ever recorded for
+      `RollingPower`).
+
+- [ ] **R2A-T4** `tests/collector.rs::clone_continue_preserves_peak_rolls`
+      — drive a stream that produces a peak, call `clone_continue()`,
+      then push more samples to the source. Assert that the cloned
+      collector's snapshot still reports the original `roll.avg(None)`
+      and `roll.last_time()` (deep clone survives through the
+      carry-forward).
+
+- [ ] **R2A-T5** `tests/power_collector.rs::clone_continue_preserves_np_peak_rolls`
+      — mirror of R2A-T4 for `NpPeakSnapshot`.
+
+- [ ] **R2A-I4** Verify that `DataCollector::clone_continue` and
+      `PowerDataCollector::clone_continue` already clone the peaks
+      deeply (the current implementations call `entry.peak.clone()`,
+      which clones the inner `R` via `RollingWindow::clone`). If the
+      tests in R2A-T4 and R2A-T5 fail, replace the implicit clone
+      with an explicit deep clone of the inner roll. Mirror the
+      change in `clone_reset` if needed (peaks are cleared there, so
+      no work is expected).
+
+- [ ] **R2A-T6** `tests/collector.rs::peaks_method_returns_generic_snapshots`
+      — compile-only check (no runtime assertion needed beyond
+      construction) that the return type of `DataCollector::<RollingAverage>::peaks()`
+      is `Vec<Option<PeakSnapshot<RollingAverage>>>` and that
+      `DataCollector::<RollingPower>::peaks()` returns
+      `Vec<Option<PeakSnapshot<RollingPower>>>`. This pins the
+      generic surface so a later refactor cannot silently revert to
+      a concrete type.
+
+- [ ] **R2A-I5** Update the "Public API surface" section of this
+      document to record `PeakSnapshot<R>` as generic with the new
+      fields, the matching `NpPeakSnapshot` shape, and the
+      corresponding signatures of `peaks()` on both collectors.
+      Rewrite Open verification point #7 so it describes the
+      implemented behaviour (the storage cost estimate stays
+      roughly as written).
+
+- [ ] **R2A-I6** Mark R2 done in the remediation checklist and
+      annotate concern #2 with the resolution note.
+
+### Path B (named fallback, not being implemented)
+
+Path B is the lighter alternative: keep the `{ snap_value, snap_time }`
+shape and amend the plan instead of the code. It is recorded here as
+the named fallback if STEP 19 measures pressure from per-snapshot
+rolling clones and decides the heavier shape is not affordable. The
+work for Path B is plan-only: update the "Public API surface" section
+to record the two-field shape, and rewrite Open verification point #7
+to record that the rolling is not cloned per snapshot. Path B is not
+on the current critical path.
