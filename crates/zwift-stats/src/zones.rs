@@ -107,6 +107,7 @@ pub fn sweetspot_zone(ftp: f64, kind: SweetspotKind) -> Zone {
     }
 }
 
+#[derive(Debug)]
 pub struct ZonesAccumulator {
     ftp: Option<f64>,
     zones: Vec<Zone>,

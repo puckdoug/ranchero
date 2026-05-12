@@ -31,6 +31,7 @@ pub struct AthleteData {
     pub internal_accessed: f64,
     pub most_recent_state: Option<MostRecentState>,
     pub bucket: DataBucket,
+    pub slice_counter: u32,
 
     // STEP 15: wBal, timeInPowerZones, smoothGrade, streams, roadHistory,
     // lapSlices, eventSlices, segmentSlices, activeSegments
@@ -51,6 +52,7 @@ impl AthleteData {
             internal_accessed: now,
             most_recent_state: None,
             bucket: DataBucket::new(now),
+            slice_counter: 0,
         }
     }
 

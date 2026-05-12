@@ -41,3 +41,4 @@ pub use data_bucket::DataBucket;
 pub use athlete::{AthleteData, MostRecentState, AthleteRegistry, GroupMeta, GcReport};
 pub use periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, GC_TICK_INTERVAL_SECS};
 pub use wbal::WBalAccumulator;
+pub use slice::DataSlice;

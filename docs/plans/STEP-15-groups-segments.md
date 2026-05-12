@@ -144,7 +144,7 @@ Setup (no tests):
       `id_carries_athlete_prefix_in_upper_32_bits`,
       `end_starts_none_and_can_be_stamped_once`,
       `slice_carries_course_and_sport_at_creation`.
-- [ ] **15.10-I** Add `DataSlice` in `src/slice.rs` with fields
+- [x] **15.10-I** Add `DataSlice` in `src/slice.rs` with fields
       `id, start, end, course_id, sport, bucket` plus the
       segment / event-specific extension fields named in the
       Public API section. `DataSlice::new_from(ad: &mut

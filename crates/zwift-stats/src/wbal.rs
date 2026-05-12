@@ -2,6 +2,7 @@
 
 use crate::Sample;
 
+#[derive(Debug)]
 pub struct WBalAccumulator {
     cp: Option<f64>,
     w_prime: Option<f64>,
