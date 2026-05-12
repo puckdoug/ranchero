@@ -82,15 +82,29 @@ graph:
   (c) is selected, add a corresponding method on `AthleteRegistry`
   or `AthleteData` in `zwift-stats` so that STEP 17 stays
   proto-free.
-- **`MostRecentState` proto-type decision.** STEP 14 ships a
-  hand-written `MostRecentState` struct with the minimal field set
-  the parity tests need. If STEP 17's proto-routing code reaches
-  for fields not yet in the struct, the cleanest move is to make
-  `MostRecentState` a re-export of the `zwift-proto` `PlayerState`
-  type rather than re-deriving the struct field-by-field. Decide
-  this here so `zwift-stats` does not accumulate a parallel proto
-  shape over time. Record the decision in this step's as-built
-  notes.
+- **`PlayerStateView` proto-type implementation.** STEP 15
+  introduced a `PlayerStateView` accessor trait, implemented for
+  the hand-written `MostRecentState` struct, so every STEP 15
+  detector reads the last-seen state through the trait rather
+  than the concrete type. STEP 17 decides whether to also
+  implement `PlayerStateView` directly on
+  `zwift_proto::PlayerState` and feed the detectors proto values
+  with no intermediate copy, or to keep the daemon translating
+  decoded protos into `MostRecentState` and let the detectors
+  read that struct. Either choice keeps the detectors unchanged
+  because they only depend on the trait. Decide this here and
+  record the choice in this step's as-built notes. (Supersedes
+  the prior `MostRecentState` proto-type decision bullet.)
+- **`EventBehavior` settings wiring.** STEP 15 introduced an
+  `EventBehavior { auto_reset: bool, auto_lap: bool }` config
+  struct that `apply_event_state` takes by value. The two flags
+  map to the JS settings `_autoResetEvents` and `_autoLapEvents`
+  (`stats.mjs:884-887` / 2904-2939). STEP 17 wires the daemon's
+  config surface so that those two booleans are read from the
+  settings store, packed into `EventBehavior`, and threaded into
+  every `apply_event_state` call. The behaviour branches
+  themselves are already implemented and tested in STEP 15; this
+  step is purely the settings glue.
 - **GC tick interval confirmation.** Resolve STEP 14 Open
   Verification Point 1 (62.768 s vs the stub's 10 s) before
   scheduling the interval. The 10 s figure may have been a typo
