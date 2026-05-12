@@ -585,7 +585,7 @@ crates/zwift-stats/
 │   ├── helpers.rs      — unchanged
 │   ├── bucket.rs       — unchanged (OneSecondBucket; STEP 13)
 │   ├── periods.rs      — DEFAULT_POWER_PERIODS, DEFAULT_LONG_PERIODS, MIN_WEIGHTED_POWER_PERIOD, ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, GC_TICK_INTERVAL_SECS
-│   ├── collector.rs    — Collector trait, DataCollector<R>, PowerDataCollector, PeakSnapshot, NpPeakSnapshot
+│   ├── collector.rs    — RollingWindow trait, DataCollector<R>, PowerDataCollector, PeakSnapshot, NpPeakSnapshot
 │   ├── data_bucket.rs  — DataBucket
 │   └── athlete.rs      — AthleteData, AthleteRegistry, GroupMeta
 └── tests/
@@ -622,28 +622,55 @@ pub const GROUP_GC_TTL_SECS:    f64 = 90.0;
 pub const GC_TICK_INTERVAL_SECS: f64 = 62.768; // stats.mjs:3553
 ```
 
-### `Collector` trait (`collector`)
+### `RollingWindow` trait (`collector`)
 
 ```rust
 /// What a `DataCollector` needs from its inner rolling type. Implemented
 /// for both `RollingAverage` and `RollingPower` so `DataCollector` can be
 /// generic.
-pub trait Collector: Clone {
+pub trait RollingWindow: Clone {
     fn new_with_period(period: Option<f64>, opts: RollingAverageOptions) -> Self;
-    fn add(&mut self, ts: f64, value: f64, active: Option<bool>);
+    fn add(&mut self, ts: f64, value: Sample, active: Option<bool>);
     fn avg(&self, active: Option<bool>) -> Option<f64>;
-    fn last_time(&self) -> Option<f64>;
+    fn active(&self) -> f64;
+    fn elapsed(&self) -> f64;
     fn full(&self, offt: usize) -> bool;
+    fn last_time(&self) -> Option<f64>;
     fn reset(&mut self);
-    fn ideal_gap(&self) -> f64; // returns the configured ideal_gap (default 1.0)
+    fn size(&self) -> usize;
+    fn value_at(&self, index: i32) -> Option<Sample>;
 }
 ```
 
-Note that `Collector::add` takes raw `f64`, not `Sample` — the inner
-implementation is responsible for wrapping in `Sample::Value(v)`. This
-keeps `DataCollector` callers free of the `Sample` enum.
+The trait's `add` method takes `Sample`, not raw `f64`. The original
+plan named the trait `Collector` and proposed a raw-`f64` parameter so
+that the `Sample` enum could stay an implementation detail of the
+rolling primitives. The implementation took the opposite choice for
+two reasons, both consistent with ranchero's visualization-first
+orientation:
 
-### `DataCollector<R: Collector>` (`collector`)
+1. `Sample` carries semantic information that raw `f64` cannot: a
+   value is one of `Sample::Value(f64)` (a real reading),
+   `Sample::Pad(f64)` (an interpolated fill across a soft gap), or
+   `Sample::Break` (a hard-gap sentinel). Preserving the variant
+   at the trait boundary keeps that information available to any
+   future trait implementor or any caller that walks the buffer
+   (analysis pages will read pads and breaks differently from
+   real values).
+2. The trait is named `RollingWindow` rather than `Collector`
+   because `Collector` collides with the role of `DataCollector`
+   and `PowerDataCollector`, which use the trait. `RollingWindow`
+   describes the underlying primitive — a time-indexed rolling
+   buffer of samples — rather than the role of the structures
+   that wrap it.
+
+Today the only consumer of the trait's `add` method is
+`DataCollector::flush`, which always pushes `Sample::Value(...)`.
+The richer parameter type is reserved for later features that need
+to forward pads or breaks (UI gap markers, interpolation-aware
+recomputation).
+
+### `DataCollector<R: RollingWindow>` (`collector`)
 
 ```rust
 pub struct PeakSnapshot<R> {
@@ -653,7 +680,7 @@ pub struct PeakSnapshot<R> {
     pub roll:       R, // deep clone of the rolling at the moment of the peak
 }
 
-pub struct DataCollector<R: Collector> {
+pub struct DataCollector<R: RollingWindow> {
     primary:     R,
     periodized:  Vec<PeriodizedEntry<R>>,
     max_value:   f64,
@@ -668,7 +695,7 @@ pub struct PeriodizedEntry<R> {
     pub peak:   Option<PeakSnapshot<R>>,
 }
 
-impl<R: Collector> DataCollector<R> {
+impl<R: RollingWindow> DataCollector<R> {
     pub fn new(periods: &[f64], opts: DataCollectorOptions) -> Self;
     pub fn add(&mut self, time: f64, value: f64) -> usize;  // count of newly-flushed samples
     pub fn flush(&mut self) -> usize;
@@ -715,33 +742,84 @@ impl PowerDataCollector {
 
 ### `DataBucket` (`data_bucket`)
 
+`DataBucket` is a stateful aggregator: it owns five live
+collectors (`PowerDataCollector` for power, `DataCollector<...>` for
+the other four signals) plus seven accumulating time / kJ counters
+that must stay consistent with the collector state across
+`clone_reset` and `clone_continue`. The codebase's convention is
+that types of this kind keep their fields private and expose
+behaviour through accessor methods, in contrast with the plain
+data containers (`PeakSnapshot`, `PeriodizedEntry`, `MostRecentState`,
+`AthleteData`, `GroupMeta`, `GcReport`, `DataCollectorOptions`,
+`RollingAverageOptions`, and the `zwift-relay` POD types) that
+expose fields as `pub`. `DataBucket` follows the
+stateful-aggregator side of that split, matching `RollingAverage`,
+`RollingPower`, `DataCollector`, `PowerDataCollector`,
+`OneSecondBucket`, and `AthleteRegistry`.
+
 ```rust
 pub struct DataBucket {
-    pub start:        f64,
+    start:        f64,
 
-    pub coffee_time:  f64,
-    pub work_time:    f64,
-    pub follow_time:  f64,
-    pub solo_time:    f64,
+    coffee_time:  f64,
+    work_time:    f64,
+    follow_time:  f64,
+    solo_time:    f64,
 
-    pub work_kj:      f64,
-    pub follow_kj:    f64,
-    pub solo_kj:      f64,
+    work_kj:      f64,
+    follow_kj:    f64,
+    solo_kj:      f64,
 
-    pub power:    PowerDataCollector,
-    pub speed:    DataCollector<RollingAverage>,
-    pub hr:       DataCollector<RollingAverage>,
-    pub cadence:  DataCollector<RollingAverage>,
-    pub draft:    DataCollector<RollingPower>,
+    power:    PowerDataCollector,
+    speed:    DataCollector<RollingAverage>,
+    hr:       DataCollector<RollingAverage>,
+    cadence:  DataCollector<RollingAverage>,
+    draft:    DataCollector<RollingPower>,
 }
 
 impl DataBucket {
     pub fn new(start: f64) -> Self;
+
+    // Read accessors for the scalar fields.
+    pub fn start(&self) -> f64;
+    pub fn coffee_time(&self) -> f64;
+    pub fn work_time(&self) -> f64;
+    pub fn follow_time(&self) -> f64;
+    pub fn solo_time(&self) -> f64;
+    pub fn work_kj(&self) -> f64;
+    pub fn follow_kj(&self) -> f64;
+    pub fn solo_kj(&self) -> f64;
+
+    // Write accessors for the accumulator fields. `start` is set
+    // only by the constructor; later steps that need to retime a
+    // slice should clone first via `clone_reset` / `clone_continue`.
+    pub fn set_coffee_time(&mut self, value: f64);
+    pub fn set_work_time(&mut self, value: f64);
+    pub fn set_follow_time(&mut self, value: f64);
+    pub fn set_solo_time(&mut self, value: f64);
+    pub fn set_work_kj(&mut self, value: f64);
+    pub fn set_follow_kj(&mut self, value: f64);
+    pub fn set_solo_kj(&mut self, value: f64);
+
+    // Read/write accessors for the five signal collectors.
+    pub fn power(&self) -> &PowerDataCollector;
+    pub fn power_mut(&mut self) -> &mut PowerDataCollector;
+    pub fn hr(&self) -> &DataCollector<RollingAverage>;
+    pub fn hr_mut(&mut self) -> &mut DataCollector<RollingAverage>;
+    pub fn speed(&self) -> &DataCollector<RollingAverage>;
+    pub fn speed_mut(&mut self) -> &mut DataCollector<RollingAverage>;
+    pub fn cadence(&self) -> &DataCollector<RollingAverage>;
+    pub fn cadence_mut(&mut self) -> &mut DataCollector<RollingAverage>;
+    pub fn draft(&self) -> &DataCollector<RollingPower>;
+    pub fn draft_mut(&mut self) -> &mut DataCollector<RollingPower>;
+
+    // Ingest delegates that route to the matching signal collector.
     pub fn ingest_power  (&mut self, time: f64, watts:  f64);
     pub fn ingest_hr     (&mut self, time: f64, bpm:    f64);
     pub fn ingest_speed  (&mut self, time: f64, mps:    f64);
     pub fn ingest_cadence(&mut self, time: f64, rpm:    f64);
     pub fn ingest_draft  (&mut self, time: f64, draft:  f64);
+
     pub fn clone_reset   (&self) -> Self;
     pub fn clone_continue(&self) -> Self;
 }
@@ -886,16 +964,21 @@ notes appended to this file.
    later optimisation if the parity tests' wall-clock cost is too
    high.
 
-3. **`Collector` trait vs concrete `RollingAverage`.** The plan
-   above introduces a `Collector` trait so `DataCollector<R>` can be
-   generic over `RollingAverage` and `RollingPower`. The alternative
-   (two non-generic struct types `DataCollector` and
-   `PowerDataCollector` with shared fields by composition) avoids
-   the trait but duplicates the buffer / max-value logic. The trait
-   route is preferred but if it produces awkward bounds when
-   `PowerDataCollector` overrides peak-update behaviour, fall back
-   to the duplicated-struct variant — record the decision and the
-   reason.
+3. **`RollingWindow` trait vs concrete `RollingAverage`.**
+   *(Decision recorded 2026-05-12.)* The plan above takes the trait
+   route so `DataCollector<R>` can be generic over `RollingAverage`
+   and `RollingPower`. The trait is named `RollingWindow` rather
+   than `Collector` because `Collector` would collide with the role
+   of `DataCollector` and `PowerDataCollector`, which use the
+   trait. The alternative (two non-generic struct types
+   `DataCollector` and `PowerDataCollector` with shared fields by
+   composition) was considered and rejected — the trait produced no
+   awkward bounds in practice and the duplicated-struct variant
+   would have duplicated the buffer and max-value logic. The trait's
+   `add` method takes `Sample`, not raw `f64`, to preserve the
+   `Pad` and `Break` variants for later visualization use; see the
+   "`RollingWindow` trait" section under "Public API surface" for
+   the full reasoning.
 
 4. **`DataCollector` peak comparison.** The JS uses `>=` so a
    constant stream's peak `snap_time` advances on every push
@@ -938,16 +1021,23 @@ notes appended to this file.
 ## Design decisions worth pre-committing
 
 - **`DataCollector` is generic, `PowerDataCollector` is concrete.**
-  `DataCollector<R: Collector>` covers HR / speed / cadence / draft;
-  `PowerDataCollector` is a concrete wrapper around
+  `DataCollector<R: RollingWindow>` covers HR / speed / cadence /
+  draft; `PowerDataCollector` is a concrete wrapper around
   `DataCollector<RollingPower>` that adds the NP peak overlay. JS's
   inheritance pattern (`PowerDataCollector extends DataCollector`)
   becomes composition in Rust.
-- **Trait method `Collector::add(time, f64, active)` takes raw
-  `f64`.** The `Sample` enum stays an internal detail of the
-  rolling primitives; consumers (STEP 14 onwards) work in `f64`.
-  The trait's `add` impl wraps in `Sample::Value(v)` before calling
-  the inner `RollingAverage::add`.
+- **Trait method `RollingWindow::add(time, Sample, active)` takes
+  `Sample`, not raw `f64`.** *(Revised 2026-05-12; the original plan
+  here read "takes raw `f64`".)* The `Sample` enum is part of the
+  trait's public surface so that the `Sample::Value`,
+  `Sample::Pad`, and `Sample::Break` variants survive at the
+  trait boundary. The visualization features that motivate the
+  port read pads and breaks differently from real values, so
+  discarding the variant information would force a re-implementation
+  later. `DataCollector::flush` wraps every flushed mean as
+  `Sample::Value(...)` at the call site; only `Value` is forwarded
+  in STEP 14, but the surface supports `Pad` and `Break` for later
+  callers.
 - **`DataCollector::add` returns the number of newly-flushed
   samples** (matches the JS return convention at `stats.mjs:159` —
   `return this.roll._length - len`). Callers that do not care
@@ -1060,7 +1150,13 @@ were called out in the as-built notes inside the checklist itself.
    wrap each value in `Sample::Value(...)`, which makes the `Sample`
    type visible to the collector code. Either restore the signature
    and name given in the plan, or update the plan to record the rename
-   and the change in the trait's parameter type.
+   and the change in the trait's parameter type. *(Resolved by R3 on
+   2026-05-12: the plan was updated to describe the implementation.
+   The `Sample`-bearing `add` is retained because `Pad` and `Break`
+   variants carry information the project's visualization features
+   will use; the `RollingWindow` name is retained because it
+   describes the underlying primitive rather than the role of the
+   structures that wrap it.)*
 
 4. **`DataBucket` fields are private; the plan shows them as `pub`.**
    The plan's `DataBucket` definition exposes `pub start`,
@@ -1070,7 +1166,13 @@ were called out in the as-built notes inside the checklist itself.
    are functionally equivalent and the implementation's choice is
    more typical of Rust code, but it is still a deviation from a
    document that prescribes the API surface. Pick one form and record
-   the choice.
+   the choice. *(Resolved by R4 on 2026-05-12: the implementation is
+   retained. The codebase consistently splits plain data containers
+   from stateful aggregators, and `DataBucket` falls in the
+   stateful-aggregator group alongside `RollingAverage`,
+   `RollingPower`, `DataCollector`, `OneSecondBucket`, and
+   `AthleteRegistry`. The plan's "Public API surface" section has
+   been rewritten to show the implemented shape.)*
 
 ### Severity: minor (tests described in the plan that were not written)
 
@@ -1181,19 +1283,40 @@ plan has been brought into agreement.
       All six R2A-T tests pass; full suite is 98 tests; no clippy
       warnings.
 
-- [ ] **R3** Decide on the trait surface. Either rename
+- [x] **R3** Decide on the trait surface. Either rename
       `RollingWindow` back to `Collector` and change `add` to take
       `value: f64` per the plan (moving the `Sample::Value(...)`
       wrapping into the trait implementations on `RollingAverage`
       and `RollingPower`), or update the plan's "Public API
       surface" and "Design decisions worth pre-committing" sections
       to record the rename and the `Sample`-bearing signature. See
-      concern #3.
+      concern #3. **Done (2026-05-12):** Implementation retained.
+      The trait is named `RollingWindow` (not `Collector`) and its
+      `add` method takes `Sample` (not raw `f64`) so the
+      `Value`/`Pad`/`Break` variants survive at the trait boundary
+      for the visualization features the project exists to enable.
+      The plan's "`RollingWindow` trait" section, "Public API
+      surface" headings, open verification point #3, and the
+      relevant bullet in "Design decisions worth pre-committing"
+      have all been updated to describe the implemented design.
+      No code changes; no test changes; full suite (98 tests) and
+      clippy both green.
 
-- [ ] **R4** Decide on `DataBucket` field visibility. Either make
+- [x] **R4** Decide on `DataBucket` field visibility. Either make
       the fields `pub` per the plan and remove the accessor methods,
       or update the plan to record the accessor-method form. See
-      concern #4.
+      concern #4. **Done (2026-05-12):** Implementation retained.
+      A survey of the workspace shows the codebase consistently
+      separates plain data containers (which use `pub` fields) from
+      stateful aggregators (which keep fields private and expose
+      accessor methods). `DataBucket` falls in the second category
+      — it owns five live collectors and seven accumulating
+      counters that must stay consistent across `clone_reset` and
+      `clone_continue` — so the private-with-accessors form is the
+      right side of that split. The plan's "Public API surface"
+      `DataBucket` definition has been rewritten to show the
+      implemented shape, with the convention recorded at the head
+      of that subsection. No code or test changes.
 
 - [x] **R5** Add the tests that the "Tests-first plan (detail)"
       tables list but the test files do not contain, or remove
