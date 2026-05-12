@@ -38,7 +38,7 @@ pub use helpers::{recommended_time_gaps, corrected_rolling_average, corrected_ro
 pub use bucket::OneSecondBucket;
 pub use collector::{DataCollector, PowerDataCollector, PeakSnapshot, NpPeakSnapshot, DataCollectorOptions, RollingWindow};
 pub use data_bucket::DataBucket;
-pub use athlete::{AthleteData, MostRecentState, AthleteRegistry, GroupMeta, GcReport};
+pub use athlete::{AthleteData, MostRecentState, AthleteRegistry, GroupMeta, GcReport, PlayerStateView};
 pub use periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, GC_TICK_INTERVAL_SECS};
 pub use wbal::WBalAccumulator;
 pub use slice::DataSlice;

@@ -183,7 +183,7 @@ Setup (no tests):
 
 - [x] **15.12-T** `tests/player_state_view.rs::most_recent_state_implements_view_trait`,
       `view_trait_exposes_road_event_and_group_fields`.
-- [ ] **15.12-I** Define `PlayerStateView` in `src/athlete.rs` as
+- [x] **15.12-I** Define `PlayerStateView` in `src/athlete.rs` as
       a read-only accessor trait. Extend `MostRecentState` with
       the new fields needed by STEP 15 (`lat`, `lng`, `road_id`,
       `road_time`, `reverse`, `event_subgroup_id`, `group_id`,

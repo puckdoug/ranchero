@@ -20,6 +20,19 @@ pub struct EventPrivacy {
     // Placeholder: event privacy flags
 }
 
+pub trait PlayerStateView {
+    fn lat(&self) -> f64;
+    fn lng(&self) -> f64;
+    fn road_id(&self) -> u32;
+    fn road_time(&self) -> f64;
+    fn reverse(&self) -> bool;
+    fn event_subgroup_id(&self) -> u32;
+    fn group_id(&self) -> u32;
+    fn time(&self) -> f64;
+    fn event_distance(&self) -> f64;
+    fn is_empty(&self) -> bool;
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct MostRecentState {
     pub world_time: f64,
@@ -30,6 +43,57 @@ pub struct MostRecentState {
     pub draft: f64,
     pub distance: f64,
     pub altitude: f64,
+    pub lat: f64,
+    pub lng: f64,
+    pub road_id: u32,
+    pub road_time: f64,
+    pub reverse: bool,
+    pub event_subgroup_id: u32,
+    pub group_id: u32,
+    pub time: f64,
+    pub event_distance: f64,
+}
+
+impl PlayerStateView for MostRecentState {
+    fn lat(&self) -> f64 {
+        self.lat
+    }
+
+    fn lng(&self) -> f64 {
+        self.lng
+    }
+
+    fn road_id(&self) -> u32 {
+        self.road_id
+    }
+
+    fn road_time(&self) -> f64 {
+        self.road_time
+    }
+
+    fn reverse(&self) -> bool {
+        self.reverse
+    }
+
+    fn event_subgroup_id(&self) -> u32 {
+        self.event_subgroup_id
+    }
+
+    fn group_id(&self) -> u32 {
+        self.group_id
+    }
+
+    fn time(&self) -> f64 {
+        self.time
+    }
+
+    fn event_distance(&self) -> f64 {
+        self.event_distance
+    }
+
+    fn is_empty(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
