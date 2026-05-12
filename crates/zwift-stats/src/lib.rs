@@ -21,6 +21,15 @@ pub mod periods;
 pub mod collector;
 pub mod data_bucket;
 pub mod athlete;
+pub mod zones;
+pub mod wbal;
+pub mod slice;
+pub mod streams;
+pub mod road_history;
+pub mod groups;
+pub mod laps;
+pub mod segments;
+pub mod events;
 
 pub use sample::{Sample, is_active_value};
 pub use rolling::{RollingAverage, RollingAverageOptions};

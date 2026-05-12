@@ -57,7 +57,7 @@ item produced a red test that the `-I` item then turned green.
 
 Setup (no tests):
 
-- [ ] **15.1** Module skeleton. Add `src/zones.rs`, `src/wbal.rs`,
+- [x] **15.1** Module skeleton. Add `src/zones.rs`, `src/wbal.rs`,
       `src/slice.rs`, `src/road_history.rs`, `src/groups.rs`,
       `src/laps.rs`, `src/segments.rs`, `src/events.rs` with empty
       types and SPDX headers; wire them into `lib.rs` behind
@@ -148,7 +148,7 @@ Setup (no tests):
       `id, start, end, course_id, sport, bucket` plus the
       segment / event-specific extension fields named in the
       Public API section. `DataSlice::new_from(ad: &mut
-      AthleteData, start: f64)` calls `ad.bucket.clone_reset()`
+    AthleteData, start: f64)` calls `ad.bucket.clone_reset()`
       and pulls the next id from a per-`AthleteData` `u32`
       counter, then packs it as
       `((ad.athlete_id as u64) << 32) | (counter as u64)` so the
@@ -189,7 +189,7 @@ Setup (no tests):
       `road_time`, `reverse`, `event_subgroup_id`, `group_id`,
       `time`, `event_distance`) and implement `PlayerStateView`
       for it. Every STEP 15 detector that reads state takes `&dyn
-      PlayerStateView` (or `impl PlayerStateView`) so STEP 17 can
+    PlayerStateView` (or `impl PlayerStateView`) so STEP 17 can
       later implement the trait on the `zwift-proto::PlayerState`
       type without changing call sites.
 
@@ -219,9 +219,9 @@ Event detection and privacy:
       `behavior_auto_reset_resets_athlete_data_on_event_start`,
       `behavior_auto_lap_starts_a_lap_on_event_start_when_not_resetting`.
 - [ ] **15.14-I** Implement `apply_event_state(ad, state,
-      self_athlete_id, sg_lookup, behavior, now, wall_clock_ms)`
+    self_athlete_id, sg_lookup, behavior, now, wall_clock_ms)`
       in `src/events.rs`. `sg_lookup: &HashMap<u32,
-      EventSubgroup>` is provided by the caller (the daemon,
+    EventSubgroup>` is provided by the caller (the daemon,
       STEP 17, owns the subgroup cache). `behavior: EventBehavior`
       carries `auto_reset` and `auto_lap` flags. The function
       calls `trigger_event_start(...)`,
@@ -248,7 +248,7 @@ Manual and automatic laps:
       `start_athlete_lap_returns_new_slice_id`,
       `start_athlete_lap_clones_bucket_via_clone_reset`.
 - [ ] **15.16-I** Implement `start_athlete_lap(ad: &mut
-      AthleteData, now: f64) -> u64` in `src/laps.rs`. Stamp the
+    AthleteData, now: f64) -> u64` in `src/laps.rs`. Stamp the
       current open lap's `end = Some(now)`, create a new
       `DataSlice` via `clone_reset`, push, return its id.
 - [ ] **15.17-T** `tests/laps.rs::auto_lap_by_distance_threshold_triggers_at_each_interval`,
@@ -256,7 +256,7 @@ Manual and automatic laps:
       `auto_lap_mark_resets_on_course_change`,
       `auto_lap_first_call_seeds_mark_without_lapping`.
 - [ ] **15.17-I** Implement `auto_lap_check(ad, state, cfg, now)
-      -> bool` returning `true` when a lap was started.
+    -> bool` returning `true` when a lap was started.
       Mirrors `_autoLapCheck` (stats.mjs:3032-3041).
 
 Segment detection:
@@ -267,9 +267,9 @@ Segment detection:
       `exit_after_open_stops_segment`,
       `multiple_concurrent_segments_tracked_independently`.
 - [ ] **15.18-I** Implement `active_segment_check(ad, state, env,
-      now)` in `src/segments.rs`. `env: &dyn SegmentLookup` is a
+    now)` in `src/segments.rs`. `env: &dyn SegmentLookup` is a
       trait with `road_segments(course_id, road_id, reverse) ->
-      &[Segment]` and `segment(id) -> Option<&Segment>`; STEP 15
+    &[Segment]` and `segment(id) -> Option<&Segment>`; STEP 15
       ships a test-only in-memory implementation. The real
       table-backed implementation lands in `zwift-routes`
       (STEP 17).
@@ -294,12 +294,12 @@ Gap computation (`compare_road_positions`):
       `no_connection_returns_none`,
       `boundary_error_term_001_admits_near_matches`.
 - [ ] **15.20-I** Implement `compare_road_positions(p1, p2, env)
-      -> Option<RoadComparison>` in `src/road_history.rs`.
+    -> Option<RoadComparison>` in `src/road_history.rs`.
       `RoadGeometry` is a trait with `road_distance(road,
-      start_pct, end_pct) -> f64` (test stub returns straight-line
+    start_pct, end_pct) -> f64` (test stub returns straight-line
       `(end - start) * road.length_metres`).
       `RoadComparison { world_time: f64, distance: f64,
-      reversed: bool }`.
+    reversed: bool }`.
 - [ ] **15.21-T** `tests/gap.rs::gap_field_set_from_world_time_delta_in_seconds`,
       `gap_negated_when_reversed_and_positive`,
       `gap_distance_signed_by_direction`,
@@ -318,7 +318,7 @@ Group classification:
       `gap_above_0_8_without_draft_splits_group`,
       `gap_at_or_below_0_8_with_no_draft_keeps_group`.
 - [ ] **15.22-I** Implement `compute_groups(nearby, watching_idx,
-      prior_groups, next_id, now) -> Vec<Group>` in
+    prior_groups, next_id, now) -> Vec<Group>` in
       `src/groups.rs`. First pass: clump by gap thresholds
       (2.0 s, or 0.8 s when `draft == 0`).
 - [ ] **15.23-T** `tests/groups.rs::aggregate_weight_skips_zero_weight_athletes`,
@@ -369,7 +369,7 @@ Streams:
       JS `[lat, lng]` array):
       `pub struct LatLng { pub lat: f64, pub lng: f64 }`.
       `Streams { pub distance: Vec<f64>, pub altitude: Vec<f64>,
-      pub latlng: Vec<LatLng>, pub wbal: Vec<Option<f64>> }`.
+    pub latlng: Vec<LatLng>, pub wbal: Vec<Option<f64>> }`.
       Add `AthleteData::record_streams(state)` that appends one
       entry per call.
 
@@ -398,247 +398,248 @@ below correspond to the checklist items above.
 
 ### 15.2 Zone definitions — `tests/zones_definitions.rs`
 
-| Test | Asserts |
-|------|---------|
+| Test                                     | Asserts                                                                                                                                                                                                  |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `coggan_zones_at_ftp_250_match_js_table` | `coggan_zones(250.0)` returns 7 zones with `(from, to)` boundaries `[(0, 137.5), (137.5, 187.5), (187.5, 225.0), (225.0, 262.5), (262.5, 300.0), (300.0, 375.0), (375.0, None)]`. Labels match `Z1..Z7`. |
-| `polarized_zones_at_ftp_250` | Returns 3 zones `[(100.0, 200.0), (200.0, 250.0), (250.0, None)]`. Note Z1 starts at FTP × 0.40, not 0. |
-| `sweetspot_zone_fascat_and_coggan` | `sweetspot_zone(250.0, SweetspotKind::Fascat)` returns `{zone: "SS", from: 210.0, to: 242.5, overlap: true}`. `SweetspotKind::Coggan` returns `{from: 220.0, to: 232.5}`. |
+| `polarized_zones_at_ftp_250`             | Returns 3 zones `[(100.0, 200.0), (200.0, 250.0), (250.0, None)]`. Note Z1 starts at FTP × 0.40, not 0.                                                                                                  |
+| `sweetspot_zone_fascat_and_coggan`       | `sweetspot_zone(250.0, SweetspotKind::Fascat)` returns `{zone: "SS", from: 210.0, to: 242.5, overlap: true}`. `SweetspotKind::Coggan` returns `{from: 220.0, to: 232.5}`.                                |
 
 ### 15.3 Zone accumulator — `tests/zones_accumulator.rs`
 
-| Test | Asserts |
-|------|---------|
-| `accumulate_credits_top_down_with_break_on_non_overlap` | FTP 250, Coggan zones, push `(t=0.0, value=300)` then `(t=1.0, value=300)`. After both ticks, `value()[4].time == 1.0` (Z5), all other zones at 0. The iteration starts at Z7 (top of the sorted array) and breaks on the first non-overlap match at Z5. |
-| `accumulate_continues_iteration_on_overlap_for_sweetspot` | Configure Coggan zones plus Fascat sweetspot. Push `(0.0, 220)` then `(1.0, 220)`. After both ticks, sweetspot has 1.0 s AND Z3 has 1.0 s (sweetspot's `overlap: true` means the loop continues; 220 W is within Z3's `(187.5, 225.0]`). |
-| `accumulate_handles_zero_and_top_bounds` | A value of `0.0` hits no zone (`from = 0` is exclusive). A value of `1e9` hits Z7 (`to = None` means `+inf`). |
-| `accumulate_first_tick_yields_zero_elapsed` | First call to `accumulate(5.0, 200.0)` adds 0 to every zone (`time - _time_offset == 0`). Second call to `accumulate(6.0, 200.0)` adds 1.0 to the matching zone. |
+| Test                                                      | Asserts                                                                                                                                                                                                                                                  |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accumulate_credits_top_down_with_break_on_non_overlap`   | FTP 250, Coggan zones, push `(t=0.0, value=300)` then `(t=1.0, value=300)`. After both ticks, `value()[4].time == 1.0` (Z5), all other zones at 0. The iteration starts at Z7 (top of the sorted array) and breaks on the first non-overlap match at Z5. |
+| `accumulate_continues_iteration_on_overlap_for_sweetspot` | Configure Coggan zones plus Fascat sweetspot. Push `(0.0, 220)` then `(1.0, 220)`. After both ticks, sweetspot has 1.0 s AND Z3 has 1.0 s (sweetspot's `overlap: true` means the loop continues; 220 W is within Z3's `(187.5, 225.0]`).                 |
+| `accumulate_handles_zero_and_top_bounds`                  | A value of `0.0` hits no zone (`from = 0` is exclusive). A value of `1e9` hits Z7 (`to = None` means `+inf`).                                                                                                                                            |
+| `accumulate_first_tick_yields_zero_elapsed`               | First call to `accumulate(5.0, 200.0)` adds 0 to every zone (`time - _time_offset == 0`). Second call to `accumulate(6.0, 200.0)` adds 1.0 to the matching zone.                                                                                         |
 
 ### 15.4 Zone accumulator lifecycle — `tests/zones_accumulator.rs`
 
-| Test | Asserts |
-|------|---------|
-| `reset_clears_value_and_ftp` | After driving a stream, `reset()` returns the accumulator to `ftp == None`, `value() == &[]`. Subsequent `accumulate` returns without crediting (matches JS `_accumulatorAbsent`). |
-| `clone_continue_carries_state` | Drive a stream, `clone_continue()`, then drive both sides independently. The clone's `value()` carries the source state at the moment of the clone; subsequent writes diverge. |
-| `clone_reset_starts_fresh` | `clone_reset()` returns an accumulator with the same `ftp` and zones but `value()` entries all `time == 0`. |
+| Test                           | Asserts                                                                                                                                                                            |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reset_clears_value_and_ftp`   | After driving a stream, `reset()` returns the accumulator to `ftp == None`, `value() == &[]`. Subsequent `accumulate` returns without crediting (matches JS `_accumulatorAbsent`). |
+| `clone_continue_carries_state` | Drive a stream, `clone_continue()`, then drive both sides independently. The clone's `value()` carries the source state at the moment of the clone; subsequent writes diverge.     |
+| `clone_reset_starts_fresh`     | `clone_reset()` returns an accumulator with the same `ftp` and zones but `value()` entries all `time == 0`.                                                                        |
 
 ### 15.5 `Sample::Break.pad` amendment — `tests/sample_break.rs`
 
-| Test | Asserts |
-|------|---------|
-| `break_pad_is_u32` | `let s = Sample::Break { pad: 5u32 };` compiles. Pattern-matching `Sample::Break { pad }` exposes `pad` as `u32` (test reads `pad as u64` and asserts `== 5`). |
-| `break_pad_arithmetic_uses_integer_division` | A test that ports a STEP 13 break-handling code path to the new type; ensures no `f64::floor` or `as u32` casts are needed at construction sites. |
+| Test                                         | Asserts                                                                                                                                                        |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `break_pad_is_u32`                           | `let s = Sample::Break { pad: 5u32 };` compiles. Pattern-matching `Sample::Break { pad }` exposes `pad` as `u32` (test reads `pad as u64` and asserts `== 5`). |
+| `break_pad_arithmetic_uses_integer_division` | A test that ports a STEP 13 break-handling code path to the new type; ensures no `f64::floor` or `as u32` casts are needed at construction sites.              |
 
 ### 15.6 W' balance core — `tests/wbal_recovery.rs`
 
-| Test | Asserts |
-|------|---------|
+| Test                                      | Asserts                                                                                                                                                                                                                                                           |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `recovery_below_cp_uses_exponential_term` | `configure(cp=200, w_prime=20000)`. Drive 400 W for enough ticks to drain wBal to ≈ 10000. Then push `(t, 100)` for 1 s. The change is `(200 - 100) * 1 * (20000 - 10000) / 20000 = 50` J per tick. Hand-derive the trajectory; the Rust output agrees to ≤ 1e-9. |
-| `depletion_above_cp_uses_linear_term` | `configure(cp=200, w_prime=20000)`. Push `(0, 300)` then `(1, 300)`. `value() ≈ 20000 - 100 = 19900`. (`(200 - 300) * 1 = -100`; linear branch, no scaling.) |
-| `clamp_at_wprime_does_not_exceed` | `configure(cp=200, w_prime=20000)`. Push extended recovery from fresh state. `value() <= 20000.0` always. |
-| `wbal_can_go_negative_in_the_red` | `configure(cp=200, w_prime=20000)`. Push 500 W for 100 s. `value() < 0.0` (the JS does not clamp the lower bound). |
+| `depletion_above_cp_uses_linear_term`     | `configure(cp=200, w_prime=20000)`. Push `(0, 300)` then `(1, 300)`. `value() ≈ 20000 - 100 = 19900`. (`(200 - 300) * 1 = -100`; linear branch, no scaling.)                                                                                                      |
+| `clamp_at_wprime_does_not_exceed`         | `configure(cp=200, w_prime=20000)`. Push extended recovery from fresh state. `value() <= 20000.0` always.                                                                                                                                                         |
+| `wbal_can_go_negative_in_the_red`         | `configure(cp=200, w_prime=20000)`. Push 500 W for 100 s. `value() < 0.0` (the JS does not clamp the lower bound).                                                                                                                                                |
 
 ### 15.7 W' break handling — `tests/wbal_break.rs`
 
-| Test | Asserts |
-|------|---------|
-| `break_sample_refills_until_full` | After draining wBal to 5000, push `Sample::Break { pad: 1000 }` (u32 per 15.5). With cp=200, wPrime=20000, the geometric series saturates near 20000 well before iteration 1000. Test asserts `value() ≈ 20000.0` after (within 1e-6 of wPrime). |
-| `break_sample_short_circuits_when_within_epsilon` | After driving wBal to 19999.9999999, push `Sample::Break { pad: 10 }`. Final `value() == 20000.0` exactly (the loop early-exits on the epsilon check). |
+| Test                                              | Asserts                                                                                                                                                                                                                                          |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `break_sample_refills_until_full`                 | After draining wBal to 5000, push `Sample::Break { pad: 1000 }` (u32 per 15.5). With cp=200, wPrime=20000, the geometric series saturates near 20000 well before iteration 1000. Test asserts `value() ≈ 20000.0` after (within 1e-6 of wPrime). |
+| `break_sample_short_circuits_when_within_epsilon` | After driving wBal to 19999.9999999, push `Sample::Break { pad: 10 }`. Final `value() == 20000.0` exactly (the loop early-exits on the epsilon check).                                                                                           |
 
 ### 15.8 W' lifecycle — `tests/wbal_unconfigured.rs`
 
-| Test | Asserts |
-|------|---------|
-| `unconfigured_yields_none` | A fresh `WBalAccumulator::new()` has `value() == None`; `accumulate(0.0, Sample::Value(200.0))` returns `None`. |
+| Test                                       | Asserts                                                                                                           |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `unconfigured_yields_none`                 | A fresh `WBalAccumulator::new()` has `value() == None`; `accumulate(0.0, Sample::Value(200.0))` returns `None`.   |
 | `accumulator_clone_continue_carries_w_bal` | After driving wBal to 5000, `clone_continue().value() == Some(5000.0)`. Subsequent writes on either side diverge. |
 
 ### 15.9 EMA helper — `tests/exp_weighted_avg.rs`
 
-| Test | Asserts |
-|------|---------|
-| `seed_returns_seed_until_first_input` | `exp_weighted_avg(8.0, 0.0).get() == 0.0`. After `update(10.0)`, `get() ≈ 1.1750309741540455` (`c_next = 1 - exp(-1/8)`). |
-| `alpha_matches_js_for_size_8` | After 8 successive `update(10.0)` calls starting from seed 0, the EMA approaches the JS reference value to ≤ 1e-9. |
-| `successive_updates_track_em_a_formula` | Hand-derived `avg_n = avg_{n-1} * c_prev + value * c_next` agreement to ≤ 1e-9 across 10 ticks. |
+| Test                                    | Asserts                                                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `seed_returns_seed_until_first_input`   | `exp_weighted_avg(8.0, 0.0).get() == 0.0`. After `update(10.0)`, `get() ≈ 1.1750309741540455` (`c_next = 1 - exp(-1/8)`). |
+| `alpha_matches_js_for_size_8`           | After 8 successive `update(10.0)` calls starting from seed 0, the EMA approaches the JS reference value to ≤ 1e-9.        |
+| `successive_updates_track_em_a_formula` | Hand-derived `avg_n = avg_{n-1} * c_prev + value * c_next` agreement to ≤ 1e-9 across 10 ticks.                           |
 
 ### 15.10 DataSlice — `tests/data_slice.rs`
 
-| Test | Asserts |
-|------|---------|
-| `new_clones_bucket_reset_and_carries_identity` | `DataSlice::new_from(&mut ad, t)` exposes `start == t`, `end == None`, `course_id == ad.course_id`, `sport == ad.sport`, `bucket.power().max_value() == 0.0` (reset). |
-| `id_is_assigned_monotonically_per_athlete` | Two consecutive `new_from` calls on the same `AthleteData` return ids whose lower 32 bits are `n` and `n + 1`. |
-| `id_carries_athlete_prefix_in_upper_32_bits` | Two `AthleteData` with different `athlete_id` values produce slice ids that, when the upper 32 bits are extracted, equal those `athlete_id` values. The lower 32 bits are independent counters per `AthleteData`. |
-| `end_starts_none_and_can_be_stamped_once` | `slice.end == None`. `slice.close(now)` stamps `end = Some(now)`. Calling `close` again is a no-op (matches JS `if (slice.end) return;`). |
-| `slice_carries_course_and_sport_at_creation` | Mutating `ad.course_id` after slice creation does not change the slice's recorded `course_id`. |
+| Test                                           | Asserts                                                                                                                                                                                                           |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new_clones_bucket_reset_and_carries_identity` | `DataSlice::new_from(&mut ad, t)` exposes `start == t`, `end == None`, `course_id == ad.course_id`, `sport == ad.sport`, `bucket.power().max_value() == 0.0` (reset).                                             |
+| `id_is_assigned_monotonically_per_athlete`     | Two consecutive `new_from` calls on the same `AthleteData` return ids whose lower 32 bits are `n` and `n + 1`.                                                                                                    |
+| `id_carries_athlete_prefix_in_upper_32_bits`   | Two `AthleteData` with different `athlete_id` values produce slice ids that, when the upper 32 bits are extracted, equal those `athlete_id` values. The lower 32 bits are independent counters per `AthleteData`. |
+| `end_starts_none_and_can_be_stamped_once`      | `slice.end == None`. `slice.close(now)` stamps `end = Some(now)`. Calling `close` again is a no-op (matches JS `if (slice.end) return;`).                                                                         |
+| `slice_carries_course_and_sport_at_creation`   | Mutating `ad.course_id` after slice creation does not change the slice's recorded `course_id`.                                                                                                                    |
 
 ### 15.11 AthleteData extensions — `tests/athlete_data_extensions.rs`
 
-| Test | Asserts |
-|------|---------|
-| `new_initialises_accumulators_and_streams` | `ad.w_bal.value() == None`, `ad.time_in_power_zones.value().is_empty()`, `ad.streams.distance.is_empty()`, `ad.road_history.a.is_empty()`, `ad.lap_slices.len() == 1`, `ad.lap_slices[0].end == None`. |
+| Test                                       | Asserts                                                                                                                                                                                                     |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new_initialises_accumulators_and_streams` | `ad.w_bal.value() == None`, `ad.time_in_power_zones.value().is_empty()`, `ad.streams.distance.is_empty()`, `ad.road_history.a.is_empty()`, `ad.lap_slices.len() == 1`, `ad.lap_slices[0].end == None`.      |
 | `initial_lap_slice_has_clone_reset_bucket` | `ad.lap_slices[0].bucket.power().max_value() == 0.0` even after the original bucket has been ingested into. (Re-check by mutating `ad.bucket` post-construction and observing the lap slice is unaffected.) |
 
 ### 15.12 `PlayerStateView` trait + `MostRecentState` extension — `tests/player_state_view.rs`
 
-| Test | Asserts |
-|------|---------|
-| `most_recent_state_implements_view_trait` | `fn takes_view(_: &dyn PlayerStateView) {}` compiles when called with `&MostRecentState`. |
-| `view_trait_exposes_road_event_and_group_fields` | `view.road_id()`, `view.road_time()`, `view.reverse()`, `view.event_subgroup_id()`, `view.group_id()`, `view.time()`, `view.event_distance()` return the values stamped into the underlying struct. |
-| `view_trait_exposes_step_14_fields` | `view.world_time()`, `view.power()`, `view.heartrate()`, `view.speed()`, `view.cadence()`, `view.draft()`, `view.distance()`, `view.altitude()` return the values stamped into the underlying struct. |
+| Test                                             | Asserts                                                                                                                                                                                               |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `most_recent_state_implements_view_trait`        | `fn takes_view(_: &dyn PlayerStateView) {}` compiles when called with `&MostRecentState`.                                                                                                             |
+| `view_trait_exposes_road_event_and_group_fields` | `view.road_id()`, `view.road_time()`, `view.reverse()`, `view.event_subgroup_id()`, `view.group_id()`, `view.time()`, `view.event_distance()` return the values stamped into the underlying struct.   |
+| `view_trait_exposes_step_14_fields`              | `view.world_time()`, `view.power()`, `view.heartrate()`, `view.speed()`, `view.cadence()`, `view.draft()`, `view.distance()`, `view.altitude()` return the values stamped into the underlying struct. |
 
 ### 15.13 RoadHistory — `tests/road_history.rs`
 
-| Test | Asserts |
-|------|---------|
-| `same_road_no_shift_appends_to_a` | Two states on the same road, both with rpct ascending. `road_history.a.len() == 2`, `b == None`, `c == None`. |
-| `road_change_shifts_a_to_b_b_to_c` | Three states each on a different road. After the third: `a_road.sig == r3`, `b_road.sig == r2`, `c_road.sig == r1`. |
-| `direction_change_shifts_when_delta_below_minus_001` | Two states on the same road, rpct 0.5 → 0.4 (delta = -0.1 < -0.01). The tier shifts as if the road changed. |
+| Test                                                    | Asserts                                                                                                                                      |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `same_road_no_shift_appends_to_a`                       | Two states on the same road, both with rpct ascending. `road_history.a.len() == 2`, `b == None`, `c == None`.                                |
+| `road_change_shifts_a_to_b_b_to_c`                      | Three states each on a different road. After the third: `a_road.sig == r3`, `b_road.sig == r2`, `c_road.sig == r1`.                          |
+| `direction_change_shifts_when_delta_below_minus_001`    | Two states on the same road, rpct 0.5 → 0.4 (delta = -0.1 < -0.01). The tier shifts as if the road changed.                                  |
 | `direction_change_wipes_a_when_delta_in_minus_001_to_0` | Two states on the same road, rpct 0.5 → 0.495 (delta = -0.005, in `(-0.01, 0)`). `a.len() == 1` (the wipe ran, then the new state appended). |
-| `course_change_resets_b_and_c` | Two states on different courses: `b == None`, `c == None`, `a` carries only the new state. |
-| `first_state_seeds_aroad_without_shift` | First-ever call: `a_road.sig == r1`, `b_road == None`, `c_road == None`, `a.len() == 1`. |
+| `course_change_resets_b_and_c`                          | Two states on different courses: `b == None`, `c == None`, `a` carries only the new state.                                                   |
+| `first_state_seeds_aroad_without_shift`                 | First-ever call: `a_road.sig == r1`, `b_road == None`, `c_road == None`, `a.len() == 1`.                                                     |
 
 ### 15.14 Event detection — `tests/event_detection.rs`
 
-| Test | Asserts |
-|------|---------|
-| `new_subgroup_opens_slice_when_state_time_present` | State carries `event_subgroup_id = Some(42)`, `time > 0`. `event_slices.len() == 1`, slice carries `event_subgroup_id == Some(42)`. |
-| `new_subgroup_defers_when_state_time_zero_and_sets_pending` | State carries `event_subgroup_id = Some(42)`, `time == 0`. `event_slices.is_empty()`, `event_start_pending == true`. Next tick with `time > 0` opens the slice. |
-| `same_subgroup_does_not_reopen_slice` | Two ticks with the same subgroup id; the existing slice's `end == None` and no new slice was appended. |
-| `falsy_subgroup_after_active_closes_slice` | Tick 1 with subgroup 42, tick 2 with `event_subgroup_id = None`. The slice from tick 1 has `end == Some(now_tick_2)`. |
-| `auto_end_by_distance_closes_slice` | Subgroup has `end_distance = Some(1000)`, state's `event_distance > 1000`. Slice closes. |
-| `auto_end_by_wall_clock_closes_slice` | Subgroup has `end_ts = Some(t_end)`, wall-clock-ms argument is past `t_end`. Slice closes. |
-| `behavior_auto_reset_resets_athlete_data_on_event_start` | `EventBehavior { auto_reset: true, auto_lap: false }`. Athlete starts the event with non-zero `bucket.power().max_value()`. After `apply_event_state`, the bucket has been reset (max_value back to 0.0); a new event slice is open. |
-| `behavior_auto_lap_starts_a_lap_on_event_start_when_not_resetting` | `EventBehavior { auto_reset: false, auto_lap: true }`. Athlete starts the event with `lap_slices.len() == 1`. After `apply_event_state`, `lap_slices.len() == 2` (the prior open lap was closed, a fresh one was started). |
-| `behavior_neither_does_not_reset_or_lap` | `EventBehavior { auto_reset: false, auto_lap: false }`. After `apply_event_state`, `bucket.power().max_value()` is unchanged and `lap_slices.len()` is unchanged. |
+| Test                                                               | Asserts                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `new_subgroup_opens_slice_when_state_time_present`                 | State carries `event_subgroup_id = Some(42)`, `time > 0`. `event_slices.len() == 1`, slice carries `event_subgroup_id == Some(42)`.                                                                                                  |
+| `new_subgroup_defers_when_state_time_zero_and_sets_pending`        | State carries `event_subgroup_id = Some(42)`, `time == 0`. `event_slices.is_empty()`, `event_start_pending == true`. Next tick with `time > 0` opens the slice.                                                                      |
+| `same_subgroup_does_not_reopen_slice`                              | Two ticks with the same subgroup id; the existing slice's `end == None` and no new slice was appended.                                                                                                                               |
+| `falsy_subgroup_after_active_closes_slice`                         | Tick 1 with subgroup 42, tick 2 with `event_subgroup_id = None`. The slice from tick 1 has `end == Some(now_tick_2)`.                                                                                                                |
+| `auto_end_by_distance_closes_slice`                                | Subgroup has `end_distance = Some(1000)`, state's `event_distance > 1000`. Slice closes.                                                                                                                                             |
+| `auto_end_by_wall_clock_closes_slice`                              | Subgroup has `end_ts = Some(t_end)`, wall-clock-ms argument is past `t_end`. Slice closes.                                                                                                                                           |
+| `behavior_auto_reset_resets_athlete_data_on_event_start`           | `EventBehavior { auto_reset: true, auto_lap: false }`. Athlete starts the event with non-zero `bucket.power().max_value()`. After `apply_event_state`, the bucket has been reset (max_value back to 0.0); a new event slice is open. |
+| `behavior_auto_lap_starts_a_lap_on_event_start_when_not_resetting` | `EventBehavior { auto_reset: false, auto_lap: true }`. Athlete starts the event with `lap_slices.len() == 1`. After `apply_event_state`, `lap_slices.len() == 2` (the prior open lap was closed, a fresh one was started).           |
+| `behavior_neither_does_not_reset_or_lap`                           | `EventBehavior { auto_reset: false, auto_lap: false }`. After `apply_event_state`, `bucket.power().max_value()` is unchanged and `lap_slices.len()` is unchanged.                                                                    |
 
 ### 15.15 Event privacy — `tests/event_privacy.rs`
 
-| Test | Asserts |
-|------|---------|
-| `self_athlete_skips_privacy_flags` | `state.athlete_id == self_athlete_id`; subgroup has `all_tags = ["hidewbal"]`. `event_privacy.hide_w_bal == false`. |
-| `non_self_hidewbal_sets_hide_w_bal` | Different athlete; tag `hidewbal`. `event_privacy.hide_w_bal == true`. |
-| `non_self_hideftp_sets_hide_ftp` | Tag `hideftp`. `event_privacy.hide_ftp == true`. |
-| `hidethehud_sets_disabled_by_event` | Tag `hidethehud`. `disabled_by_event == true`. |
-| `nooverlays_sets_disabled_by_event` | Tag `nooverlays`. `disabled_by_event == true`. |
+| Test                                | Asserts                                                                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `self_athlete_skips_privacy_flags`  | `state.athlete_id == self_athlete_id`; subgroup has `all_tags = ["hidewbal"]`. `event_privacy.hide_w_bal == false`. |
+| `non_self_hidewbal_sets_hide_w_bal` | Different athlete; tag `hidewbal`. `event_privacy.hide_w_bal == true`.                                              |
+| `non_self_hideftp_sets_hide_ftp`    | Tag `hideftp`. `event_privacy.hide_ftp == true`.                                                                    |
+| `hidethehud_sets_disabled_by_event` | Tag `hidethehud`. `disabled_by_event == true`.                                                                      |
+| `nooverlays_sets_disabled_by_event` | Tag `nooverlays`. `disabled_by_event == true`.                                                                      |
 
 ### 15.16 Manual laps — `tests/laps.rs`
 
-| Test | Asserts |
-|------|---------|
+| Test                                                  | Asserts                                                                                                                                                                  |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `start_athlete_lap_closes_open_slice_and_appends_new` | Initial `ad.lap_slices.len() == 1`. After `start_athlete_lap(&mut ad, 100.0)`, `lap_slices.len() == 2`, `lap_slices[0].end == Some(100.0)`, `lap_slices[1].end == None`. |
-| `start_athlete_lap_returns_new_slice_id` | Returns the new slice's `id`. |
-| `start_athlete_lap_clones_bucket_via_clone_reset` | New slice's `bucket.power().max_value() == 0.0` even after the original bucket had peaks. |
+| `start_athlete_lap_returns_new_slice_id`              | Returns the new slice's `id`.                                                                                                                                            |
+| `start_athlete_lap_clones_bucket_via_clone_reset`     | New slice's `bucket.power().max_value() == 0.0` even after the original bucket had peaks.                                                                                |
 
 ### 15.17 Auto laps — `tests/laps.rs`
 
-| Test | Asserts |
-|------|---------|
+| Test                                                       | Asserts                                                                                                                                                                                                   |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `auto_lap_by_distance_threshold_triggers_at_each_interval` | `AutoLapConfig { metric: Distance, threshold: 1000.0 }`. `auto_lap_check` at `state.distance = 0` seeds the mark and returns `false`. At 999 → `false`. At 1000 → `true` (mark = 1000). At 2000 → `true`. |
-| `auto_lap_by_time_threshold_triggers_at_each_interval` | `AutoLapConfig { metric: Time, threshold: 60.0 }`. Similar arithmetic on `state.time`. |
-| `auto_lap_mark_resets_on_course_change` | After setting `ad.auto_lap_mark = None` (simulating the course-change branch of the preprocessing step), the next `auto_lap_check` reseeds without triggering a lap. |
-| `auto_lap_first_call_seeds_mark_without_lapping` | `lap_slices.len()` unchanged after the first call; `auto_lap_mark == Some(state_value)`. |
+| `auto_lap_by_time_threshold_triggers_at_each_interval`     | `AutoLapConfig { metric: Time, threshold: 60.0 }`. Similar arithmetic on `state.time`.                                                                                                                    |
+| `auto_lap_mark_resets_on_course_change`                    | After setting `ad.auto_lap_mark = None` (simulating the course-change branch of the preprocessing step), the next `auto_lap_check` reseeds without triggering a lap.                                      |
+| `auto_lap_first_call_seeds_mark_without_lapping`           | `lap_slices.len()` unchanged after the first call; `auto_lap_mark == Some(state_value)`.                                                                                                                  |
 
 ### 15.18 Segment start — `tests/segments.rs`
 
-| Test | Asserts |
-|------|---------|
-| `start_within_first_5_percent_opens_slice` | Segment with `road_start = 0.20`, `road_finish = 0.40`, `distance = 5000`. State at `road_time` such that progress = 0.025 (< 0.05). `start_segment` is called; `active_segments.contains_key(seg.id)`. |
+| Test                                                             | Asserts                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start_within_first_5_percent_opens_slice`                       | Segment with `road_start = 0.20`, `road_finish = 0.40`, `distance = 5000`. State at `road_time` such that progress = 0.025 (< 0.05). `start_segment` is called; `active_segments.contains_key(seg.id)`.                                |
 | `start_within_first_150m_overrides_5_percent_for_short_segments` | Segment with `distance = 100`, `road_start = 0.20`, `road_finish = 0.21`. Threshold is `max(0.05, 150 / 100)` per JS expression, which makes the entry window cover essentially the entire segment. Entering anywhere inside opens it. |
-| `outside_progress_does_not_open_slice` | State at progress = 0.5 on a normal-length segment. `progress > 0.05` AND `progress > 150 / distance`. `active_segments` stays empty. |
-| `exit_after_open_stops_segment` | Open a segment, then advance state to a different road (the segment leaves the `active` set for this tick). `active_segments.is_empty()`, `segment_slices.len() == 1`, the slice carries `end == Some(now)`. |
-| `multiple_concurrent_segments_tracked_independently` | Two overlapping segments on the same road, enter both within their windows. `active_segments.len() == 2`. Exit one → `len() == 1`. |
+| `outside_progress_does_not_open_slice`                           | State at progress = 0.5 on a normal-length segment. `progress > 0.05` AND `progress > 150 / distance`. `active_segments` stays empty.                                                                                                  |
+| `exit_after_open_stops_segment`                                  | Open a segment, then advance state to a different road (the segment leaves the `active` set for this tick). `active_segments.is_empty()`, `segment_slices.len() == 1`, the slice carries `end == Some(now)`.                           |
+| `multiple_concurrent_segments_tracked_independently`             | Two overlapping segments on the same road, enter both within their windows. `active_segments.len() == 2`. Exit one → `len() == 1`.                                                                                                     |
 
 ### 15.19 Segment completion — `tests/segments.rs`
 
-| Test | Asserts |
-|------|---------|
-| `stop_marks_incomplete_when_no_road_history` | Set up a segment with no matching tier in `road_history`. `stop_segment` → `slice.incomplete == Some(true)`. |
+| Test                                                           | Asserts                                                                                                                                          |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `stop_marks_incomplete_when_no_road_history`                   | Set up a segment with no matching tier in `road_history`. `stop_segment` → `slice.incomplete == Some(true)`.                                     |
 | `stop_marks_complete_when_long_segment_at_or_above_90_percent` | Segment with `distance = 2000`. Road history carries a final `(rpct, wt)` past `start + 0.9 * (end - start)`. `slice.incomplete == Some(false)`. |
-| `stop_marks_incomplete_when_long_segment_below_90_percent` | Same segment, history only reaches `start + 0.5 * (end - start)`. `slice.incomplete == Some(true)`. |
-| `stop_thresholds_60_percent_for_400_to_1000m` | `distance = 500`. 65% completion → complete. 55% → incomplete. |
-| `stop_thresholds_25_percent_for_below_400m` | `distance = 200`. 30% → complete. 20% → incomplete. |
-| `stop_walks_road_history_a_b_c_until_match` | The matching tier is the `c` tier (two roads back). Completion still resolves correctly. |
+| `stop_marks_incomplete_when_long_segment_below_90_percent`     | Same segment, history only reaches `start + 0.5 * (end - start)`. `slice.incomplete == Some(true)`.                                              |
+| `stop_thresholds_60_percent_for_400_to_1000m`                  | `distance = 500`. 65% completion → complete. 55% → incomplete.                                                                                   |
+| `stop_thresholds_25_percent_for_below_400m`                    | `distance = 200`. 30% → complete. 20% → incomplete.                                                                                              |
+| `stop_walks_road_history_a_b_c_until_match`                    | The matching tier is the `c` tier (two roads back). Completion still resolves correctly.                                                         |
 
 ### 15.20 Road-position comparison — `tests/gap.rs`
 
-| Test | Asserts |
-|------|---------|
-| `same_road_same_direction_uses_delta_rpct` | `p1.aRoad == p2.aRoad`. p1 rpct = 0.6, p2 rpct = 0.5. `tiers == 1`, `reversed == false`. Distance = `road_distance(road, 0.5, 0.6)`. |
-| `same_road_negative_delta_marks_reversed` | p1 rpct = 0.4, p2 rpct = 0.5. `reversed == true`. |
-| `cross_tier_two_back_resolves_via_b_road` | `p2.aRoad == p1.bRoad`, last p1.b's rpct ≥ p2's current rpct. `tiers == 2`, `reversed == false`. |
-| `cross_tier_three_back_resolves_via_c_road` | `p2.aRoad == p1.cRoad`. `tiers == 3`. |
-| `no_connection_returns_none` | None of the tier-match cases apply. Returns `None`. |
-| `boundary_error_term_001_admits_near_matches` | Same as `cross_tier_two_back`, but with last-rpct = `p2.rpct - 0.005` (within 0.01 slop). Resolves. |
+| Test                                          | Asserts                                                                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `same_road_same_direction_uses_delta_rpct`    | `p1.aRoad == p2.aRoad`. p1 rpct = 0.6, p2 rpct = 0.5. `tiers == 1`, `reversed == false`. Distance = `road_distance(road, 0.5, 0.6)`. |
+| `same_road_negative_delta_marks_reversed`     | p1 rpct = 0.4, p2 rpct = 0.5. `reversed == true`.                                                                                    |
+| `cross_tier_two_back_resolves_via_b_road`     | `p2.aRoad == p1.bRoad`, last p1.b's rpct ≥ p2's current rpct. `tiers == 2`, `reversed == false`.                                     |
+| `cross_tier_three_back_resolves_via_c_road`   | `p2.aRoad == p1.cRoad`. `tiers == 3`.                                                                                                |
+| `no_connection_returns_none`                  | None of the tier-match cases apply. Returns `None`.                                                                                  |
+| `boundary_error_term_001_admits_near_matches` | Same as `cross_tier_two_back`, but with last-rpct = `p2.rpct - 0.005` (within 0.01 slop). Resolves.                                  |
 
 ### 15.21 Gap fields — `tests/gap.rs`
 
-| Test | Asserts |
-|------|---------|
-| `gap_field_set_from_world_time_delta_in_seconds` | Watching at world time T, target at T - 5000 (ms). `ad.gap == Some(5.0)`. |
-| `gap_negated_when_reversed_and_positive` | `reversed == true`, raw `(T_watch - T_rp) / 1000 == 5.0`. `ad.gap == Some(-5.0)`. |
-| `gap_distance_signed_by_direction` | `reversed == true`, `rp.distance == 100`. `ad.gap_distance == Some(-100.0)`. Else `Some(100.0)`. |
-| `is_gap_est_false_when_world_time_match` | `is_gap_est == false`. |
-| `is_gap_est_true_when_world_time_missing` | Estimation fallback path. `gap == None`, `is_gap_est == true`. |
+| Test                                             | Asserts                                                                                          |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `gap_field_set_from_world_time_delta_in_seconds` | Watching at world time T, target at T - 5000 (ms). `ad.gap == Some(5.0)`.                        |
+| `gap_negated_when_reversed_and_positive`         | `reversed == true`, raw `(T_watch - T_rp) / 1000 == 5.0`. `ad.gap == Some(-5.0)`.                |
+| `gap_distance_signed_by_direction`               | `reversed == true`, `rp.distance == 100`. `ad.gap_distance == Some(-100.0)`. Else `Some(100.0)`. |
+| `is_gap_est_false_when_world_time_match`         | `is_gap_est == false`.                                                                           |
+| `is_gap_est_true_when_world_time_missing`        | Estimation fallback path. `gap == None`, `is_gap_est == true`.                                   |
 
 ### 15.22 Group clumping — `tests/groups.rs`
 
-| Test | Asserts |
-|------|---------|
-| `singleton_riders_get_group_id_none` | `nearby = [{a:1, gap:0}, {a:2, gap:5}]` (gap > 2 s). After `compute_groups`, both groups in the returned `Vec<Group>` are singletons; both members carry `group_id == None`. |
-| `two_riders_within_2_second_gap_form_one_group` | `nearby = [{a:1, gap:0, draft:50}, {a:2, gap:1.5, draft:50}]`. Both share the same `group_id != None`. |
-| `gap_above_2_seconds_splits_group` | `nearby = [{a:1, gap:0, draft:50}, {a:2, gap:2.1, draft:50}]`. Different group ids (or both `None` if singletons). |
-| `gap_above_0_8_without_draft_splits_group` | `nearby = [{a:1, gap:0, draft:0}, {a:2, gap:1.0, draft:0}]`. Different group ids (no draft, 1.0 > 0.8). |
-| `gap_at_or_below_0_8_with_no_draft_keeps_group` | `nearby = [{a:1, gap:0, draft:0}, {a:2, gap:0.7, draft:0}]`. Same group id. |
+| Test                                            | Asserts                                                                                                                                                                      |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `singleton_riders_get_group_id_none`            | `nearby = [{a:1, gap:0}, {a:2, gap:5}]` (gap > 2 s). After `compute_groups`, both groups in the returned `Vec<Group>` are singletons; both members carry `group_id == None`. |
+| `two_riders_within_2_second_gap_form_one_group` | `nearby = [{a:1, gap:0, draft:50}, {a:2, gap:1.5, draft:50}]`. Both share the same `group_id != None`.                                                                       |
+| `gap_above_2_seconds_splits_group`              | `nearby = [{a:1, gap:0, draft:50}, {a:2, gap:2.1, draft:50}]`. Different group ids (or both `None` if singletons).                                                           |
+| `gap_above_0_8_without_draft_splits_group`      | `nearby = [{a:1, gap:0, draft:0}, {a:2, gap:1.0, draft:0}]`. Different group ids (no draft, 1.0 > 0.8).                                                                      |
+| `gap_at_or_below_0_8_with_no_draft_keeps_group` | `nearby = [{a:1, gap:0, draft:0}, {a:2, gap:0.7, draft:0}]`. Same group id.                                                                                                  |
 
 ### 15.23 Group aggregates — `tests/groups.rs`
 
-| Test | Asserts |
-|------|---------|
-| `aggregate_weight_skips_zero_weight_athletes` | Three riders in one group with weights `[Some(70), None, Some(80)]`. Group `weight == Some(75.0)` (mean over the two valid weights). |
-| `aggregate_power_and_draft_use_member_count` | Two riders, `power = [200, 300]`. Group `power == 250.0`. |
-| `aggregate_speed_uses_median_not_mean` | Three riders, `speed = [10, 100, 20]`. Group `speed == 20.0` (median). |
-| `aggregate_heartrate_skips_none_entries` | Two riders, `heartrate = [None, Some(150.0)]`. Group `heartrate == Some(150.0)`. |
-| `group_gap_is_zero_for_watching_group` | Watching is in group N. Group N's `gap == 0`. |
-| `group_gap_is_head_for_group_ahead_tail_for_group_behind` | Group N has riders at gap 5.0, 5.5 (head, tail). Watching is at gap 0 (behind). Group N's `gap == 5.0` (head). Mirror for groups behind watching: gap is the tail. |
+| Test                                                         | Asserts                                                                                                                                                                |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aggregate_weight_skips_zero_weight_athletes`                | Three riders in one group with weights `[Some(70), None, Some(80)]`. Group `weight == Some(75.0)` (mean over the two valid weights).                                   |
+| `aggregate_power_and_draft_use_member_count`                 | Two riders, `power = [200, 300]`. Group `power == 250.0`.                                                                                                              |
+| `aggregate_speed_uses_median_not_mean`                       | Three riders, `speed = [10, 100, 20]`. Group `speed == 20.0` (median).                                                                                                 |
+| `aggregate_heartrate_skips_none_entries`                     | Two riders, `heartrate = [None, Some(150.0)]`. Group `heartrate == Some(150.0)`.                                                                                       |
+| `group_gap_is_zero_for_watching_group`                       | Watching is in group N. Group N's `gap == 0`.                                                                                                                          |
+| `group_gap_is_head_for_group_ahead_tail_for_group_behind`    | Group N has riders at gap 5.0, 5.5 (head, tail). Watching is at gap 0 (behind). Group N's `gap == 5.0` (head). Mirror for groups behind watching: gap is the tail.     |
 | `last_group_length_uses_head_and_tail_consistently_not_zero` | Three groups, last group has riders at gap 10.0 and 11.5. `last_group.length_time == 1.5` (head-to-tail), not 0.0. Pins the fix for the JS bug at stats.mjs:4506-4509. |
 
 ### 15.24 Jaccard identity — `tests/groups_identity.rs`
 
-| Test | Asserts |
-|------|---------|
-| `singleton_group_does_not_create_group_meta` | Single-rider group; `prior_groups.len()` unchanged after `compute_groups`. |
-| `multi_rider_group_creates_fresh_meta_when_no_prior_match` | No prior groups. After compute, `prior_groups.len() == 1`, the group's `id == initial_next_id`. `next_id` incremented. |
-| `jaccard_above_0_5_reuses_prior_group_id` | Prior group `{1, 2, 3}` with id 100. New group `{1, 2, 3, 4}`. Jaccard = `3/4 = 0.75`. Matches; new group's `id == 100`. |
-| `jaccard_exactly_0_5_creates_fresh_meta_strict_threshold` | Prior group `{1, 2, 3}` with id 100. New group `{1, 2, 4}`. Jaccard = `2/4 = 0.5`, *not* `> 0.5`. New group mints a fresh id; `prior_groups` has both entries (the old one until GC, the new one with the fresh id). |
-| `members_who_left_get_group_id_cleared_only_if_still_pointing_to_meta` | Prior meta id=100, identity_set `{1, 2, 3}`. Athletes 1/2/3 carry `group_id = Some(100)` from prior tick. New group `{1, 2, 4, 5}` matches at Jaccard 2/5 = 0.4 → does *not* match. Adjust the test so Jaccard is `> 0.5` (new group `{1, 2, 3, 4, 5}` ∩ `{1,2,3}` = 3, ∪ = 5, Jaccard = 0.6 → match). Athlete 3 was in the prior set but is still in the new set, so its `group_id` stays. Modify: new group `{1, 2, 4, 5, 6}` ∩ `{1,2,3}` = 2, ∪ = 6, Jaccard = 0.33 → does not match. Use a setup that meets `> 0.5` while leaving someone behind: prior `{1, 2, 3, 4}`, new `{1, 2, 3, 5}`. Jaccard = 3/5 = 0.6 → match. Athlete 4 (left behind) had `group_id = Some(100)`; after compute, `athlete_4.group_id == None`. A second athlete with `group_id = Some(999)` (unrelated) stays `Some(999)`. |
-| `prior_meta_used_once_per_tick_greedy_first_wins` | Two new groups both score `> 0.5` against the same prior meta. The first iterated group wins the id; the second mints a fresh one. |
+| Test                                                                   | Asserts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `singleton_group_does_not_create_group_meta`                           | Single-rider group; `prior_groups.len()` unchanged after `compute_groups`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `multi_rider_group_creates_fresh_meta_when_no_prior_match`             | No prior groups. After compute, `prior_groups.len() == 1`, the group's `id == initial_next_id`. `next_id` incremented.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `jaccard_above_0_5_reuses_prior_group_id`                              | Prior group `{1, 2, 3}` with id 100. New group `{1, 2, 3, 4}`. Jaccard = `3/4 = 0.75`. Matches; new group's `id == 100`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `jaccard_exactly_0_5_creates_fresh_meta_strict_threshold`              | Prior group `{1, 2, 3}` with id 100. New group `{1, 2, 4}`. Jaccard = `2/4 = 0.5`, _not_ `> 0.5`. New group mints a fresh id; `prior_groups` has both entries (the old one until GC, the new one with the fresh id).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `members_who_left_get_group_id_cleared_only_if_still_pointing_to_meta` | Prior meta id=100, identity_set `{1, 2, 3}`. Athletes 1/2/3 carry `group_id = Some(100)` from prior tick. New group `{1, 2, 4, 5}` matches at Jaccard 2/5 = 0.4 → does _not_ match. Adjust the test so Jaccard is `> 0.5` (new group `{1, 2, 3, 4, 5}` ∩ `{1,2,3}` = 3, ∪ = 5, Jaccard = 0.6 → match). Athlete 3 was in the prior set but is still in the new set, so its `group_id` stays. Modify: new group `{1, 2, 4, 5, 6}` ∩ `{1,2,3}` = 2, ∪ = 6, Jaccard = 0.33 → does not match. Use a setup that meets `> 0.5` while leaving someone behind: prior `{1, 2, 3, 4}`, new `{1, 2, 3, 5}`. Jaccard = 3/5 = 0.6 → match. Athlete 4 (left behind) had `group_id = Some(100)`; after compute, `athlete_4.group_id == None`. A second athlete with `group_id = Some(999)` (unrelated) stays `Some(999)`. |
+| `prior_meta_used_once_per_tick_greedy_first_wins`                      | Two new groups both score `> 0.5` against the same prior meta. The first iterated group wins the id; the second mints a fresh one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ### 15.25 GroupMeta identity_set — `tests/groups_identity.rs`
 
-| Test | Asserts |
-|------|---------|
-| `group_meta_carries_identity_set` | After `compute_groups` produces a multi-rider group, the stored `GroupMeta.identity_set == HashSet::from([a1, a2, ...])`. |
+| Test                                              | Asserts                                                                                                                                                                                                                                       |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `group_meta_carries_identity_set`                 | After `compute_groups` produces a multi-rider group, the stored `GroupMeta.identity_set == HashSet::from([a1, a2, ...])`.                                                                                                                     |
 | `gc_drops_meta_past_ttl_with_identity_set_intact` | Insert a group with a populated `identity_set`, age `accessed` past TTL, `gc(now)` drops it; the `GcReport.groups_dropped == 1`. Identity-set contents do not affect TTL eviction (covered by STEP 14 already, repeated here for confidence). |
 
 ### 15.26 Streams — `tests/streams.rs`
 
-| Test | Asserts |
-|------|---------|
-| `record_streams_appends_distance_altitude_latlng_per_tick` | After three calls to `ad.record_streams(state)` with different distances, `streams.distance.len() == 3`. |
-| `latlng_uses_custom_type_with_named_fields` | `streams.latlng[0].lat == state.lat` and `.lng == state.lng`. The Rust port uses a named-field `LatLng` struct rather than a tuple. |
+| Test                                                        | Asserts                                                                                                                                            |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `record_streams_appends_distance_altitude_latlng_per_tick`  | After three calls to `ad.record_streams(state)` with different distances, `streams.distance.len() == 3`.                                           |
+| `latlng_uses_custom_type_with_named_fields`                 | `streams.latlng[0].lat == state.lat` and `.lng == state.lng`. The Rust port uses a named-field `LatLng` struct rather than a tuple.                |
 | `wbal_sample_appended_per_tick_when_accumulator_configured` | `WBalAccumulator` configured with cp = 200, w_prime = 20000. Each `accumulate` returns `Some(value)`. `streams.wbal` carries `Some(...)` per tick. |
-| `wbal_stream_carries_none_when_accumulator_unconfigured` | Unconfigured `WBalAccumulator`. `streams.wbal.len() == N`, every entry `None`. |
+| `wbal_stream_carries_none_when_accumulator_unconfigured`    | Unconfigured `WBalAccumulator`. `streams.wbal.len() == N`, every entry `None`.                                                                     |
 
 ### 15.27 Regression fixture — `tests/step15_regression.rs`
 
 A hand-built ~60-tick session driving every STEP 15 surface:
 
-| Section | Content |
-|---------|---------|
-| Power waveform | `[100, 100, 100, 200, 200, 300, 300, 400, 400, ...]` covering every Coggan zone at FTP=250. |
-| W' trace | Same waveform, CP=250, W'=20000. Expected `value()` per tick checked in. |
-| Nearby riders | Two synthetic riders with gap trace `[1.5, 1.5, 2.5, 2.5, 1.0, 1.0]` to exercise both the cohesion and split paths. |
-| Segment | One synthetic segment from rpct 0.20 to 0.30 on a stub road, with the rider entering at progress 0.02 and exiting after progress > 1.0. |
+| Section        | Content                                                                                                                                 |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Power waveform | `[100, 100, 100, 200, 200, 300, 300, 400, 400, ...]` covering every Coggan zone at FTP=250.                                             |
+| W' trace       | Same waveform, CP=250, W'=20000. Expected `value()` per tick checked in.                                                                |
+| Nearby riders  | Two synthetic riders with gap trace `[1.5, 1.5, 2.5, 2.5, 1.0, 1.0]` to exercise both the cohesion and split paths.                     |
+| Segment        | One synthetic segment from rpct 0.20 to 0.30 on a stub road, with the rider entering at progress 0.02 and exiting after progress > 1.0. |
 
 Expected outputs (per tick) recorded in `fixtures/step15_session_expected.json`:
+
 - `time_in_power_zones.value()` after the final tick
 - `wbal_trace[..]` (one per tick)
 - `group_assignments[..]` (athlete_id → group_id per tick)
@@ -660,7 +661,7 @@ that a future step may revisit.
    latlng, wbal) stay discoverable alongside the slice machinery
    without being entangled with `DataSlice`'s identity / lifecycle
    fields. `LatLng` is a `pub struct LatLng { pub lat: f64, pub
-   lng: f64 }` — the named fields prevent the common `(lng, lat)`
+lng: f64 }` — the named fields prevent the common `(lng, lat)`
    transposition bug that tuples invite. Pinned by
    15.26-T `latlng_uses_custom_type_with_named_fields`.
 
@@ -742,7 +743,7 @@ that a future step may revisit.
 
 10. **Segment start window uses the JS `5% OR 150m / distance`
     formula.** The expression `progress < 0.05 || progress <
-    SEGMENT_START_WINDOW_METRES / segment.distance` is preserved
+SEGMENT_START_WINDOW_METRES / segment.distance` is preserved
     literally — the comparison `progress < 150 / distance` is
     dimensionally consistent because `progress` is a fraction
     of `(road_finish - road_start)` and the right-hand side is
