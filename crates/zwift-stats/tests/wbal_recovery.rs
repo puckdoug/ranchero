@@ -8,8 +8,10 @@ fn recovery_below_cp_uses_exponential_term() {
     acc.configure(200.0, 20000.0);
 
     // Drain wBal to approximately 10000
-    for _ in 0..100 {
-        acc.accumulate(0.0, Sample::Value(400.0));
+    // Depletion per second: (200 - 400) = -200 W
+    // Need to deplete 10000 J: 10000 / 200 = 50 seconds
+    for i in 0..50 {
+        acc.accumulate(i as f64, Sample::Value(400.0));
     }
 
     let drained = acc.value().unwrap();
@@ -19,7 +21,7 @@ fn recovery_below_cp_uses_exponential_term() {
     // Change = (200 - 100) * 1 * (20000 - drained) / 20000
     let change_expected = (200.0 - 100.0) * 1.0 * (20000.0 - drained) / 20000.0;
     let wbal_before = acc.value().unwrap();
-    acc.accumulate(1.0, Sample::Value(100.0));
+    acc.accumulate(50.0, Sample::Value(100.0));
     let wbal_after = acc.value().unwrap();
     let actual_change = wbal_after - wbal_before;
 

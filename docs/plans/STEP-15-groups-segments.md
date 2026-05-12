@@ -111,19 +111,19 @@ Setup (no tests):
       `depletion_above_cp_uses_linear_term`,
       `clamp_at_wprime_does_not_exceed`,
       `wbal_can_go_negative_in_the_red`.
-- [ ] **15.6-I** Add `WBalAccumulator` in `src/wbal.rs`:
+- [x] **15.6-I** Add `WBalAccumulator` in `src/wbal.rs`:
       `configure(cp, w_prime)`, `accumulate(time, sample)`,
       `value()`, `reset()`. Internal closure mirrors
       `makeIncWPrimeBalDifferential` (power.mjs:804-826).
 - [x] **15.7-T** `tests/wbal_break.rs::break_sample_refills_until_full`,
       `break_sample_short_circuits_when_within_epsilon`.
-- [ ] **15.7-I** Handle `Sample::Break { pad }` in
+- [x] **15.7-I** Handle `Sample::Break { pad }` in
       `WBalAccumulator::accumulate`: loop `pad` (a `u32` per 15.5)
       ticks, add `cp * (w_prime - w_bal) / w_prime` per tick,
       early-exit when `w_bal >= w_prime - 1e-6`.
 - [x] **15.8-T** `tests/wbal_unconfigured.rs::unconfigured_yields_none`,
       `accumulator_clone_continue_carries_w_bal`.
-- [ ] **15.8-I** When `cp` or `w_prime` is `None`, every
+- [x] **15.8-I** When `cp` or `w_prime` is `None`, every
       `accumulate` returns `None`. Add `clone_reset` /
       `clone_continue`.
 

@@ -20,8 +20,10 @@ fn accumulator_clone_continue_carries_w_bal() {
     acc.configure(200.0, 20000.0);
 
     // Drive wBal to approximately 5000
-    for _ in 0..1000 {
-        acc.accumulate(0.0, Sample::Value(400.0));
+    // Depletion per second: (200 - 400) = -200 W
+    // Need to deplete 15000 J: 15000 / 200 = 75 seconds
+    for i in 0..75 {
+        acc.accumulate(i as f64, Sample::Value(400.0));
     }
 
     let wbal_source = acc.value().unwrap();
@@ -34,8 +36,8 @@ fn accumulator_clone_continue_carries_w_bal() {
     assert_eq!(acc_clone.value().unwrap(), wbal_source, "clone_continue should carry wBal state");
 
     // Subsequent writes should diverge
-    acc.accumulate(1.0, Sample::Value(100.0)); // Recovery
-    acc_clone.accumulate(1.0, Sample::Value(500.0)); // Depletion
+    acc.accumulate(75.0, Sample::Value(100.0)); // Recovery
+    acc_clone.accumulate(75.0, Sample::Value(500.0)); // Depletion
 
     let wbal_source_after = acc.value().unwrap();
     let wbal_clone_after = acc_clone.value().unwrap();
