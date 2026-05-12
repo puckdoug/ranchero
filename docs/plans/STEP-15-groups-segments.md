@@ -91,7 +91,7 @@ Setup (no tests):
 
 `Sample::Break.pad` type amendment (STEP 13 carry-over):
 
-- [ ] **15.5-T** `tests/sample_break.rs::break_pad_is_u32` — a
+- [x] **15.5-T** `tests/sample_break.rs::break_pad_is_u32` — a
       compile-fence test that constructs `Sample::Break { pad: 5 }`
       and reads `pad` as a `u32`. Existing tests / call sites that
       construct or match on `Break.pad` must be updated to the new
