@@ -66,14 +66,14 @@ Setup (no tests):
 
 `ZonesAccumulator` (power zones; HR-zone variant is parametric on the input):
 
-- [ ] **15.2-T** `tests/zones_definitions.rs::coggan_zones_at_ftp_250_match_js_table`,
+- [x] **15.2-T** `tests/zones_definitions.rs::coggan_zones_at_ftp_250_match_js_table`,
       `polarized_zones_at_ftp_250`, `sweetspot_zone_fascat_and_coggan`.
 - [ ] **15.2-I** Add free functions `coggan_zones(ftp)`,
       `polarized_zones(ftp)`, `sweetspot_zone(ftp, kind)` in
       `src/zones.rs`. Return `Vec<Zone>` / `Zone` matching the JS
       tables exactly. `Zone::to` carries `Option<f64>` (`None` is
       the unbounded upper bound).
-- [ ] **15.3-T** `tests/zones_accumulator.rs::accumulate_credits_top_down_with_break_on_non_overlap`,
+- [x] **15.3-T** `tests/zones_accumulator.rs::accumulate_credits_top_down_with_break_on_non_overlap`,
       `accumulate_continues_iteration_on_overlap_for_sweetspot`,
       `accumulate_handles_zero_and_top_bounds`,
       `accumulate_first_tick_yields_zero_elapsed`.
@@ -84,7 +84,7 @@ Setup (no tests):
       overlap zones to the tail so the iteration hits them first
       and continues past them. First-tick elapsed is 0; subsequent
       tick adds `time - _time_offset`.
-- [ ] **15.4-T** `tests/zones_accumulator.rs::reset_clears_value_and_ftp`,
+- [x] **15.4-T** `tests/zones_accumulator.rs::reset_clears_value_and_ftp`,
       `clone_continue_carries_state`, `clone_reset_starts_fresh`.
 - [ ] **15.4-I** Add `reset()`, `clone_reset()`, `clone_continue()`
       to `ZonesAccumulator`.
