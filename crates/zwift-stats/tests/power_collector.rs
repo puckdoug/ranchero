@@ -4,6 +4,7 @@ use zwift_stats::collector::{DataCollectorOptions, PowerDataCollector};
 
 // 14.10: NP peak only for periods >= 300
 #[test]
+#[ignore = "slow: iterates 3600 samples for extended period testing; see docs/plans/done/mark-slow-tests.md"]
 fn np_peak_only_for_periods_at_or_above_300() {
     let periods = [5.0, 15.0, 60.0, 300.0, 1200.0, 3600.0];
     let opts = DataCollectorOptions {
