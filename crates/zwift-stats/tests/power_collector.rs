@@ -157,3 +157,76 @@ fn np_peak_cleared_by_clone_reset() {
     assert!(reset_peaks[0].is_none(), "clone_reset clears 300 s NP peak");
     assert!(reset_peaks[1].is_none(), "clone_reset clears 1200 s NP peak");
 }
+
+// R2A-T3: NP peak snapshot self-describes (period) and carries the rolling.
+#[test]
+fn np_peak_snapshot_carries_period_and_roll() {
+    let periods = [300.0];
+    let opts = DataCollectorOptions {
+        ideal_gap: 1.0,
+        ..Default::default()
+    };
+    let mut collector = PowerDataCollector::new(&periods, opts);
+
+    // Fill the 300 s period to produce an NP peak.
+    for t in 0..351 {
+        collector.add(t as f64, 250.0);
+    }
+
+    let np_peaks = collector.np_peaks();
+    let np_peak = np_peaks[0].as_ref().expect("300 s NP peak should exist");
+
+    assert_eq!(
+        np_peak.period, 300.0,
+        "snapshot.period self-describes which periodized window it came from"
+    );
+
+    let entry_roll = &collector.periodized()[0].roll;
+    let entry_np = entry_roll
+        .np(false)
+        .expect("entry rolling has NP at peak time");
+    let peak_np = np_peak
+        .roll
+        .np(false)
+        .expect("snapshot rolling has NP at peak time");
+
+    assert!(
+        (peak_np - entry_np).abs() < 1e-9,
+        "snapshot.roll.np ({}) matches entry.roll.np ({}) at peak time",
+        peak_np,
+        entry_np
+    );
+}
+
+// R2A-T5: clone_continue carries the NP snapshot's roll forward as a deep copy.
+#[test]
+fn clone_continue_preserves_np_peak_rolls() {
+    let periods = [300.0];
+    let opts = DataCollectorOptions {
+        ideal_gap: 1.0,
+        ..Default::default()
+    };
+    let mut collector = PowerDataCollector::new(&periods, opts);
+
+    for t in 0..351 {
+        collector.add(t as f64, 250.0);
+    }
+
+    let cloned = collector.clone_continue();
+    let cloned_np = cloned.np_peaks()[0]
+        .as_ref()
+        .expect("clone has NP peak")
+        .roll
+        .np(false);
+
+    // Drive the source further; cloned snapshot's roll must not change.
+    for t in 351..500 {
+        collector.add(t as f64, 250.0);
+    }
+
+    assert_eq!(
+        cloned.np_peaks()[0].as_ref().unwrap().roll.np(false),
+        cloned_np,
+        "clone_continue NP snapshot's roll.np unaffected by source updates"
+    );
+}

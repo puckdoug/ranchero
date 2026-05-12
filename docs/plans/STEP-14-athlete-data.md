@@ -1283,13 +1283,15 @@ TDD pairs in the same style as the rest of the document. Each `-T`
 item adds a failing test; each `-I` item adds the production code
 that turns it green.
 
-- [ ] **R2A-T1** `tests/collector.rs::peak_snapshot_carries_period_and_roll`
+- [x] **R2A-T1** `tests/collector.rs::peak_snapshot_carries_period_and_roll`
       — drive a stream that fills the 60 s period and triggers a peak
       update. Assert that the snapshot's `period` equals `60.0` and
       that its `roll.avg(None)` and `roll.last_time()` match the
       periodized entry's rolling at the moment the peak was set.
       The test fails to compile because `period` and `roll` do not
-      exist on `PeakSnapshot`.
+      exist on `PeakSnapshot`. **Done (2026-05-12):** Test added; fails
+      to compile with `no field period on type &PeakSnapshot` and
+      `no field roll on type &PeakSnapshot`, as expected.
 
 - [ ] **R2A-I1** Make `PeakSnapshot` generic over `R: RollingWindow`,
       add `pub period: f64` and `pub roll: R` fields, and update
@@ -1301,13 +1303,15 @@ that turns it green.
       tests that read `peaks()[0]` to take the generic into account
       where needed.
 
-- [ ] **R2A-T2** `tests/collector.rs::peak_snapshot_roll_is_independent_of_source`
+- [x] **R2A-T2** `tests/collector.rs::peak_snapshot_roll_is_independent_of_source`
       — drive a stream that produces a peak on the 60 s period.
       Capture the snapshot (by cloning it). Push more samples that
       would otherwise change the rolling's `avg` and `last_time`.
       Assert that the captured snapshot's `roll.avg(None)` and
       `roll.last_time()` are unchanged. This pins the deep-clone
-      property that the rest of Path A depends on.
+      property that the rest of Path A depends on. **Done
+      (2026-05-12):** Test added; fails to compile with
+      `no field roll on type PeakSnapshot`, as expected.
 
 - [ ] **R2A-I2** No new code is expected here: STEP 13 chose copy
       on `RollingWindow::clone`, so the snapshot's `roll` is already
@@ -1317,11 +1321,14 @@ that turns it green.
       it. If the test fails, replace the implicit clone with an
       explicit deep clone.
 
-- [ ] **R2A-T3** `tests/power_collector.rs::np_peak_snapshot_carries_period_and_roll`
+- [x] **R2A-T3** `tests/power_collector.rs::np_peak_snapshot_carries_period_and_roll`
       — drive a constant-power stream long enough to fill the 300 s
       period and produce an NP peak. Assert that the snapshot's
       `period` equals `300.0` and that its `roll.np(false)` matches
       the inner roll's `np(false)` at the moment the peak was set.
+      **Done (2026-05-12):** Test added; fails to compile with
+      `no field period on type &NpPeakSnapshot` and
+      `no field roll on type &NpPeakSnapshot`, as expected.
 
 - [ ] **R2A-I3** Add `pub period: f64` and `pub roll: RollingPower`
       fields to `NpPeakSnapshot`. Update
@@ -1329,15 +1336,18 @@ that turns it green.
       type stays concrete (NP peaks are only ever recorded for
       `RollingPower`).
 
-- [ ] **R2A-T4** `tests/collector.rs::clone_continue_preserves_peak_rolls`
+- [x] **R2A-T4** `tests/collector.rs::clone_continue_preserves_peak_rolls`
       — drive a stream that produces a peak, call `clone_continue()`,
       then push more samples to the source. Assert that the cloned
       collector's snapshot still reports the original `roll.avg(None)`
       and `roll.last_time()` (deep clone survives through the
-      carry-forward).
+      carry-forward). **Done (2026-05-12):** Test added; fails to
+      compile with `no field roll on type &PeakSnapshot`, as expected.
 
-- [ ] **R2A-T5** `tests/power_collector.rs::clone_continue_preserves_np_peak_rolls`
-      — mirror of R2A-T4 for `NpPeakSnapshot`.
+- [x] **R2A-T5** `tests/power_collector.rs::clone_continue_preserves_np_peak_rolls`
+      — mirror of R2A-T4 for `NpPeakSnapshot`. **Done (2026-05-12):**
+      Test added; fails to compile with
+      `no field roll on type &NpPeakSnapshot`, as expected.
 
 - [ ] **R2A-I4** Verify that `DataCollector::clone_continue` and
       `PowerDataCollector::clone_continue` already clone the peaks
@@ -1348,14 +1358,16 @@ that turns it green.
       change in `clone_reset` if needed (peaks are cleared there, so
       no work is expected).
 
-- [ ] **R2A-T6** `tests/collector.rs::peaks_method_returns_generic_snapshots`
+- [x] **R2A-T6** `tests/collector.rs::peaks_method_returns_generic_snapshots`
       — compile-only check (no runtime assertion needed beyond
       construction) that the return type of `DataCollector::<RollingAverage>::peaks()`
       is `Vec<Option<PeakSnapshot<RollingAverage>>>` and that
       `DataCollector::<RollingPower>::peaks()` returns
       `Vec<Option<PeakSnapshot<RollingPower>>>`. This pins the
       generic surface so a later refactor cannot silently revert to
-      a concrete type.
+      a concrete type. **Done (2026-05-12):** Test added; fails to
+      compile with `struct takes 0 generic arguments but 1 generic
+      argument was supplied` on both lines, as expected.
 
 - [ ] **R2A-I5** Update the "Public API surface" section of this
       document to record `PeakSnapshot<R>` as generic with the new
