@@ -937,86 +937,89 @@ returns the value or `Option<…>`. The same posture as STEP 13.
 - No new dependencies. The existing dev-dependency on `serde_json`
   (added in STEP 13) covers the new fixture load path.
 
-## Open verification points
+## As-built decisions
 
-These are claims that should be confirmed before declaring the step
-complete. None block tests; the implementation can be written and
-tested against either choice. Record any decision in the as-built
-notes appended to this file.
+This section was "Open verification points" while STEP 14 was being
+implemented. All seven items have now been decided. Each entry
+below records the chosen option, points at where the implementation
+lives, and names the fallback (if any) for a future step to revisit.
 
-1. **GC tick interval.** The original stub said "GC ticks at 10 s",
-   but `stats.mjs:3553` actually uses 62 768 ms. The Rust port
-   defaults to that interval (exposed as `GC_TICK_INTERVAL_SECS =
-62.768`). The 10 s figure may have been a typo for the
-   `_zwiftMetaRefresh` value at `stats.mjs:3565`. Decide whether to
-   keep 62.768 s or honour the stub before STEP 17 wires the daemon
-   loop.
+1. **GC tick interval — 62.768 s.** `periods.rs` defines
+   `GC_TICK_INTERVAL_SECS = 62.768` (matching `stats.mjs:3553`).
+   The stub's "10 s" figure was discarded as a likely typo for the
+   `_zwiftMetaRefresh` value at `stats.mjs:3565`. The constant is
+   not yet wired to anything — STEP 17 will drive
+   `AthleteRegistry::gc(now)` against it when the daemon loop is
+   stood up, and STEP 17's "GC tick interval confirmation" bullet
+   asks for a final cross-check against current JS behaviour
+   before scheduling the interval.
 
-2. **Periodized clone fan-out: independent rolls vs shared backing
-   storage.** The JS `RollingAverage::clone({period})` shares
-   `_times` / `_values` and forks only the index pointers. STEP 13
-   chose to copy on clone, so STEP 14's `DataCollector` will push
-   each flushed sample into every clone independently. Cost: the
-   gap-fill computation runs N+1 times per push (one primary, N
-   periodized). For peak fan-outs of 4 / 6, this is negligible at
-   1 Hz; reconfirm under load in STEP 19. The alternative
-   (`Arc<Vec<f64>>` with copy-on-clone semantics) is left for a
-   later optimisation if the parity tests' wall-clock cost is too
-   high.
+2. **Periodized clones — independent rolling buffers.** Each
+   periodized entry holds its own `RollingAverage` or
+   `RollingPower`. This matches STEP 13's copy-on-clone choice for
+   the rolling primitives. The cost is that `gap_fill` runs N+1
+   times per push (one primary plus N periodized); at 4–6 periods
+   × 1 Hz this is negligible. The named fallback is shared backing
+   storage via `Arc<Vec<f64>>` with copy-on-write semantics,
+   matching the JavaScript `RollingAverage::clone({period})`
+   pattern. STEP 19 should reconfirm the cost under load and
+   switch to the shared-storage form if it measures pressure.
 
-3. **`RollingWindow` trait vs concrete `RollingAverage`.**
-   *(Decision recorded 2026-05-12.)* The plan above takes the trait
-   route so `DataCollector<R>` can be generic over `RollingAverage`
-   and `RollingPower`. The trait is named `RollingWindow` rather
-   than `Collector` because `Collector` would collide with the role
-   of `DataCollector` and `PowerDataCollector`, which use the
-   trait. The alternative (two non-generic struct types
-   `DataCollector` and `PowerDataCollector` with shared fields by
-   composition) was considered and rejected — the trait produced no
-   awkward bounds in practice and the duplicated-struct variant
-   would have duplicated the buffer and max-value logic. The trait's
-   `add` method takes `Sample`, not raw `f64`, to preserve the
-   `Pad` and `Break` variants for later visualization use; see the
-   "`RollingWindow` trait" section under "Public API surface" for
-   the full reasoning.
+3. **Trait surface — `RollingWindow`, `add` takes `Sample`.**
+   `DataCollector<R>` is generic over a `RollingWindow` trait
+   rather than being two non-generic struct types with shared
+   fields by composition. The trait is named `RollingWindow`
+   (not `Collector` as the original plan called for) so that the
+   name does not collide with the role of `DataCollector` and
+   `PowerDataCollector`. The trait's `add` takes `Sample`, not
+   raw `f64`, so that the `Pad` and `Break` variants survive at
+   the trait boundary for later visualization use. See the
+   "`RollingWindow` trait" subsection under "Public API surface"
+   for the full reasoning.
 
-4. **`DataCollector` peak comparison.** The JS uses `>=` so a
-   constant stream's peak `snap_time` advances on every push
-   (`stats.mjs:185-189`). The Rust port mirrors this. Pin it in a
-   test rather than leaving it as a folkloric detail.
+4. **Peak comparison — `>=`.** Both the average-peak update in
+   `DataCollector::flush` and the Normalized-Power-peak update in
+   `PowerDataCollector::update_np_peaks` compare with `>=`, so a
+   constant stream's `snap_time` advances on every push. This
+   matches `stats.mjs:185-189` and `stats.mjs:280-287`. The test
+   `peak_uses_geq_comparison_not_strict_gt` pins this for the
+   regular peak path; `np_peak_uses_geq_comparison` pins it for
+   the NP path.
 
-5. **`PowerDataCollector` for `draft`.** The JS uses
-   `new DataCollector(Sauce.power.RollingPower, longPeriods, {round: true})`
-   — that is, a regular `DataCollector` with `RollingPower` as the
-   inner type, _not_ a `PowerDataCollector`. So draft does not get
-   NP peaks. The Rust port matches this: `bucket.draft` is
-   `DataCollector<RollingPower>`, not `PowerDataCollector`. Pin
-   in `default_construction_matches_js_signals`.
+5. **Draft uses `DataCollector<RollingPower>`, not
+   `PowerDataCollector`.** Draft gets the inline-NP machinery
+   internal to `RollingPower` (so that `RollingPower::np` is
+   callable on the draft signal if a later feature wants it), but
+   it does not get NP peak snapshots. This matches the JavaScript
+   wiring at `stats.mjs:2697-2714` and is pinned by
+   `default_construction_matches_js_signals`.
 
-6. **`MostRecentState` shape.** The JS `mostRecentState` is the
-   raw protobuf `PlayerState` object. STEP 14 only needs the fields
-   the parity tests probe; the rest are added as later steps reach
-   for them. The struct lives in `athlete.rs` because it is purely
-   an internal cache, not a wire type. If a later step needs the
-   full `PlayerState`, the cleanest move is to make
-   `MostRecentState` an alias for the `zwift-proto` type at that
-   point — STEP 14 stays proto-free.
+6. **`MostRecentState` — hand-written struct in `athlete.rs`.**
+   STEP 14 ships a hand-written struct with the minimal field
+   set the regression test uses (`world_time`, `speed`, `power`,
+   `heartrate`, `cadence`, `draft`, `distance`, `altitude`). The
+   choice between (a) growing this struct as later steps reach
+   for more fields and (b) replacing it with a re-export of the
+   `zwift-proto` `PlayerState` type is deferred to STEP 17.
+   STEP 17's "`MostRecentState` proto-type decision" bullet
+   tracks the decision; the goal in STEP 14 is to keep
+   `zwift-stats` proto-free.
 
-7. **Peak snapshot storage cost.** *(Decision recorded 2026-05-12.)*
-   Each peak snapshot clones the entire periodized rolling at the
-   moment of the peak (matches JS). For a 3 600 s window at 1 Hz
-   this is 3 600 `f64` pairs ≈ 58 KB per snapshot, per athlete, per
-   signal. With 100 athletes × 5 signals × 6 periods, worst-case
-   footprint is ≈ 174 MB. This cost is accepted: the purpose of
-   ranchero is to feed visualization, and discarding the rolling at
-   peak time would force a re-implementation when the first analysis
-   feature needs the per-sample values, the per-sample timestamps,
-   the active versus elapsed bookkeeping, or the inline Normalized
-   Power state for a peak window. The "R2 elaboration" section
-   below records the implementation that put `period` and `roll`
-   onto `PeakSnapshot` and `NpPeakSnapshot`. If STEP 19 measures
-   pressure, the lighter `{snap_value, snap_time}`-only snapshot
-   remains the named fallback (Path B in R2 elaboration).
+7. **Peak snapshot storage cost — accepted.** Each `PeakSnapshot`
+   and `NpPeakSnapshot` carries a deep clone of the periodized
+   rolling at the moment the peak was set (`period`, `snap_value`,
+   `snap_time`, `roll`). For a 3,600 s window at 1 Hz the rolling
+   is roughly 58 KB per snapshot; worst-case footprint at 100
+   athletes × 5 signals × 6 periods is ≈ 174 MB. This cost is
+   accepted because ranchero exists to feed visualization, and
+   discarding the rolling at peak time would force a
+   re-implementation as soon as the first analysis feature needs
+   the per-sample values, timestamps, active-versus-elapsed
+   bookkeeping, or inline Normalized Power state for a peak
+   window. See the "R2 elaboration" section below for the
+   decision record. The named fallback is the lighter
+   `{snap_value, snap_time}`-only snapshot (Path B in R2
+   elaboration) if STEP 19 measures pressure.
 
 ## Design decisions worth pre-committing
 
@@ -1054,9 +1057,17 @@ notes appended to this file.
   dependency tree narrow and its tests fast.
 - **Tests live in `tests/`.** Project convention: every crate has
   integration tests only.
-- **Float comparison policy.** `approx::abs_diff_eq!` with
-  `epsilon = 1e-9` for hand-derived vectors, `epsilon = 1e-6` for
-  parity vectors against the JS oracle.
+- **Float comparison policy.** Use the `approx` crate's
+  `assert_abs_diff_eq!` macro for all numeric comparisons in tests.
+  Tolerances: `epsilon = 1e-9` for hand-derived vectors checked
+  against analytic values; `epsilon = 1e-6` for fixture-based
+  regression checks (for example `tests/stream_parity.rs`).
+  *(Revised 2026-05-12. The original line read "for parity vectors
+  against the JS oracle." That end-to-end comparison against the
+  JavaScript implementation has been dropped because `sauce4zwift`
+  has no session-replay capability; the looser 1e-6 tolerance
+  remains appropriate for fixture-based regression checks where
+  the fixture was rounded for human readability.)*
 
 ## Wiring into the workspace
 
@@ -1239,7 +1250,16 @@ were called out in the as-built notes inside the checklist itself.
 
    Move these into a short "As-built decisions" subsection so they
    are no longer presented as open questions on a step that is
-   marked complete.
+   marked complete. *(Resolved by R7 on 2026-05-12: the section is
+   now titled "As-built decisions" and each of the seven items has
+   been rewritten to record the chosen option, the implementation
+   location, and the named fallback. The per-item numbers are
+   preserved. Note that since this concern was first written, items
+   #3 and #7 have moved on from the resolutions sketched in the
+   bullet list above: #3 was redecided in favour of keeping the
+   `RollingWindow` name and the `Sample`-bearing trait surface (see
+   R3), and #7 was redecided in favour of carrying the rolling
+   forward on each peak snapshot (see R2 / Path A).)*
 
 8. **`AthleteRegistry::upsert` updates `course_id` and `sport` only
    on the first insert.** The `or_insert_with` branch uses the values
@@ -1249,7 +1269,11 @@ were called out in the as-built notes inside the checklist itself.
    takes no identity fields. However, the daemon will eventually
    encounter cases where the same `athlete_id` appears on a different
    course or switches sport during a session. This should be
-   considered when STEP 17 is planned.
+   considered when STEP 17 is planned. *(Resolved by R8 on
+   2026-05-12: a bullet has been added to STEP 17's "Inputs deferred
+   from STEP 14" section that records the current behaviour, lists
+   three options for handling mid-session changes, and asks STEP 17
+   to record the choice in its as-built notes.)*
 
 ## Items that didn't get properly implemented
 
@@ -1360,16 +1384,32 @@ plan has been brought into agreement.
       change was required. Test still passes (98 in the full
       suite); no clippy warnings.
 
-- [ ] **R7** Replace the "Open verification points" section with a
+- [x] **R7** Replace the "Open verification points" section with a
       short "As-built decisions" subsection that records the
       decisions the implementation has effectively made (see the
       bullet list under concern #7 for the per-item resolutions).
-      See concern #7.
+      See concern #7. **Done (2026-05-12):** The section is now
+      titled "As-built decisions". Its intro records the rename
+      and explains that every item has been decided. Each of the
+      seven items has been rewritten to lead with the chosen
+      option, point at where the implementation lives, and name
+      the fallback (where one exists). The per-item numbers (1
+      through 7) are preserved so existing in-document references
+      to "Open verification point #N" still resolve.
 
-- [ ] **R8** Record the `AthleteRegistry::upsert` identity-field
+- [x] **R8** Record the `AthleteRegistry::upsert` identity-field
       behaviour in the STEP 17 planning notes so that handling of
       mid-session course or sport changes is considered when the
-      daemon ingest path is designed. See concern #8.
+      daemon ingest path is designed. See concern #8. **Done
+      (2026-05-12):** A new bullet has been added to STEP 17's
+      "Inputs deferred from STEP 14" section, immediately after the
+      "PlayerState → `AthleteData::ingest_*` routing" item. It
+      records the current STEP 14 behaviour (identity fields used
+      only on first insert; `record_update` advances timestamps
+      only), names three options STEP 17 should choose between,
+      and notes that any new method needed for option (b) or (c)
+      should land in `zwift-stats` rather than the daemon so the
+      proto-free posture is preserved.
 
 ## R2 elaboration: `PeakSnapshot` and `NpPeakSnapshot` shape
 

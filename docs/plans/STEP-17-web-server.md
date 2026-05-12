@@ -59,6 +59,29 @@ graph:
   engine disagree, and calling `registry.upsert(...)` followed by
   the five `ingest_*` calls. This is the seam that lets
   `zwift-stats` stay proto-free.
+- **`AthleteRegistry::upsert` identity-field handling for
+  mid-session course or sport changes.** STEP 14's
+  `AthleteRegistry::upsert(athlete_id, course_id, sport, world_time,
+  now)` uses the `course_id` and `sport` arguments only on first
+  insert; on the existing-athlete path, it calls
+  `AthleteData::record_update(world_time, now)`, which advances the
+  timestamps and leaves `course_id` and `sport` untouched. (The
+  plan's `record_update` signature deliberately takes no identity
+  fields.) STEP 17 needs to decide what to do when the same
+  `athlete_id` appears with a new `course_id` (rider switched
+  worlds or rode through a world boundary) or a new `sport` (rider
+  changed activity in the same session). Options to evaluate:
+  (a) Overwrite the identity fields on every upsert and accept
+  silent drift from the JavaScript behaviour; (b) Detect the
+  change and reset the relevant collectors; (c) Treat the change
+  as a session boundary and replace the `AthleteData` record
+  entirely. The decision lives here because STEP 17 is the first
+  place that sees real `PlayerState` records and can confirm what
+  the game actually emits across course or sport changes. Record
+  the choice in this step's as-built notes and, if option (b) or
+  (c) is selected, add a corresponding method on `AthleteRegistry`
+  or `AthleteData` in `zwift-stats` so that STEP 17 stays
+  proto-free.
 - **`MostRecentState` proto-type decision.** STEP 14 ships a
   hand-written `MostRecentState` struct with the minimal field set
   the parity tests need. If STEP 17's proto-routing code reaches
