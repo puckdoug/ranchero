@@ -244,14 +244,14 @@ Event detection and privacy:
 
 Manual and automatic laps:
 
-- [ ] **15.16-T** `tests/laps.rs::start_athlete_lap_closes_open_slice_and_appends_new`,
+- [x] **15.16-T** `tests/laps.rs::start_athlete_lap_closes_open_slice_and_appends_new`,
       `start_athlete_lap_returns_new_slice_id`,
       `start_athlete_lap_clones_bucket_via_clone_reset`.
 - [ ] **15.16-I** Implement `start_athlete_lap(ad: &mut
   AthleteData, now: f64) -> u64` in `src/laps.rs`. Stamp the
       current open lap's `end = Some(now)`, create a new
       `DataSlice` via `clone_reset`, push, return its id.
-- [ ] **15.17-T** `tests/laps.rs::auto_lap_by_distance_threshold_triggers_at_each_interval`,
+- [x] **15.17-T** `tests/laps.rs::auto_lap_by_distance_threshold_triggers_at_each_interval`,
       `auto_lap_by_time_threshold_triggers_at_each_interval`,
       `auto_lap_mark_resets_on_course_change`,
       `auto_lap_first_call_seeds_mark_without_lapping`.
