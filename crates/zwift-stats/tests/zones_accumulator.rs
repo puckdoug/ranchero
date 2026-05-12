@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use zwift_stats::zones::{coggan_zones, polarized_zones, sweetspot_zone, ZonesAccumulator, SweetspotKind};
+use zwift_stats::zones::{coggan_zones, sweetspot_zone, ZonesAccumulator, SweetspotKind};
 
 #[test]
 fn accumulate_credits_top_down_with_break_on_non_overlap() {

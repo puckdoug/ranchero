@@ -68,7 +68,7 @@ Setup (no tests):
 
 - [x] **15.2-T** `tests/zones_definitions.rs::coggan_zones_at_ftp_250_match_js_table`,
       `polarized_zones_at_ftp_250`, `sweetspot_zone_fascat_and_coggan`.
-- [ ] **15.2-I** Add free functions `coggan_zones(ftp)`,
+- [x] **15.2-I** Add free functions `coggan_zones(ftp)`,
       `polarized_zones(ftp)`, `sweetspot_zone(ftp, kind)` in
       `src/zones.rs`. Return `Vec<Zone>` / `Zone` matching the JS
       tables exactly. `Zone::to` carries `Option<f64>` (`None` is
@@ -77,7 +77,7 @@ Setup (no tests):
       `accumulate_continues_iteration_on_overlap_for_sweetspot`,
       `accumulate_handles_zero_and_top_bounds`,
       `accumulate_first_tick_yields_zero_elapsed`.
-- [ ] **15.3-I** Implement `ZonesAccumulator` in `src/zones.rs`:
+- [x] **15.3-I** Implement `ZonesAccumulator` in `src/zones.rs`:
       `configure(ftp, zones)`, `accumulate(time, value)`,
       `value()` returns `&[ZoneTime]`. Reproduces the JS
       reverse-iteration with `from < value <= to`, sorting
@@ -86,7 +86,7 @@ Setup (no tests):
       tick adds `time - _time_offset`.
 - [x] **15.4-T** `tests/zones_accumulator.rs::reset_clears_value_and_ftp`,
       `clone_continue_carries_state`, `clone_reset_starts_fresh`.
-- [ ] **15.4-I** Add `reset()`, `clone_reset()`, `clone_continue()`
+- [x] **15.4-I** Add `reset()`, `clone_reset()`, `clone_continue()`
       to `ZonesAccumulator`.
 
 `Sample::Break.pad` type amendment (STEP 13 carry-over):

@@ -57,14 +57,14 @@ fn polarized_zones_at_ftp_250() {
 #[test]
 fn sweetspot_zone_fascat_and_coggan() {
     let fascat = sweetspot_zone(250.0, SweetspotKind::Fascat);
-    assert_eq!(fascat.zone, "SS");
+    assert_eq!(fascat.label, "SS");
     assert_eq!(fascat.from, 210.0);
-    assert_eq!(fascat.to, 242.5);
+    assert_eq!(fascat.to, Some(242.5));
     assert_eq!(fascat.overlap, true);
 
     let coggan = sweetspot_zone(250.0, SweetspotKind::Coggan);
-    assert_eq!(coggan.zone, "SS");
+    assert_eq!(coggan.label, "SS");
     assert_eq!(coggan.from, 220.0);
-    assert_eq!(coggan.to, 232.5);
+    assert_eq!(coggan.to, Some(232.5));
     assert_eq!(coggan.overlap, false);
 }
