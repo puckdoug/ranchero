@@ -1206,7 +1206,10 @@ were called out in the as-built notes inside the checklist itself.
    the numerical comparison. The comparison test uses raw
    `(a - b).abs() < 1e-6`. The two are functionally equivalent here,
    but the development dependency on `approx` is already present and
-   the macro produces clearer failure messages.
+   the macro produces clearer failure messages. *(Resolved by R6 on
+   2026-05-12: `tests/stream_parity.rs` now uses
+   `approx::assert_abs_diff_eq!` with `epsilon = 1e-6` for every
+   numeric comparison.)*
 
 ### Severity: documentation drift (record-only)
 
@@ -1346,11 +1349,16 @@ plan has been brought into agreement.
       the new defaults. Total test count is now 92 (was 82); no
       clippy warnings.
 
-- [ ] **R6** Either switch the comparison in `stream_parity.rs` to
+- [x] **R6** Either switch the comparison in `stream_parity.rs` to
       `approx::abs_diff_eq!` with `epsilon = 1e-6`, or update the
       plan's "Design decisions worth pre-committing" section to
       remove the requirement to use the `approx` crate's macro. See
-      concern #6.
+      concern #6. **Done (2026-05-12):** `tests/stream_parity.rs`
+      now uses `approx::assert_abs_diff_eq!` with `epsilon = 1e-6`
+      for all five signal comparisons. The `approx` dev-dependency
+      was already in `Cargo.toml` from STEP 13, so no manifest
+      change was required. Test still passes (98 in the full
+      suite); no clippy warnings.
 
 - [ ] **R7** Replace the "Open verification points" section with a
       short "As-built decisions" subsection that records the
