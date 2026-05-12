@@ -646,11 +646,11 @@ keeps `DataCollector` callers free of the `Sample` enum.
 ### `DataCollector<R: Collector>` (`collector`)
 
 ```rust
-pub struct PeakSnapshot {
-    pub period:    f64,
+pub struct PeakSnapshot<R> {
+    pub period:     f64,
     pub snap_value: f64,
-    pub snap_time: f64,
-    pub roll:      // a clone of the rolling at the moment of the peak
+    pub snap_time:  f64,
+    pub roll:       R, // deep clone of the rolling at the moment of the peak
 }
 
 pub struct DataCollector<R: Collector> {
@@ -665,7 +665,7 @@ pub struct DataCollector<R: Collector> {
 pub struct PeriodizedEntry<R> {
     pub period: f64,
     pub roll:   R,
-    pub peak:   Option<PeakSnapshot>,
+    pub peak:   Option<PeakSnapshot<R>>,
 }
 
 impl<R: Collector> DataCollector<R> {
@@ -675,7 +675,7 @@ impl<R: Collector> DataCollector<R> {
     pub fn primary(&self) -> &R;
     pub fn periodized(&self) -> &[PeriodizedEntry<R>];
     pub fn max_value(&self) -> f64;
-    pub fn peaks(&self) -> Vec<Option<PeakSnapshot>>;       // one entry per period
+    pub fn peaks(&self) -> Vec<Option<PeakSnapshot<R>>>;    // one entry per period
     pub fn clone_reset(&self) -> Self;
     pub fn clone_continue(&self) -> Self;
 }
@@ -706,7 +706,7 @@ impl PowerDataCollector {
     pub fn primary(&self) -> &RollingPower;
     pub fn periodized(&self) -> &[PeriodizedEntry<RollingPower>];
     pub fn max_value(&self) -> f64;
-    pub fn peaks(&self) -> Vec<Option<PeakSnapshot>>;
+    pub fn peaks(&self) -> Vec<Option<PeakSnapshot<RollingPower>>>;
     pub fn np_peaks(&self) -> &[Option<NpPeakSnapshot>];
     pub fn clone_reset(&self) -> Self;
     pub fn clone_continue(&self) -> Self;
@@ -919,15 +919,21 @@ notes appended to this file.
    `MostRecentState` an alias for the `zwift-proto` type at that
    point — STEP 14 stays proto-free.
 
-7. **Peak snapshot storage cost.** Each peak snapshot clones the
-   entire periodized rolling at the moment of the peak (matches
-   JS). For a 3 600 s window at 1 Hz this is 3 600 `f64` pairs ≈
-   58 KB per snapshot, per athlete, per signal. With 100 athletes
-   × 5 signals × 6 periods, worst-case footprint is ≈ 174 MB —
-   acceptable but worth flagging. If STEP 19 measures pressure,
-   the lighter `{snap_value, snap_time}`-only snapshot is a viable
-   downgrade since the cloned roll is read only by analysis-page
-   features that ranchero v1 does not implement.
+7. **Peak snapshot storage cost.** *(Decision recorded 2026-05-12.)*
+   Each peak snapshot clones the entire periodized rolling at the
+   moment of the peak (matches JS). For a 3 600 s window at 1 Hz
+   this is 3 600 `f64` pairs ≈ 58 KB per snapshot, per athlete, per
+   signal. With 100 athletes × 5 signals × 6 periods, worst-case
+   footprint is ≈ 174 MB. This cost is accepted: the purpose of
+   ranchero is to feed visualization, and discarding the rolling at
+   peak time would force a re-implementation when the first analysis
+   feature needs the per-sample values, the per-sample timestamps,
+   the active versus elapsed bookkeeping, or the inline Normalized
+   Power state for a peak window. The "R2 elaboration" section
+   below records the implementation that put `period` and `roll`
+   onto `PeakSnapshot` and `NpPeakSnapshot`. If STEP 19 measures
+   pressure, the lighter `{snap_value, snap_time}`-only snapshot
+   remains the named fallback (Path B in R2 elaboration).
 
 ## Design decisions worth pre-committing
 
@@ -1034,7 +1040,9 @@ were called out in the as-built notes inside the checklist itself.
    later features (analysis pages, per-period detail views) are
    expected to read it. Decide whether to add the missing fields or to
    amend the plan and open verification point #7 to record the lighter
-   snapshot as the intended design.
+   snapshot as the intended design. *(Resolved by R2 on 2026-05-12 via
+   Path A: both structures now carry `period` and `roll`. See the "R2
+   elaboration" section for the decision and the per-step record.)*
 
 3. **The trait is renamed and its `add` method takes a different type.**
    The plan defines a `Collector` trait with
@@ -1159,16 +1167,19 @@ plan has been brought into agreement.
       `zwift_stats::collector::DataBucket` to `zwift_stats::DataBucket`.
       All 82 tests still pass; no clippy warnings.
 
-- [ ] **R2** Decide on the shape of `PeakSnapshot` and
+- [x] **R2** Decide on the shape of `PeakSnapshot` and
       `NpPeakSnapshot`. Either add the `period` and `roll` fields
       from the plan to both structures (and update
       `_update_periodized_peaks` and `update_np_peaks` to populate
       them), or remove those fields from the plan's "Public API
       surface" section and rewrite Open verification point #7 to
       record the lighter snapshot as the intended design. See
-      concern #2. *Decision: Path A (add the fields). Work tracked
-      as R2A-T1 through R2A-I6 in the "R2 elaboration" section
-      below.*
+      concern #2. **Done (2026-05-12) via Path A:** `PeakSnapshot<R>`
+      is now generic with `period` and `roll`; `NpPeakSnapshot`
+      carries `period` and `roll: RollingPower`. The "Public API
+      surface" and Open verification point #7 are updated to match.
+      All six R2A-T tests pass; full suite is 98 tests; no clippy
+      warnings.
 
 - [ ] **R3** Decide on the trait surface. Either rename
       `RollingWindow` back to `Collector` and change `add` to take
@@ -1293,7 +1304,7 @@ that turns it green.
       to compile with `no field period on type &PeakSnapshot` and
       `no field roll on type &PeakSnapshot`, as expected.
 
-- [ ] **R2A-I1** Make `PeakSnapshot` generic over `R: RollingWindow`,
+- [x] **R2A-I1** Make `PeakSnapshot` generic over `R: RollingWindow`,
       add `pub period: f64` and `pub roll: R` fields, and update
       `DataCollector::flush` to populate them when the peak is set.
       Cascade the generic through `PeriodizedEntry<R>`'s `peak`
@@ -1301,7 +1312,13 @@ that turns it green.
       of `DataCollector::peaks()`
       (`Vec<Option<PeakSnapshot<R>>>`). Update the two existing
       tests that read `peaks()[0]` to take the generic into account
-      where needed.
+      where needed. **Done (2026-05-12):** `PeakSnapshot<R>` is now
+      generic with all four fields. `PeriodizedEntry<R>::peak` is
+      `Option<PeakSnapshot<R>>`. `DataCollector::peaks()` returns
+      `Vec<Option<PeakSnapshot<R>>>`. `flush()` populates `period`
+      from the entry and `roll` via `entry.roll.clone()`. Existing
+      tests that read `.snap_value` continue to work without
+      modification because the field is still on the struct.
 
 - [x] **R2A-T2** `tests/collector.rs::peak_snapshot_roll_is_independent_of_source`
       — drive a stream that produces a peak on the 60 s period.
@@ -1313,13 +1330,16 @@ that turns it green.
       (2026-05-12):** Test added; fails to compile with
       `no field roll on type PeakSnapshot`, as expected.
 
-- [ ] **R2A-I2** No new code is expected here: STEP 13 chose copy
+- [x] **R2A-I2** No new code is expected here: STEP 13 chose copy
       on `RollingWindow::clone`, so the snapshot's `roll` is already
       independent of the source. The test serves to record that
       property at the snapshot boundary so a later optimisation
       (such as `Arc<Vec<f64>>` shared storage) cannot quietly break
       it. If the test fails, replace the implicit clone with an
-      explicit deep clone.
+      explicit deep clone. **Done (2026-05-12):** No code change.
+      R2A-T2 passes with the existing `RollingWindow::clone`
+      semantics, confirming the deep-clone property holds at the
+      snapshot boundary.
 
 - [x] **R2A-T3** `tests/power_collector.rs::np_peak_snapshot_carries_period_and_roll`
       — drive a constant-power stream long enough to fill the 300 s
@@ -1330,11 +1350,14 @@ that turns it green.
       `no field period on type &NpPeakSnapshot` and
       `no field roll on type &NpPeakSnapshot`, as expected.
 
-- [ ] **R2A-I3** Add `pub period: f64` and `pub roll: RollingPower`
+- [x] **R2A-I3** Add `pub period: f64` and `pub roll: RollingPower`
       fields to `NpPeakSnapshot`. Update
       `PowerDataCollector::update_np_peaks` to populate them. The
       type stays concrete (NP peaks are only ever recorded for
-      `RollingPower`).
+      `RollingPower`). **Done (2026-05-12):** `NpPeakSnapshot` now
+      carries `period: f64` and `roll: RollingPower`.
+      `update_np_peaks` populates `period` from `entry.period` and
+      `roll` via `entry.roll.clone()`.
 
 - [x] **R2A-T4** `tests/collector.rs::clone_continue_preserves_peak_rolls`
       — drive a stream that produces a peak, call `clone_continue()`,
@@ -1349,14 +1372,18 @@ that turns it green.
       Test added; fails to compile with
       `no field roll on type &NpPeakSnapshot`, as expected.
 
-- [ ] **R2A-I4** Verify that `DataCollector::clone_continue` and
+- [x] **R2A-I4** Verify that `DataCollector::clone_continue` and
       `PowerDataCollector::clone_continue` already clone the peaks
       deeply (the current implementations call `entry.peak.clone()`,
       which clones the inner `R` via `RollingWindow::clone`). If the
       tests in R2A-T4 and R2A-T5 fail, replace the implicit clone
       with an explicit deep clone of the inner roll. Mirror the
       change in `clone_reset` if needed (peaks are cleared there, so
-      no work is expected).
+      no work is expected). **Done (2026-05-12):** No code change.
+      R2A-T4 and R2A-T5 pass with the existing implementations of
+      `clone_continue`, confirming that the implicit
+      `entry.peak.clone()` carries the deep-clone semantics through
+      the snapshot's `roll` field.
 
 - [x] **R2A-T6** `tests/collector.rs::peaks_method_returns_generic_snapshots`
       — compile-only check (no runtime assertion needed beyond
@@ -1369,16 +1396,22 @@ that turns it green.
       compile with `struct takes 0 generic arguments but 1 generic
       argument was supplied` on both lines, as expected.
 
-- [ ] **R2A-I5** Update the "Public API surface" section of this
+- [x] **R2A-I5** Update the "Public API surface" section of this
       document to record `PeakSnapshot<R>` as generic with the new
       fields, the matching `NpPeakSnapshot` shape, and the
       corresponding signatures of `peaks()` on both collectors.
       Rewrite Open verification point #7 so it describes the
       implemented behaviour (the storage cost estimate stays
-      roughly as written).
+      roughly as written). **Done (2026-05-12):** "Public API
+      surface" updated to show `PeakSnapshot<R>` with all four
+      fields, `PeriodizedEntry<R>::peak` as `Option<PeakSnapshot<R>>`,
+      and the `peaks()` signatures returning the generic form.
+      Open verification point #7 rewritten to record the decision
+      and the accepted cost.
 
-- [ ] **R2A-I6** Mark R2 done in the remediation checklist and
-      annotate concern #2 with the resolution note.
+- [x] **R2A-I6** Mark R2 done in the remediation checklist and
+      annotate concern #2 with the resolution note. **Done
+      (2026-05-12).**
 
 ### Path B (named fallback, not being implemented)
 

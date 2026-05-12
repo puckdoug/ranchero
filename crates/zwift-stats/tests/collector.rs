@@ -2,7 +2,7 @@
 
 use zwift_stats::collector::DataCollector;
 use zwift_stats::{
-    collector::{DataCollectorOptions, PeakSnapshot, RollingWindow},
+    collector::{DataCollectorOptions, PeakSnapshot},
     RollingAverage, RollingPower, Sample,
 };
 

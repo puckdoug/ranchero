@@ -3,7 +3,7 @@
 //! [`DataCollector`] and [`PowerDataCollector`] — orchestration of rolling windows
 //! with per-period peak tracking.
 
-use crate::{RollingAverage, RollingAverageOptions, Sample};
+use crate::{RollingAverage, RollingAverageOptions, RollingPower, Sample};
 
 pub trait RollingWindow: Clone {
     fn new_with_period(period: Option<f64>, opts: RollingAverageOptions) -> Self;
@@ -60,23 +60,34 @@ impl RollingWindow for RollingAverage {
     }
 }
 
+// Self-describing snapshot of a peak window. `period` and `roll` make
+// the snapshot independent of its enclosing periodized entry: when the
+// snapshot is extracted (carried into a slice, surfaced to a UI), it
+// still carries the window's identity and the rolling buffer that
+// produced the peak. The `roll` is a deep clone (STEP 13's
+// copy-on-clone), so the snapshot does not move when the source
+// rolling is updated further.
 #[derive(Debug, Clone)]
-pub struct PeakSnapshot {
+pub struct PeakSnapshot<R> {
+    pub period: f64,
     pub snap_value: f64,
     pub snap_time: f64,
+    pub roll: R,
 }
 
 #[derive(Debug, Clone)]
 pub struct NpPeakSnapshot {
+    pub period: f64,
     pub snap_value: f64,
     pub snap_time: f64,
+    pub roll: RollingPower,
 }
 
 #[derive(Debug)]
 pub struct PeriodizedEntry<R> {
     pub period: f64,
     pub roll: R,
-    pub peak: Option<PeakSnapshot>,
+    pub peak: Option<PeakSnapshot<R>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -190,8 +201,10 @@ impl<R: RollingWindow> DataCollector<R> {
 
                 if should_update && let Some(snap_time) = entry.roll.last_time() {
                     entry.peak = Some(PeakSnapshot {
+                        period: entry.period,
                         snap_value: avg,
                         snap_time,
+                        roll: entry.roll.clone(),
                     });
                 }
             }
@@ -212,7 +225,7 @@ impl<R: RollingWindow> DataCollector<R> {
         &self.primary
     }
 
-    pub fn peaks(&self) -> Vec<Option<PeakSnapshot>> {
+    pub fn peaks(&self) -> Vec<Option<PeakSnapshot<R>>> {
         self.periodized.iter().map(|e| e.peak.clone()).collect()
     }
 
@@ -312,8 +325,10 @@ impl PowerDataCollector {
 
                 if should_update && let Some(snap_time) = entry.roll.last_time() {
                     self.np_periodized[i].peak = Some(NpPeakSnapshot {
+                        period: entry.period,
                         snap_value: np,
                         snap_time,
+                        roll: entry.roll.clone(),
                     });
                 }
             }
