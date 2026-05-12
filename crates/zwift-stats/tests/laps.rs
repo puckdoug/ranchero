@@ -40,7 +40,7 @@ fn start_athlete_lap_clones_bucket_via_clone_reset() {
 
 // 15.17: Automatic lap detection
 
-use zwift_stats::{auto_lap_check, MostRecentState};
+use zwift_stats::{auto_lap_check, AutoLapConfig, MostRecentState};
 
 #[test]
 fn auto_lap_by_distance_threshold_triggers_at_each_interval() {
@@ -189,8 +189,3 @@ fn auto_lap_first_call_seeds_mark_without_lapping() {
     assert_eq!(ad.auto_lap_mark, Some(0.0), "first call should seed mark with event_distance");
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct AutoLapConfig {
-    pub distance_interval: Option<f64>,
-    pub time_interval: Option<f64>,
-}

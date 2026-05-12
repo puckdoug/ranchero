@@ -44,3 +44,4 @@ pub use wbal::WBalAccumulator;
 pub use slice::DataSlice;
 pub use road_history::RoadHistory;
 pub use events::{EventBehavior, apply_event_state};
+pub use laps::{AutoLapConfig, start_athlete_lap, auto_lap_check};
