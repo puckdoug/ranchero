@@ -181,7 +181,7 @@ Setup (no tests):
 
 `PlayerStateView` trait + `MostRecentState` extension:
 
-- [ ] **15.12-T** `tests/player_state_view.rs::most_recent_state_implements_view_trait`,
+- [x] **15.12-T** `tests/player_state_view.rs::most_recent_state_implements_view_trait`,
       `view_trait_exposes_road_event_and_group_fields`.
 - [ ] **15.12-I** Define `PlayerStateView` in `src/athlete.rs` as
       a read-only accessor trait. Extend `MostRecentState` with
