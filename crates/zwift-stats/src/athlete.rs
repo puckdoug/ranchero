@@ -17,7 +17,8 @@ pub struct EventSubgroup {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct EventPrivacy {
-    // Placeholder: event privacy flags
+    pub hide_w_bal: bool,
+    pub hide_ftp: bool,
 }
 
 pub trait PlayerStateView {

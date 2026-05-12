@@ -231,7 +231,7 @@ Event detection and privacy:
       `stats.mjs:2904-2939`: if `auto_reset` and the bucket has
       data, reset the athlete; else if `auto_lap` and the bucket
       has data, start a lap.
-- [ ] **15.15-T** `tests/event_privacy.rs::self_athlete_skips_privacy_flags`,
+- [x] **15.15-T** `tests/event_privacy.rs::self_athlete_skips_privacy_flags`,
       `non_self_hidewbal_sets_hide_w_bal`,
       `non_self_hideftp_sets_hide_ftp`,
       `hidethehud_sets_disabled_by_event`,
