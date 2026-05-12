@@ -210,7 +210,7 @@ Setup (no tests):
 
 Event detection and privacy:
 
-- [ ] **15.14-T** `tests/event_detection.rs::new_subgroup_opens_slice_when_state_time_present`,
+- [x] **15.14-T** `tests/event_detection.rs::new_subgroup_opens_slice_when_state_time_present`,
       `new_subgroup_defers_when_state_time_zero_and_sets_pending`,
       `same_subgroup_does_not_reopen_slice`,
       `falsy_subgroup_after_active_closes_slice`,
