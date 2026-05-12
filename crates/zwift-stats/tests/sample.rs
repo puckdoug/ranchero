@@ -20,6 +20,6 @@ fn sample_is_active_value() {
     assert!(!is_active_value(Sample::Pad(5.0), true));
 
     // Break sentinels are never active.
-    assert!(!is_active_value(Sample::Break { pad: 1000.0 }, false));
-    assert!(!is_active_value(Sample::Break { pad: 1000.0 }, true));
+    assert!(!is_active_value(Sample::Break { pad: 1000u32 }, false));
+    assert!(!is_active_value(Sample::Break { pad: 1000u32 }, true));
 }

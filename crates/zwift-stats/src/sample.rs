@@ -12,7 +12,7 @@ use std::sync::Mutex;
 pub enum Sample {
     Value(f64),
     Pad(f64),
-    Break { pad: f64 },
+    Break { pad: u32 },
 }
 
 /// The cached ZERO sentinel (hard pad at 0.0), used for max-gap and explicit-active-false paths.

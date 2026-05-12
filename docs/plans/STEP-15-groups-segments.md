@@ -96,7 +96,7 @@ Setup (no tests):
       and reads `pad` as a `u32`. Existing tests / call sites that
       construct or match on `Break.pad` must be updated to the new
       type as part of the change.
-- [ ] **15.5-I** Amend `src/sample.rs`: change
+- [x] **15.5-I** Amend `src/sample.rs`: change
       `Sample::Break { pad: f64 }` to `Sample::Break { pad: u32 }`.
       This is a STEP 13 type touch-up; STEP 13's tests must
       continue to pass after the amendment. All `Break { pad: … }`

@@ -74,7 +74,7 @@ impl RollingAverage {
                     }
 
                     // Break sentinel.
-                    let break_pad = gap - (book_end_time * 2.0);
+                    let break_pad = (gap - (book_end_time * 2.0)).round() as u32;
                     self.add_internal(prev_ts + book_end_time, Sample::Break { pad: break_pad });
 
                     // Trailing zero pads.
