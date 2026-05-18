@@ -4,3 +4,4 @@ pub mod credentials;
 pub mod daemon;
 pub mod logging;
 pub mod tui;
+pub mod web;

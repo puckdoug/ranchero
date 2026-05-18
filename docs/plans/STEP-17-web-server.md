@@ -80,11 +80,11 @@ fail, write the smallest code that makes it pass.
 
 ### Foundations
 
-- [ ] **17.1-T** `tests/web_server_bind.rs` — `WebServer`
+- [x] **17.1-T** `tests/web_server_bind.rs` — `WebServer`
       binds to a host:port pair and a separate client can
       open a TCP connection to it. Marked
       `#[ignore = "slow: binds a real socket"]`.
-- [ ] **17.1-I** Add `actix-web` (with the `rustls-0_23`
+- [x] **17.1-I** Add `actix-web` (with the `rustls-0_23`
       feature), `actix-cors`, `actix-files`, `actix-ws`,
       `rustls`, `rustls-pemfile`, `mime_guess`, `base64`,
       `bytes`, and `futures-util` to the root
