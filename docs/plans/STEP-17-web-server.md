@@ -103,7 +103,7 @@ fail, write the smallest code that makes it pass.
       level above the binary (i.e.
       `current_exe()?.parent()?.join("../pages")`),
       mirroring sauce4zwift's `WD/../pages`.
-- [ ] **17.2-I** Add `pages_root: Option<String>` to
+- [x] **17.2-I** Add `pages_root: Option<String>` to
       `ServerConfig` and plumb it through
       `ResolvedConfig` as `server_pages_root: PathBuf`.
       When no value is configured, derive the default
@@ -119,19 +119,11 @@ fail, write the smallest code that makes it pass.
       `[server] https_cert_dir = "/some/path"` surfaces
       as `server_https_cert_dir: PathBuf`; default is
       `"https"` next to the binary's working directory.
-- [x] **17.3-I** Add `https_cert_dir: Option<PathBuf>`
+- [x] **17.3-I** Add `https_cert_dir: Option<String>`
       to `ServerConfig` and plumb it through
-      `ResolvedConfig`.
-
-**As-built note:** The current 17.2 implementation
-stores whatever string is in the config as a
-`PathBuf`, defaulting to the literal `"pages"`. That
-is wrong on two counts: the default should come from
-the binary location, not the working directory, and
-there is no existence check. Both items are captured
-in the revised 17.2-T and 17.2-I entries above and
-must be fixed before 17.23-I (static file serving),
-which depends on the path being correct.
+      `ResolvedConfig` as `server_https_cert_dir: PathBuf`.
+      Default is `PathBuf::from("https")` relative to
+      the working directory.
 
 ### HTTP routing
 

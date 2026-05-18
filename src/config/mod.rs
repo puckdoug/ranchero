@@ -483,7 +483,12 @@ impl ResolvedConfig {
         let server_pages_root = env.get("RANCHERO_PAGES_ROOT")
             .map(PathBuf::from)
             .or_else(|| file.server.pages_root.as_deref().map(PathBuf::from))
-            .unwrap_or_else(|| PathBuf::from("pages"));
+            .unwrap_or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.join("../pages")))
+                    .unwrap_or_else(|| PathBuf::from("pages"))
+            });
 
         let server_https_cert_dir = file.server.https_cert_dir.as_deref()
             .map(PathBuf::from)

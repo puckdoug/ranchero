@@ -55,6 +55,16 @@ pub fn start(
     // appender's worker thread does not survive across `fork(2)`.
     let _log_guard = logging::install(log_opts, foreground, &cfg.log_file, cfg.log_level.clone())?;
 
+    if !cfg.server_pages_root.is_dir() {
+        let msg = format!(
+            "pages directory not found: {}",
+            cfg.server_pages_root.display()
+        );
+        eprintln!("error: {msg}");
+        tracing::error!("{msg}");
+        return Ok(ExitCode::FAILURE);
+    }
+
     let pid = std::process::id();
     let pidfile = Pidfile::new(paths.pidfile.clone());
     pidfile.write(pid)?;
