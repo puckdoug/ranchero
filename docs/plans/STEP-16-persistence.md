@@ -93,7 +93,7 @@ it fail, write the smallest code to pass.
       `delete`/`exists` over `BLOB` data. Insert, read back
       the identical bytes (binary safety), overwrite, delete,
       `get` returns `None`.
-- [ ] **16.5-I** `KvStore::open(path)` runs migrations and
+- [x] **16.5-I** `KvStore::open(path)` runs migrations and
       returns a handle. Methods: `put(&self, id: &str, data:
       &[u8])`, `get(&self, id: &str) -> Result<Option<Vec<u8>>>`,
       `delete(&self, id: &str) -> Result<bool>`,
@@ -108,7 +108,7 @@ it fail, write the smallest code to pass.
 - [x] **16.7-T** `tests/kv_json_helper.rs` — `put_json` /
       `get_json` round-trip a `serde_json::Value` through the
       `BLOB` column without data corruption.
-- [ ] **16.7-I** Add `put_json<T: Serialize>` and
+- [x] **16.7-I** Add `put_json<T: Serialize>` and
       `get_json<T: DeserializeOwned>` thin wrappers over
       `put`/`get`. Documented as the recommended path for
       settings.
