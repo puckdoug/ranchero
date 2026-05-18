@@ -28,6 +28,7 @@ pub struct EventPrivacy {
 pub trait PlayerStateView {
     fn lat(&self) -> f64;
     fn lng(&self) -> f64;
+    fn latlng(&self) -> LatLng;
     fn course_id(&self) -> u32;
     fn road_id(&self) -> u32;
     fn road_time(&self) -> f64;
@@ -37,6 +38,13 @@ pub trait PlayerStateView {
     fn world_time(&self) -> f64;
     fn time(&self) -> f64;
     fn event_distance(&self) -> f64;
+    fn speed(&self) -> f64;
+    fn power(&self) -> f64;
+    fn heartrate(&self) -> u16;
+    fn cadence(&self) -> u16;
+    fn draft(&self) -> f64;
+    fn distance(&self) -> f64;
+    fn altitude(&self) -> f64;
     fn is_empty(&self) -> bool;
 }
 
@@ -69,6 +77,10 @@ impl PlayerStateView for MostRecentState {
 
     fn lng(&self) -> f64 {
         self.lng
+    }
+
+    fn latlng(&self) -> LatLng {
+        LatLng { lat: self.lat, lng: self.lng }
     }
 
     fn course_id(&self) -> u32 {
@@ -105,6 +117,34 @@ impl PlayerStateView for MostRecentState {
 
     fn event_distance(&self) -> f64 {
         self.event_distance
+    }
+
+    fn speed(&self) -> f64 {
+        self.speed
+    }
+
+    fn power(&self) -> f64 {
+        self.power
+    }
+
+    fn heartrate(&self) -> u16 {
+        self.heartrate
+    }
+
+    fn cadence(&self) -> u16 {
+        self.cadence
+    }
+
+    fn draft(&self) -> f64 {
+        self.draft
+    }
+
+    fn distance(&self) -> f64 {
+        self.distance
+    }
+
+    fn altitude(&self) -> f64 {
+        self.altitude
     }
 
     fn is_empty(&self) -> bool {
@@ -196,11 +236,11 @@ impl AthleteData {
         self.internal_accessed = now;
     }
 
-    pub fn record_streams(&mut self, state: &MostRecentState, _now: f64) {
-        self.streams.distance.push(state.distance);
-        self.streams.altitude.push(state.altitude);
-        self.streams.latlng.push(LatLng { lat: state.lat, lng: state.lng });
-        let wbal = self.w_bal.accumulate(state.time, Sample::Value(state.power));
+    pub fn record_streams(&mut self, state: &dyn PlayerStateView, _now: f64) {
+        self.streams.distance.push(state.distance());
+        self.streams.altitude.push(state.altitude());
+        self.streams.latlng.push(state.latlng());
+        let wbal = self.w_bal.accumulate(state.time(), Sample::Value(state.power()));
         self.streams.wbal.push(wbal);
     }
 

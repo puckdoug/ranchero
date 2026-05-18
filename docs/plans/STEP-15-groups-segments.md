@@ -1518,14 +1518,14 @@ the existing call sites that read those fields directly off
 
 **Remediation.**
 
-- [ ] **C-3.1** Add the seven missing methods to
+- [x] **C-3.1** Add the seven missing methods to
       `PlayerStateView`, plus `latlng(&self) -> LatLng`.
       Implement them on `MostRecentState`.
-- [ ] **C-3.2** Extend
+- [x] **C-3.2** Extend
       `tests/player_state_view.rs::view_trait_exposes_road_event_and_group_fields`
       (or add a new test) to assert each of the new methods
       compiles and returns the value passed at construction.
-- [ ] **C-3.3** Audit existing call sites that take
+- [x] **C-3.3** Audit existing call sites that take
       `&MostRecentState` for the new fields and switch them to
       `&dyn PlayerStateView` where it does not lose ergonomics
       (do not refactor STEP 14 code; just leave a note for

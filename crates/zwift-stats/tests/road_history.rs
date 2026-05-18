@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use zwift_stats::{RoadHistory, PlayerStateView};
+use zwift_stats::{RoadHistory, PlayerStateView, LatLng};
 
 struct TestState {
     road_id: u32,
@@ -50,6 +50,16 @@ impl PlayerStateView for TestState {
     fn event_distance(&self) -> f64 {
         self.event_distance
     }
+    fn latlng(&self) -> LatLng {
+        LatLng { lat: self.lat, lng: self.lng }
+    }
+    fn speed(&self) -> f64 { 0.0 }
+    fn power(&self) -> f64 { 0.0 }
+    fn heartrate(&self) -> u16 { 0 }
+    fn cadence(&self) -> u16 { 0 }
+    fn draft(&self) -> f64 { 0.0 }
+    fn distance(&self) -> f64 { 0.0 }
+    fn altitude(&self) -> f64 { 0.0 }
     fn is_empty(&self) -> bool {
         false
     }
