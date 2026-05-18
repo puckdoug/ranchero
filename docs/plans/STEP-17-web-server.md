@@ -127,7 +127,7 @@ fail, write the smallest code that makes it pass.
 
 ### HTTP routing
 
-- [ ] **17.4-T** `tests/http_get_api_root.rs` —
+- [x] **17.4-T** `tests/http_get_api_root.rs` —
       `GET /api/` returns a JSON directory listing of
       registered endpoints, status 200, content-type
       `application/json`.
@@ -135,7 +135,7 @@ fail, write the smallest code that makes it pass.
       `HttpServer::new(...)` factory closure. Register
       the API directory handler that returns the list of
       mounted `/api/...` routes from a static manifest.
-- [ ] **17.5-T** `tests/http_cors_preflight.rs` —
+- [x] **17.5-T** `tests/http_cors_preflight.rs` —
       `OPTIONS /api/anything` returns 204 with
       `Access-Control-Allow-Origin: *` and
       `Access-Control-Allow-Headers: *`. The same applies
@@ -144,7 +144,7 @@ fail, write the smallest code that makes it pass.
       scopes with `actix_cors::Cors`. Allow any origin
       and any header; allow methods `GET`, `HEAD`,
       `OPTIONS`, and `POST`.
-- [ ] **17.6-T** `tests/http_athlete_v1.rs` —
+- [x] **17.6-T** `tests/http_athlete_v1.rs` —
       `GET /api/athlete/v1/:id` returns the athlete
       record for a present athlete; returns 404 for a
       missing one; accepts `self`, `watching`, or a
@@ -155,14 +155,14 @@ fail, write the smallest code that makes it pass.
       `WatchedAthlete` state. The formatter is a port of
       `_formatAthleteData`; the test contract is
       field-for-field equality.
-- [ ] **17.7-T** `tests/http_nearby_v1.rs` —
+- [x] **17.7-T** `tests/http_nearby_v1.rs` —
       `GET /api/nearby/v1` returns a JSON array of
       nearby athletes; element fields match
       `_formatNearby` in `stats.mjs:2117+`.
 - [ ] **17.7-I** Implement `nearby_v1_handler()`. Reads
       from `AthleteRegistry` through the daemon's
       read-only snapshot path (see §17.20).
-- [ ] **17.8-T** `tests/http_groups_v1.rs` —
+- [x] **17.8-T** `tests/http_groups_v1.rs` —
       `GET /api/groups/v1` returns a JSON object with
       the v1 group-classification shape
       (`stats.mjs:2150+`).
@@ -170,7 +170,7 @@ fail, write the smallest code that makes it pass.
       `AthleteRegistry::groups`, which is already
       populated by `compute_groups` in
       `zwift-stats::groups`.
-- [ ] **17.9-T** `tests/http_404_fallthrough.rs` —
+- [x] **17.9-T** `tests/http_404_fallthrough.rs` —
       `GET /api/anything-unknown` returns 200 with the
       API directory listing rather than a 404 body,
       matching `webserver.mjs:490-494`.
