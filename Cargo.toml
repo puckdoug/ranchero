@@ -37,6 +37,7 @@ prost-reflect = "0.14"
 zwift-api = { path = "crates/zwift-api" }
 zwift-proto = { path = "crates/zwift-proto" }
 zwift-relay = { path = "crates/zwift-relay" }
+zwift-store = { path = "crates/zwift-store" }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process", "fs"] }

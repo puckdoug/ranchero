@@ -32,6 +32,7 @@ struct DaemonHarness {
     config_path: PathBuf,
     pidfile_path: PathBuf,
     socket_path: PathBuf,
+    data_dir: PathBuf,
     child: Option<Child>,
 }
 
@@ -45,6 +46,8 @@ impl DaemonHarness {
         std::fs::create_dir_all(&state).unwrap();
         let pidfile_path = state.join("ranchero.pid");
         let socket_path = state.join("ranchero.sock");
+        let data_dir = dir.path().join("d");
+        std::fs::create_dir_all(&data_dir).unwrap();
 
         let toml = format!(
             "schema_version = 1\n\
@@ -63,6 +66,7 @@ impl DaemonHarness {
             config_path,
             pidfile_path,
             socket_path,
+            data_dir,
             child: None,
         }
     }
@@ -78,6 +82,8 @@ impl DaemonHarness {
         std::fs::create_dir_all(&state).unwrap();
         let pidfile_path = state.join("ranchero.pid");
         let socket_path = state.join("ranchero.sock");
+        let data_dir = dir.path().join("d");
+        std::fs::create_dir_all(&data_dir).unwrap();
 
         let toml = format!(
             "schema_version = 1\n\
@@ -91,7 +97,7 @@ impl DaemonHarness {
         );
         std::fs::write(&config_path, toml).unwrap();
 
-        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, child: None }
+        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, data_dir, child: None }
     }
 
     /// Harness where the pidfile lives inside a subdirectory that does not exist.
@@ -106,6 +112,8 @@ impl DaemonHarness {
         let pidfile_path = state.join("absent").join("ranchero.pid");
         let socket_path = state.join("ranchero.sock");
         let logfile_path = state.join("ranchero.log");
+        let data_dir = dir.path().join("d");
+        std::fs::create_dir_all(&data_dir).unwrap();
 
         let toml = format!(
             "schema_version = 1\n\
@@ -122,7 +130,7 @@ impl DaemonHarness {
         );
         std::fs::write(&config_path, toml).unwrap();
 
-        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, child: None }
+        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, data_dir, child: None }
     }
 
     /// Harness where the log file lives inside a subdirectory that does not exist.
@@ -137,6 +145,8 @@ impl DaemonHarness {
         let socket_path = state.join("ranchero.sock");
         // The log file subdirectory is deliberately not created.
         let logfile_path = state.join("absent").join("ranchero.log");
+        let data_dir = dir.path().join("d");
+        std::fs::create_dir_all(&data_dir).unwrap();
 
         let toml = format!(
             "schema_version = 1\n\
@@ -153,7 +163,7 @@ impl DaemonHarness {
         );
         std::fs::write(&config_path, toml).unwrap();
 
-        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, child: None }
+        DaemonHarness { _dir: dir, config_path, pidfile_path, socket_path, data_dir, child: None }
     }
 
     fn config_args(&self) -> Vec<String> {
@@ -162,6 +172,7 @@ impl DaemonHarness {
 
     fn run(&self, extra: &[&str]) -> Output {
         let mut cmd = Command::new(binary_path());
+        cmd.env("RANCHERO_DATA_DIR", &self.data_dir);
         cmd.args(self.config_args()).args(extra);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd.output().expect("spawn")
@@ -169,6 +180,7 @@ impl DaemonHarness {
 
     fn spawn_foreground(&mut self, debug: bool) -> &mut Child {
         let mut cmd = Command::new(binary_path());
+        cmd.env("RANCHERO_DATA_DIR", &self.data_dir);
         cmd.args(self.config_args());
         if debug {
             cmd.arg("--debug");

@@ -172,7 +172,7 @@ it fail, write the smallest code to pass.
       `data_dir()`, creates the files if missing, and runs
       migrations. Smoke test only; uses a `tempfile::TempDir`
       override of the data directory.
-- [ ] **16.16-I** Boot path in `src/daemon.rs` (or wherever
+- [x] **16.16-I** Boot path in `src/daemon.rs` (or wherever
       `start` initialises subsystems) opens
       `KvStore`/`AthletesDb`/`SegmentsDb` and stashes them on
       the daemon handle. A test-only env var
@@ -182,7 +182,7 @@ it fail, write the smallest code to pass.
       reports the on-disk size of each DB file when the
       daemon isn't running (read-only inspection that does
       not need a live connection).
-- [ ] **16.17-I** Extend the existing `status` printer to add
+- [x] **16.17-I** Extend the existing `status` printer to add
       a "Persistence" block. Bytes-only; no schema
       introspection yet.
 

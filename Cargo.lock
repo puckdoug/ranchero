@@ -2338,6 +2338,7 @@ dependencies = [
  "zwift-api",
  "zwift-proto",
  "zwift-relay",
+ "zwift-store",
 ]
 
 [[package]]

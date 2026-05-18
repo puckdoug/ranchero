@@ -14,6 +14,7 @@ pub mod pidfile;
 pub mod probe;
 pub mod relay;
 pub mod runtime;
+pub mod stores;
 pub mod validate;
 
 use std::path::PathBuf;
@@ -23,6 +24,7 @@ pub use control::{ControlRequest, ControlResponse, ShutdownResponse, StatusRespo
     format_not_running, format_status_response, control_socket_path};
 pub use pidfile::Pidfile;
 pub use probe::{OsProcessProbe, ProcessProbe};
+pub use stores::Stores;
 
 use crate::config::ResolvedConfig;
 use crate::logging::LogOpts;
@@ -42,6 +44,8 @@ pub enum DaemonError {
     BackgroundUnsupported,
     /// One or more pre-start validation checks failed.
     StartupValidation(validate::StartupValidationErrors),
+    /// SQLite persistence layer failed to open.
+    Store(zwift_store::Error),
 }
 
 impl std::fmt::Display for DaemonError {
@@ -56,6 +60,7 @@ impl std::fmt::Display for DaemonError {
                 write!(f, "backgrounding is not supported on this platform; \
                        pass --foreground"),
             DaemonError::StartupValidation(errs) => errs.fmt(f),
+            DaemonError::Store(e) => write!(f, "persistence error: {e}"),
         }
     }
 }

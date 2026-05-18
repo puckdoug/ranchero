@@ -14,6 +14,7 @@ use super::control::{
 };
 use super::pidfile::Pidfile;
 use super::probe::{OsProcessProbe, ProcessProbe};
+use super::stores::Stores;
 use super::{DaemonError, DaemonPaths};
 use crate::config::ResolvedConfig;
 use crate::logging::{self, LogOpts};
@@ -59,6 +60,15 @@ pub fn start(
 
     tracing::info!(pid, "ranchero started");
 
+    let data_dir = crate::config::data_dir();
+    let stores = Stores::open(&data_dir).map_err(|e| {
+        tracing::error!(error = %e, "persistence stores failed to open");
+        DaemonError::Store(e)
+    })?;
+    tracing::info!(path = %data_dir.join(Stores::store_filename()).display(),    "persistence opened");
+    tracing::info!(path = %data_dir.join(Stores::athletes_filename()).display(), "persistence opened");
+    tracing::info!(path = %data_dir.join(Stores::segments_filename()).display(), "persistence opened");
+
     if foreground {
         println!("{STARTED_PREFIX} (pid {pid})");
     }
@@ -66,7 +76,7 @@ pub fn start(
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let result = rt.block_on(run_daemon(paths.clone(), cfg.clone(), artifacts.capture_file));
+    let result = rt.block_on(run_daemon(paths.clone(), cfg.clone(), artifacts.capture_file, stores));
 
     tracing::info!("ranchero stopped");
 
@@ -134,6 +144,7 @@ pub fn status(cfg: &ResolvedConfig) -> Result<ExitCode, DaemonError> {
     let pid = match pidfile.read()? {
         None => {
             println!("{}", format_not_running());
+            println!("{}", format_persistence_status(&crate::config::data_dir()));
             return Ok(ExitCode::from(1));
         }
         Some(p) => p,
@@ -142,6 +153,7 @@ pub fn status(cfg: &ResolvedConfig) -> Result<ExitCode, DaemonError> {
         let _ = pidfile.remove();
         let _ = std::fs::remove_file(&paths.socket);
         println!("{}", format_not_running());
+        println!("{}", format_persistence_status(&crate::config::data_dir()));
         return Ok(ExitCode::from(1));
     }
 
@@ -151,7 +163,24 @@ pub fn status(cfg: &ResolvedConfig) -> Result<ExitCode, DaemonError> {
     let resp: StatusResponse = rt.block_on(send_status(&paths.socket))?;
 
     println!("{}", format_status_response(&resp));
+    println!("{}", format_persistence_status(&crate::config::data_dir()));
     Ok(ExitCode::SUCCESS)
+}
+
+fn format_persistence_status(data_dir: &Path) -> String {
+    let files = [
+        Stores::store_filename(),
+        Stores::athletes_filename(),
+        Stores::segments_filename(),
+    ];
+    let mut lines = vec!["Persistence:".to_string()];
+    for name in files {
+        let size = std::fs::metadata(data_dir.join(name))
+            .map(|m| format!("{} B", m.len()))
+            .unwrap_or_else(|_| "absent".to_string());
+        lines.push(format!("  {name:<20} {size}"));
+    }
+    lines.join("\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -229,6 +258,7 @@ async fn run_daemon(
     paths: DaemonPaths,
     cfg: ResolvedConfig,
     capture_file: Option<std::fs::File>,
+    _stores: Stores,
 ) -> io::Result<()> {
     use std::sync::Arc;
     use tokio::net::UnixListener;
@@ -303,6 +333,7 @@ async fn run_daemon(
     _paths: DaemonPaths,
     _cfg: ResolvedConfig,
     _capture_file: Option<std::fs::File>,
+    _stores: Stores,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

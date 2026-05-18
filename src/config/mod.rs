@@ -300,7 +300,9 @@ pub fn default_config_path() -> PathBuf {
 }
 
 pub fn data_dir() -> PathBuf {
-    let dir = if let Some(dirs) = directories::ProjectDirs::from("net", "heroic", "ranchero") {
+    let dir = if let Ok(v) = std::env::var("RANCHERO_DATA_DIR") {
+        PathBuf::from(v)
+    } else if let Some(dirs) = directories::ProjectDirs::from("net", "heroic", "ranchero") {
         dirs.data_dir().to_path_buf()
     } else {
         PathBuf::from(".")
