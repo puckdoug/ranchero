@@ -48,5 +48,5 @@ pub use streams::LatLng;
 pub use road_history::{RoadHistory, RoadKey, RoadGeometry, RoadComparison, compare_road_positions};
 pub use gap::apply_gap;
 pub use events::{EventBehavior, EventStateOutcome, apply_event_state};
-pub use laps::{AutoLapConfig, start_athlete_lap, auto_lap_check};
+pub use laps::{AutoLapConfig, AutoLapMetric, start_athlete_lap, auto_lap_check};
 pub use segments::{Segment, SegmentLookup, active_segment_check, stop_segment};

@@ -2,10 +2,16 @@
 
 use crate::{AthleteData, PlayerStateView, DataSlice};
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AutoLapMetric {
+    Distance,
+    Time,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct AutoLapConfig {
-    pub distance_interval: Option<f64>,
-    pub time_interval: Option<f64>,
+    pub metric: AutoLapMetric,
+    pub threshold: f64,
 }
 
 pub fn start_athlete_lap(ad: &mut AthleteData, now: f64) -> u64 {
@@ -24,10 +30,9 @@ pub fn auto_lap_check(
     cfg: &AutoLapConfig,
     now: f64,
 ) -> bool {
-    let mark_value = if cfg.distance_interval.is_some() {
-        state.event_distance()
-    } else {
-        state.time()
+    let mark_value = match cfg.metric {
+        AutoLapMetric::Distance => state.event_distance(),
+        AutoLapMetric::Time => state.time(),
     };
 
     match ad.auto_lap_mark {
@@ -36,8 +41,7 @@ pub fn auto_lap_check(
             false
         }
         Some(mark) => {
-            let interval = cfg.distance_interval.or(cfg.time_interval).unwrap_or(f64::MAX);
-            if mark_value - mark >= interval {
+            if mark_value - mark >= cfg.threshold {
                 ad.auto_lap_mark = Some(mark_value);
                 start_athlete_lap(ad, now);
                 true

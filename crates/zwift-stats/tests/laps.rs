@@ -40,7 +40,7 @@ fn start_athlete_lap_clones_bucket_via_clone_reset() {
 
 // 15.17: Automatic lap detection
 
-use zwift_stats::{auto_lap_check, AutoLapConfig, MostRecentState};
+use zwift_stats::{auto_lap_check, AutoLapConfig, AutoLapMetric, MostRecentState};
 
 #[test]
 fn auto_lap_by_distance_threshold_triggers_at_each_interval() {
@@ -67,10 +67,7 @@ fn auto_lap_by_distance_threshold_triggers_at_each_interval() {
     };
 
     // First call seeds the mark
-    let cfg = AutoLapConfig {
-        distance_interval: Some(10000.0),
-        time_interval: None,
-    };
+    let cfg = AutoLapConfig { metric: AutoLapMetric::Distance, threshold: 10000.0 };
     auto_lap_check(&mut ad, &state, &cfg, 10.0);
     assert_eq!(ad.auto_lap_mark, Some(0.0), "first call should seed mark");
 
@@ -106,10 +103,7 @@ fn auto_lap_by_time_threshold_triggers_at_each_interval() {
     };
 
     // First call seeds the mark
-    let cfg = AutoLapConfig {
-        distance_interval: None,
-        time_interval: Some(3600.0),
-    };
+    let cfg = AutoLapConfig { metric: AutoLapMetric::Time, threshold: 3600.0 };
     auto_lap_check(&mut ad, &state, &cfg, 10.0);
     assert_eq!(ad.auto_lap_mark, Some(0.0), "first call should seed mark");
 
@@ -144,10 +138,7 @@ fn auto_lap_mark_resets_on_course_change() {
         event_distance: 0.0,
     };
 
-    let cfg = AutoLapConfig {
-        distance_interval: Some(10000.0),
-        time_interval: None,
-    };
+    let cfg = AutoLapConfig { metric: AutoLapMetric::Distance, threshold: 10000.0 };
     auto_lap_check(&mut ad, &state, &cfg, 10.0);
     assert!(ad.auto_lap_mark.is_some(), "should have mark after first call");
 
@@ -182,10 +173,7 @@ fn auto_lap_first_call_seeds_mark_without_lapping() {
         event_distance: 0.0,
     };
 
-    let cfg = AutoLapConfig {
-        distance_interval: Some(10000.0),
-        time_interval: None,
-    };
+    let cfg = AutoLapConfig { metric: AutoLapMetric::Distance, threshold: 10000.0 };
 
     // The first call should seed the mark without creating a lap
     let lapped = auto_lap_check(&mut ad, &state, &cfg, 10.0);

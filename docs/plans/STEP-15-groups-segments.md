@@ -1560,9 +1560,9 @@ the API divergence will bite STEP 17 wiring.
 
 **Remediation.**
 
-- [ ] **C-5.1** Introduce `pub enum AutoLapMetric { Distance,
+- [x] **C-5.1** Introduce `pub enum AutoLapMetric { Distance,
       Time }` in `src/laps.rs`.
-- [ ] **C-5.2** Replace `AutoLapConfig` fields with `pub
+- [x] **C-5.2** Replace `AutoLapConfig` fields with `pub
       metric: AutoLapMetric, pub threshold: f64`. Update
       `auto_lap_check` to dispatch on `metric`. Update the four
       `15.17-T` tests to construct `AutoLapConfig` the new way.
