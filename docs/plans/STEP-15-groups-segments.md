@@ -1659,6 +1659,29 @@ prevent a recurrence:
 
 ## As-built notes
 
+Each deviation below is paired with a checklist item describing
+the action required (or accepted) to close it. Tick items as
+they are resolved or explicitly accepted.
+
+- [ ] **AB-1** Correct `NEARBY_MAX_GAP_S` to `900.0` in
+      `src/periods.rs:17` before the first consumer wires it in.
+- [ ] **AB-2** Update the spec's `Zone` / `ZoneTime` API
+      surface (lines 855-865) to match the shipped `label:
+      String` shape, or migrate every consumer back to `zone:
+      &'static str` (decision required).
+- [ ] **AB-3** Tighten `DataSlice.start_world_time`,
+      `start_event_distance`, and `incomplete` to `Option<…>`
+      in `src/slice.rs` when a consumer needs to detect the
+      unset state; otherwise update the spec (lines 952-957) to
+      match the shipped bare-typed shape.
+- [x] **AB-4** Accept the private `WBalAccumulator` and
+      `ZonesAccumulator` field-shape divergences as-is; both
+      fields are private with no accessor, so the difference is
+      not externally observable.
+- [ ] **AB-5** Resolve `road_sig` / `from_road_sig` in STEP 17
+      — either implement the packed `u64` encoding for the proto
+      wiring layer or remove it from the spec.
+
 **`road_sig` / `from_road_sig` deferred to STEP 17.** STEP 15
 uses `RoadDesc` (`type RoadKey = RoadDesc`) as the map key
 throughout. The spec's `road_sig(course_id, road_id, reverse) ->
@@ -1666,3 +1689,45 @@ u64` / `from_road_sig(u64) -> (course_id, road_id, reverse)`
 packed encoding has no call site in STEP 15 and is deferred
 until STEP 17 determines whether a packed `u64` key is actually
 needed for the proto wiring layer.
+
+**`NEARBY_MAX_GAP_S` value diverges from spec.** Spec line 838
+declares `NEARBY_MAX_GAP_S = 900.0 // 15 minutes`, matching
+sauce4zwift `src/stats.mjs:4524` (`const maxGap = 15 * 60`).
+`src/periods.rs:17` ships `30.0`, the placeholder value from the
+C-6.1 remediation bullet. The constant is unreferenced in STEP
+15 (no group-construction call site filters by it yet), so the
+divergence has no behavioural impact today. Correct it to
+`900.0` before the first consumer wires it in — likely the
+NearbyData/groups-list assembly in a later step.
+
+**`Zone` and `ZoneTime` use `label: String` instead of spec's
+`zone: &'static str`.** `src/zones.rs:3-15`. Owned `String`
+labels were chosen so runtime-built zones (custom user zones,
+localised labels) can be represented without leaking
+`&'static`. All call sites and tests are already written
+against `.label`. Treat the spec text as the original intent
+and the code as the binding contract; do not "fix" the field
+name back to `zone` without a migration of every consumer.
+
+**`DataSlice` optional extension fields shipped as bare types
+with sentinel defaults.** Spec lines 952-957 declare
+`start_world_time: Option<f64>`, `start_event_distance:
+Option<f64>`, and `incomplete: Option<bool>` so that "not yet
+set" is distinguishable from a real value. `src/slice.rs:5-19`
+ships these as `f64`/`f64`/`bool` initialised to `0.0`/`0.0`/
+`false` in `new_from`. Current producers (`start_athlete_lap`,
+`apply_event_state`, `active_segment_check`/`stop_segment`)
+always write a real value before any consumer reads, so the
+invariant holds by construction, but the type does not enforce
+it. Tighten to `Option<…>` if a future consumer needs to detect
+the unset state (for example, distinguishing an in-progress
+segment slice from one that legitimately stopped at world-time
+zero).
+
+**Private accumulator field shapes diverge from spec, but are
+not externally observable.** `WBalAccumulator` ships `w_bal:
+f64, time_offset: Option<f64>` (`src/wbal.rs:5-11`); the spec
+swaps the optionality. `ZonesAccumulator.time_offset` is
+`Option<f64>` in code (`src/zones.rs:115`) versus `f64` in
+spec. Both fields are private with no accessor, so no caller
+can observe the difference. Left as-is.
