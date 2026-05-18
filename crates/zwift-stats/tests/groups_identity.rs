@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use std::collections::{HashMap, HashSet};
-use zwift_stats::{compute_groups, NearbyEntry, GroupMeta};
+use zwift_stats::{compute_groups, NearbyEntry, GroupMeta, AthleteRegistry, GROUP_GC_TTL_SECS};
 
 fn make_entry(athlete_id: u32, gap: f64) -> NearbyEntry {
     NearbyEntry {
@@ -142,4 +142,51 @@ fn singleton_group_does_not_consume_next_id() {
 
     assert!(groups.iter().all(|g| g.id.is_none()), "singletons have no id");
     assert_eq!(next_id, 50, "next_id must not be incremented for singletons");
+}
+
+// 15.25-T: GroupMeta enrichment
+
+#[test]
+fn group_meta_carries_identity_set() {
+    // After compute_groups the prior_groups entry for a multi-rider group must carry
+    // the exact set of member athlete_ids in identity_set.
+    let nearby = vec![
+        make_entry(10, 0.0),
+        make_entry(20, 0.5),
+        make_entry(30, 1.0),
+    ];
+    let mut prior_groups: HashMap<u32, GroupMeta> = HashMap::new();
+    let mut next_id = 1u32;
+
+    let groups = compute_groups(&nearby, 0, &mut prior_groups, &mut next_id, 0.0);
+
+    assert_eq!(groups.len(), 1);
+    let group_id = groups[0].id.expect("multi-rider group should have an id");
+    let meta = prior_groups.get(&group_id).expect("prior_groups must contain the surviving group");
+    let expected: HashSet<u32> = [10, 20, 30].iter().copied().collect();
+    assert_eq!(meta.identity_set, expected, "identity_set must match member athlete_ids exactly");
+}
+
+#[test]
+fn gc_drops_meta_past_ttl_with_identity_set_intact() {
+    // Groups whose accessed time falls outside GROUP_GC_TTL_SECS are evicted.
+    // Groups within the TTL survive with their identity_set unchanged.
+    let mut registry = AthleteRegistry::new();
+    let stale_time = 0.0;
+    let fresh_time = GROUP_GC_TTL_SECS + 50.0; // definitely within TTL at gc_now
+    let gc_now = GROUP_GC_TTL_SECS + 1.0;      // stale_time is now expired, fresh_time is not
+
+    registry.touch_group(1, stale_time);
+    registry.touch_group(2, fresh_time);
+
+    let report = registry.gc(gc_now);
+
+    assert_eq!(report.groups_dropped, 1, "exactly one stale group should be evicted");
+    assert!(registry.group(1).is_none(), "group 1 (stale) must be gone after GC");
+    let meta2 = registry.group(2).expect("group 2 (fresh) must survive GC");
+    assert_eq!(meta2.id, 2);
+    assert!(
+        meta2.identity_set.is_empty(),
+        "identity_set seeded by touch_group must still be empty (not corrupted) after GC"
+    );
 }

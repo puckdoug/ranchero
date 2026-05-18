@@ -349,9 +349,9 @@ Group classification:
 
 `GroupMeta` enrichment:
 
-- [ ] **15.25-T** `tests/groups_identity.rs::group_meta_carries_identity_set`,
+- [x] **15.25-T** `tests/groups_identity.rs::group_meta_carries_identity_set`,
       `gc_drops_meta_past_ttl_with_identity_set_intact`.
-- [ ] **15.25-I** Extend `GroupMeta` with
+- [x] **15.25-I** Extend `GroupMeta` with
       `identity_set: HashSet<u32>`. The constructor used by
       `AthleteRegistry::touch_group` (seed-only path) initialises
       it to `HashSet::new()`; `compute_groups` is responsible for
