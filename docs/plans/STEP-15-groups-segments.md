@@ -1636,7 +1636,7 @@ Defer the sig encoding to STEP 17 wiring if it actually needs
 a packed map key. Action: record this as deferred in the
 as-built notes; do **not** add a no-op implementation now.
 
-- [ ] **C-8.1** Add a one-line note to the as-built section
+- [x] **C-8.1** Add a one-line note to the as-built section
       (or the STEP 17 plan when it lands) recording the
       deferral and the rationale.
 
@@ -1656,3 +1656,13 @@ prevent a recurrence:
       regression file) that would fail if the implementation
       regressed to a stub. Audit and fill any remaining gaps
       before declaring STEP 15 closed.
+
+## As-built notes
+
+**`road_sig` / `from_road_sig` deferred to STEP 17.** STEP 15
+uses `RoadDesc` (`type RoadKey = RoadDesc`) as the map key
+throughout. The spec's `road_sig(course_id, road_id, reverse) ->
+u64` / `from_road_sig(u64) -> (course_id, road_id, reverse)`
+packed encoding has no call site in STEP 15 and is deferred
+until STEP 17 determines whether a packed `u64` key is actually
+needed for the proto wiring layer.
