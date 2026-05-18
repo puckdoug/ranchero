@@ -172,10 +172,13 @@ it fail, write the smallest code to pass.
       `data_dir()`, creates the files if missing, and runs
       migrations. Smoke test only; uses a `tempfile::TempDir`
       override of the data directory.
-- [x] **16.16-I** Boot path in `src/daemon.rs` (or wherever
-      `start` initialises subsystems) opens
-      `KvStore`/`AthletesDb`/`SegmentsDb` and stashes them on
-      the daemon handle. A test-only env var
+- [x] **16.16-I** Boot path in `src/daemon/runtime.rs` (`start`)
+      opens `KvStore`/`AthletesDb`/`SegmentsDb` into a `Stores`
+      value, then passes it into `run_daemon` so it lives for the
+      full duration of the event loop and drops on shutdown. No
+      top-level daemon struct holds the handles yet — a
+      `Subsystems` struct can wait for the step that introduces a
+      second long-lived subsystem. A test-only env var
       (`RANCHERO_DATA_DIR`) overrides `data_dir()` for the
       wiring test.
 - [x] **16.17-T** `tests/cli_status.rs` — `ranchero status`
@@ -344,7 +347,7 @@ root `Cargo.toml`.
 pub use kv::KvStore;
 pub use athletes::{AthletesDb, AthleteRecord};
 pub use segments::SegmentsDb;
-pub use open::{open, StandardPragmas};
+pub use open::open;
 pub use migrations::{migrate, Migration};
 pub use paths::{STORE_FILENAME, ATHLETES_FILENAME, SEGMENTS_FILENAME};
 
@@ -365,11 +368,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 ```rust
 // open.rs
-pub struct StandardPragmas;
-impl StandardPragmas {
-    pub fn apply(conn: &rusqlite::Connection) -> Result<()>;
-}
 pub fn open(path: &Path) -> Result<rusqlite::Connection>;
+// The standard pragma bundle (WAL, NORMAL sync, foreign_keys ON,
+// busy_timeout 5000 ms, temp_store MEMORY) is applied inside open()
+// as an implementation detail; no separate StandardPragmas type is exposed.
 ```
 
 ```rust
@@ -544,7 +546,7 @@ Items below use the **AB-N** convention from STEP 15: each is
 either a fix to land before STEP 16 closes, or a deliberate
 amendment to the plan.
 
-- [ ] **AB-1** — `crates/zwift-store/src/paths.rs` was never
+- [x] **AB-1** — `crates/zwift-store/src/paths.rs` was never
       created. The plan §"Crate layout" lists it and
       §"Public API surface" promises
       `pub use paths::{STORE_FILENAME, ATHLETES_FILENAME,
@@ -558,7 +560,7 @@ amendment to the plan.
       `lib.rs`, and replace the daemon-side accessors with
       direct use of the constants.
 
-- [ ] **AB-2** — `StandardPragmas` struct was not built.
+- [x] **AB-2** — `StandardPragmas` struct was not built.
       §"Public API surface" declares
       `pub struct StandardPragmas` with an `apply(&Connection)`
       method, alongside `open(path)`. The implementation
@@ -571,13 +573,13 @@ amendment to the plan.
       and document the pragma bundle as an implementation
       detail of `open()`. No code change.
 
-- [ ] **AB-3** — `lib.rs` re-exports are a subset of the plan.
+- [x] **AB-3** — `lib.rs` re-exports are a subset of the plan.
       Missing from the actual `pub use` list:
       `StandardPragmas` (covered by AB-2) and the `paths::*`
       filename constants (covered by AB-1). Closing AB-1 and
       AB-2 closes AB-3 automatically.
 
-- [ ] **AB-4** — The daemon does not stash a long-lived
+- [x] **AB-4** — The daemon does not stash a long-lived
       `Stores` handle on a top-level daemon struct. The plan
       §16.16-I says "stashes them on the daemon handle"; the
       implementation passes a `Stores` value into

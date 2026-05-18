@@ -16,6 +16,7 @@ use super::pidfile::Pidfile;
 use super::probe::{OsProcessProbe, ProcessProbe};
 use super::stores::Stores;
 use super::{DaemonError, DaemonPaths};
+use zwift_store::{ATHLETES_FILENAME, SEGMENTS_FILENAME, STORE_FILENAME};
 use crate::config::ResolvedConfig;
 use crate::logging::{self, LogOpts};
 
@@ -65,9 +66,9 @@ pub fn start(
         tracing::error!(error = %e, "persistence stores failed to open");
         DaemonError::Store(e)
     })?;
-    tracing::info!(path = %data_dir.join(Stores::store_filename()).display(),    "persistence opened");
-    tracing::info!(path = %data_dir.join(Stores::athletes_filename()).display(), "persistence opened");
-    tracing::info!(path = %data_dir.join(Stores::segments_filename()).display(), "persistence opened");
+    tracing::info!(path = %data_dir.join(STORE_FILENAME).display(),    "persistence opened");
+    tracing::info!(path = %data_dir.join(ATHLETES_FILENAME).display(), "persistence opened");
+    tracing::info!(path = %data_dir.join(SEGMENTS_FILENAME).display(), "persistence opened");
 
     if foreground {
         println!("{STARTED_PREFIX} (pid {pid})");
@@ -168,11 +169,7 @@ pub fn status(cfg: &ResolvedConfig) -> Result<ExitCode, DaemonError> {
 }
 
 fn format_persistence_status(data_dir: &Path) -> String {
-    let files = [
-        Stores::store_filename(),
-        Stores::athletes_filename(),
-        Stores::segments_filename(),
-    ];
+    let files = [STORE_FILENAME, ATHLETES_FILENAME, SEGMENTS_FILENAME];
     let mut lines = vec!["Persistence:".to_string()];
     for name in files {
         let size = std::fs::metadata(data_dir.join(name))

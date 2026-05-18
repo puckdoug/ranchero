@@ -4,12 +4,14 @@ pub mod athletes;
 pub mod kv;
 pub mod migrations;
 pub mod open;
+pub mod paths;
 pub mod segments;
 
 pub use athletes::{AthletesDb, AthleteRecord};
 pub use kv::KvStore;
 pub use migrations::{migrate, Migration};
 pub use open::open;
+pub use paths::{ATHLETES_FILENAME, SEGMENTS_FILENAME, STORE_FILENAME};
 pub use segments::SegmentsDb;
 
 #[derive(Debug, thiserror::Error)]
