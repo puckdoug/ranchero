@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use zwift_stats::{
     AthleteData, MostRecentState,
-    EventBehavior, EventStateOutcome,
+    EventBehavior,
     apply_event_state,
 };
 use zwift_stats::athlete::EventSubgroup;

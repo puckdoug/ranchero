@@ -10,13 +10,13 @@ use crate::{
     periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS},
 };
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct EventSubgroup {
     pub id: u32,
-    pub hide_w_bal: bool,
-    pub hide_ftp: bool,
-    pub hide_the_hud: bool,
-    pub no_overlays: bool,
+    pub course_id: u32,
+    pub all_tags: Vec<String>,
+    pub end_ts: u64,
+    pub end_distance: f64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

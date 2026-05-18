@@ -218,7 +218,7 @@ Event detection and privacy:
       `auto_end_by_wall_clock_closes_slice`,
       `behavior_auto_reset_resets_athlete_data_on_event_start`,
       `behavior_auto_lap_starts_a_lap_on_event_start_when_not_resetting`.
-- [ ] **15.14-I** Implement `apply_event_state(ad, state,
+- [x] **15.14-I** Implement `apply_event_state(ad, state,
   self_athlete_id, sg_lookup, behavior, now, wall_clock_ms)`
       in `src/events.rs`. `sg_lookup: &HashMap<u32,
   EventSubgroup>` is provided by the caller (the daemon,
@@ -236,7 +236,7 @@ Event detection and privacy:
       `non_self_hideftp_sets_hide_ftp`,
       `hidethehud_sets_disabled_by_event`,
       `nooverlays_sets_disabled_by_event`.
-- [ ] **15.15-I** Apply the four tag rules from
+- [x] **15.15-I** Apply the four tag rules from
       `stats.mjs:2985-2989`: skip privacy assignment when
       `state.athlete_id == self_athlete_id`; otherwise stamp
       `event_privacy.hide_w_bal`, `event_privacy.hide_ftp`,
@@ -1433,26 +1433,26 @@ not the event-metadata fields the spec lists
 
 **Remediation.**
 
-- [ ] **C-1.0** Revert `15.14-T`, `15.14-I`, `15.15-T`,
+- [x] **C-1.0** Revert `15.14-T`, `15.14-I`, `15.15-T`,
       `15.15-I` to `[ ]` in the Summary checklist. Delete the
       placeholder bodies from `tests/event_detection.rs` and
       `tests/event_privacy.rs` (keep the file skeletons).
-- [ ] **C-1.1** Add `EventStateOutcome` enum to `src/events.rs`
+- [x] **C-1.1** Add `EventStateOutcome` enum to `src/events.rs`
       per Public API L1128–1133 (`Idle`, `Started { slice_id }`,
       `StartPending`, `Ended { slice_id }`).
-- [ ] **C-1.2** Reshape `EventSubgroup` (in `src/athlete.rs`)
+- [x] **C-1.2** Reshape `EventSubgroup` (in `src/athlete.rs`)
       so it carries the spec-mandated event metadata
       (`id`, `course_id`, `all_tags: Vec<String>`, `end_ts: u64`,
       `end_distance: f64`). Privacy flag derivation moves into
       `events.rs` via `all_tags` parsing (`stats.mjs:2985-2989`:
       `hidewbal`, `hideftp`, `hidethehud`, `nooverlays`).
-- [ ] **C-1.3** Extend `DataSlice` (in `src/slice.rs`) with
+- [x] **C-1.3** Extend `DataSlice` (in `src/slice.rs`) with
       `event_subgroup_id: Option<u32>`,
       `start_event_distance: f64`,
       `end_event_distance: Option<f64>`. Update
       `DataSlice::new_from` to seed them from current state;
       update `close` to stamp `end_event_distance`.
-- [ ] **C-1.4** Re-do `15.14-T` for real, mirroring the
+- [x] **C-1.4** Re-do `15.14-T` for real, mirroring the
       assertions named in the original bullet
       (`new_subgroup_opens_slice_when_state_time_present`,
       `new_subgroup_defers_when_state_time_zero_and_sets_pending`,
@@ -1465,11 +1465,11 @@ not the event-metadata fields the spec lists
       Each test calls `apply_event_state(...)` and inspects
       slices / pending flags / return value (`EventStateOutcome`).
       Confirm all eight fail.
-- [ ] **C-1.5** Implement `apply_event_state` per the original
+- [x] **C-1.5** Implement `apply_event_state` per the original
       `15.14-I` brief: `trigger_event_start` / `trigger_event_end`,
       `event_start_pending`, return `EventStateOutcome`. Mirrors
       `stats.mjs:2880-2982`.
-- [ ] **C-1.6** Re-do `15.15-T` for real (the five named tests)
+- [x] **C-1.6** Re-do `15.15-T` for real (the five named tests)
       and implement the four-tag rule from `stats.mjs:2985-2989`.
       Re-mark `15.14-T/I` and `15.15-T/I` as `[x]` only after
       both turn green.

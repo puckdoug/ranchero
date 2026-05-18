@@ -13,6 +13,9 @@ pub struct DataSlice {
     pub incomplete: bool,
     pub segment_id: Option<u32>,
     pub start_world_time: f64,
+    pub event_subgroup_id: Option<u32>,
+    pub start_event_distance: f64,
+    pub end_event_distance: Option<f64>,
 }
 
 impl DataSlice {
@@ -34,6 +37,9 @@ impl DataSlice {
             incomplete: false,
             segment_id: None,
             start_world_time: 0.0,
+            event_subgroup_id: None,
+            start_event_distance: 0.0,
+            end_event_distance: None,
         }
     }
 
