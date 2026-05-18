@@ -375,7 +375,7 @@ Streams:
 
 Rust-only regression fixture:
 
-- [ ] **15.27-T** Add `tests/step15_regression.rs` and
+- [x] **15.27-T** Add `tests/step15_regression.rs` and
       `tests/fixtures/step15_session.json`. The fixture is a
       hand-built ~60-tick stream covering: a power waveform that
       visits every Coggan zone, a CP-bounded W' deplete-then-
@@ -385,7 +385,7 @@ Rust-only regression fixture:
       pipeline against stub `SegmentLookup` / `RoadGeometry`
       implementations, and asserts a checked-in expected-output
       JSON to ≤ 1e-6.
-- [ ] **15.28-I** No implementation work expected if **15.27-T**
+- [x] **15.28-I** No implementation work expected if **15.27-T**
       is checked in against the implementation written for 15.2 –
       15.26. If the regression fails on first run, fix the
       implementation, not the fixture; record the resolution in
