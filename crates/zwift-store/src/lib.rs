@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+pub mod athletes;
 pub mod kv;
 pub mod migrations;
 pub mod open;
 
+pub use athletes::{AthletesDb, AthleteRecord};
 pub use kv::KvStore;
 pub use migrations::{migrate, Migration};
 pub use open::open;

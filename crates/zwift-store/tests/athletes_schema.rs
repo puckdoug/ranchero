@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use tempfile::tempdir;
-use zwift_store::AthletesDb;
+use zwift_store::{AthletesDb, open};
 
 #[test]
 fn athletes_table_exists_with_correct_columns() {
     let dir = tempdir().unwrap();
-    let db = AthletesDb::open(&dir.path().join("athletes.sqlite")).unwrap();
-    let conn = db.raw_conn();
+    let db_path = dir.path().join("athletes.sqlite");
+    AthletesDb::open(&db_path).unwrap();
+    let conn = open(&db_path).unwrap();
 
     // Each expected column must appear in table_info.
     let cols: Vec<String> = conn
@@ -26,8 +27,9 @@ fn athletes_table_exists_with_correct_columns() {
 #[test]
 fn athletes_table_has_primary_key_on_id() {
     let dir = tempdir().unwrap();
-    let db = AthletesDb::open(&dir.path().join("athletes.sqlite")).unwrap();
-    let conn = db.raw_conn();
+    let db_path = dir.path().join("athletes.sqlite");
+    AthletesDb::open(&db_path).unwrap();
+    let conn = open(&db_path).unwrap();
 
     let pk_col: String = conn
         .query_row(
@@ -43,8 +45,9 @@ fn athletes_table_has_primary_key_on_id() {
 #[test]
 fn athletes_table_has_index_on_last_seen() {
     let dir = tempdir().unwrap();
-    let db = AthletesDb::open(&dir.path().join("athletes.sqlite")).unwrap();
-    let conn = db.raw_conn();
+    let db_path = dir.path().join("athletes.sqlite");
+    AthletesDb::open(&db_path).unwrap();
+    let conn = open(&db_path).unwrap();
 
     let indexes: Vec<String> = conn
         .prepare("PRAGMA index_list(athletes)")
