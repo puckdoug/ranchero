@@ -79,7 +79,7 @@ it fail, write the smallest code to pass.
       and ends at `user_version = N`. A DB at
       `user_version = k` runs only migrations `k+1..=N`.
       Migrations are idempotent across reruns.
-- [ ] **16.3-I** `zwift-store::migrate(conn, &[Migration])`
+- [x] **16.3-I** `zwift-store::migrate(conn, &[Migration])`
       where `Migration` is `{ version: u32, sql: &'static str }`
       executed in a transaction per migration. Reads/writes
       `user_version` via `PRAGMA`.

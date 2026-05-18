@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+pub mod migrations;
 pub mod open;
 
+pub use migrations::{migrate, Migration};
 pub use open::open;
 
 #[derive(Debug, thiserror::Error)]
