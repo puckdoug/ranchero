@@ -74,7 +74,7 @@ it fail, write the smallest code to pass.
 
 ### Migrations
 
-- [ ] **16.3-T** `tests/migrations.rs` — a fresh DB with
+- [x] **16.3-T** `tests/migrations.rs` — a fresh DB with
       `PRAGMA user_version = 0` runs every migration in order
       and ends at `user_version = N`. A DB at
       `user_version = k` runs only migrations `k+1..=N`.
@@ -83,7 +83,7 @@ it fail, write the smallest code to pass.
       where `Migration` is `{ version: u32, sql: &'static str }`
       executed in a transaction per migration. Reads/writes
       `user_version` via `PRAGMA`.
-- [ ] **16.4-T** Migration runner refuses to downgrade:
+- [x] **16.4-T** Migration runner refuses to downgrade:
       opening a DB whose `user_version` exceeds the highest
       known migration returns `Error::SchemaTooNew`.
 
