@@ -44,6 +44,7 @@ pub use groups::{NearbyEntry, Group, compute_groups};
 pub use periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, GC_TICK_INTERVAL_SECS};
 pub use wbal::WBalAccumulator;
 pub use slice::DataSlice;
+pub use streams::LatLng;
 pub use road_history::{RoadHistory, RoadKey, RoadGeometry, RoadComparison, compare_road_positions};
 pub use gap::apply_gap;
 pub use events::{EventBehavior, apply_event_state};

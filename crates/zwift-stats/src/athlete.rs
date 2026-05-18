@@ -4,9 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::{
-    DataBucket, DataSlice, ExpWeightedAvg,
+    DataBucket, DataSlice, ExpWeightedAvg, Sample,
     wbal::WBalAccumulator, zones::ZonesAccumulator,
-    streams::Streams, road_history::RoadHistory,
+    streams::{Streams, LatLng}, road_history::RoadHistory,
     periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS},
 };
 
@@ -192,6 +192,14 @@ impl AthleteData {
 
     pub fn touch(&mut self, now: f64) {
         self.internal_accessed = now;
+    }
+
+    pub fn record_streams(&mut self, state: &MostRecentState, _now: f64) {
+        self.streams.distance.push(state.distance);
+        self.streams.altitude.push(state.altitude);
+        self.streams.latlng.push(LatLng { lat: state.lat, lng: state.lng });
+        let wbal = self.w_bal.accumulate(state.time, Sample::Value(state.power));
+        self.streams.wbal.push(wbal);
     }
 
     pub fn record_update(&mut self, world_time: f64, now: f64) {

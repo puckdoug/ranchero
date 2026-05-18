@@ -12,7 +12,7 @@ fn new_initialises_accumulators_and_streams() {
     assert_eq!(ad.smooth_grade.get(), 0.0, "smooth_grade should be seeded at 0");
 
     // Streams and road history should be initialized
-    assert!(ad.streams.distance_list().is_empty(), "streams should start empty");
+    assert!(ad.streams.distance.is_empty(), "streams should start empty");
     assert!(ad.road_history.is_empty(), "road_history should start empty");
 
     // Slice collections should be initialized (except lap_slices which has initial slice)

@@ -359,11 +359,11 @@ Group classification:
 
 Streams:
 
-- [ ] **15.26-T** `tests/streams.rs::record_streams_appends_distance_altitude_latlng_per_tick`,
+- [x] **15.26-T** `tests/streams.rs::record_streams_appends_distance_altitude_latlng_per_tick`,
       `latlng_uses_custom_type_with_named_fields`,
       `wbal_sample_appended_per_tick_when_accumulator_configured`,
       `wbal_stream_carries_none_when_accumulator_unconfigured`.
-- [ ] **15.26-I** Add the `Streams` struct in `src/streams.rs`
+- [x] **15.26-I** Add the `Streams` struct in `src/streams.rs`
       along with a custom `LatLng` type (named fields, not a
       tuple — this is a Rust port, not a transliteration of the
       JS `[lat, lng]` array):
