@@ -5,14 +5,17 @@ use serde::{Deserialize, Serialize};
 use zwift_stats::{
     AthleteData, GroupMeta, MostRecentState, NearbyEntry, PlayerStateView,
     Segment, SegmentLookup,
-    active_segment_check, compute_groups,
+    EventBehavior,
+    active_segment_check, apply_event_state, compute_groups,
 };
+use zwift_stats::athlete::EventSubgroup;
 
 // Input deserialization
 
 #[derive(Deserialize)]
 struct Session {
     meta: Meta,
+    event_subgroups: Vec<EventSubgroupSpec>,
     segments: Vec<SegmentSpec>,
     ticks: Vec<TickSpec>,
 }
@@ -22,6 +25,15 @@ struct Meta {
     cp: f64,
     w_prime: f64,
     road_length_m: f64,
+}
+
+#[derive(Deserialize)]
+struct EventSubgroupSpec {
+    id: u32,
+    course_id: u32,
+    all_tags: Vec<String>,
+    end_ts: u64,
+    end_distance: f64,
 }
 
 #[allow(dead_code)]
@@ -41,6 +53,7 @@ struct TickSpec {
     power: f64,
     rpct: f64,
     a2_gap: f64,
+    subgroup_id: u32,
 }
 
 // Output serialization
@@ -51,12 +64,19 @@ struct Output {
     distance_stream: Vec<f64>,
     group_counts: Vec<usize>,
     segment_slices: Vec<SliceOutput>,
+    event_slices: Vec<EventSliceOutput>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct SliceOutput {
     segment_id: Option<u32>,
     incomplete: bool,
+    duration_secs: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+struct EventSliceOutput {
+    event_subgroup_id: Option<u32>,
     duration_secs: f64,
 }
 
@@ -115,9 +135,22 @@ fn step15_regression() {
 
     let segs = StubSegments::from_specs(&session.segments);
 
+    let sg_lookup: HashMap<u32, EventSubgroup> = session
+        .event_subgroups
+        .iter()
+        .map(|s| (s.id, EventSubgroup {
+            id: s.id,
+            course_id: s.course_id,
+            all_tags: s.all_tags.clone(),
+            end_ts: s.end_ts,
+            end_distance: s.end_distance,
+        }))
+        .collect();
+
     let first_seg = session.segments.first().expect("fixture has no segments");
     let course_id = first_seg.course_id;
     let road_id = first_seg.road_id;
+    let no_behavior = EventBehavior { auto_reset: false, auto_lap: false };
 
     let mut ad = AthleteData::new(1, course_id, 1, 0.0, 1.0);
     ad.w_bal.configure(session.meta.cp, session.meta.w_prime);
@@ -144,10 +177,10 @@ fn step15_regression() {
             road_id,
             road_time: tick.rpct * 1_000_000.0 + 5_000.0,
             reverse: false,
-            event_subgroup_id: 0,
+            event_subgroup_id: tick.subgroup_id,
             group_id: 0,
             time: now,
-            event_distance: 0.0,
+            event_distance: now * 10.0,
         };
 
         let prev_ref: Option<&dyn PlayerStateView> =
@@ -155,6 +188,13 @@ fn step15_regression() {
         ad.road_history.record(&state, prev_ref);
         ad.record_streams(&state, now);
         active_segment_check(&mut ad, &state, &segs, now);
+
+        let outcome = apply_event_state(
+            &mut ad, &state, 99, &sg_lookup, no_behavior, now, now as u64 * 1000,
+        );
+        // Outcomes other than Idle and StartPending indicate state transitions;
+        // the regression captures the resulting slices, not tick-by-tick outcomes.
+        let _ = outcome;
 
         let nearby = [
             NearbyEntry {
@@ -207,6 +247,14 @@ fn step15_regression() {
                 duration_secs: s.end.map(|e| e - s.start).unwrap_or(0.0),
             })
             .collect(),
+        event_slices: ad
+            .event_slices
+            .iter()
+            .map(|s| EventSliceOutput {
+                event_subgroup_id: s.event_subgroup_id,
+                duration_secs: s.end.map(|e| e - s.start).unwrap_or(0.0),
+            })
+            .collect(),
     };
 
     let expected_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -244,11 +292,34 @@ fn step15_regression() {
         .zip(expected.segment_slices.iter())
         .enumerate()
     {
-        assert_eq!(got.segment_id, exp.segment_id, "slice[{i}] segment_id");
-        assert_eq!(got.incomplete, exp.incomplete, "slice[{i}] incomplete");
+        assert_eq!(got.segment_id, exp.segment_id, "segment_slice[{i}] segment_id");
+        assert_eq!(got.incomplete, exp.incomplete, "segment_slice[{i}] incomplete");
         assert!(
             (got.duration_secs - exp.duration_secs).abs() < 1e-6,
-            "slice[{i}] duration_secs: {} vs {}",
+            "segment_slice[{i}] duration_secs: {} vs {}",
+            got.duration_secs,
+            exp.duration_secs,
+        );
+    }
+
+    assert_eq!(
+        output.event_slices.len(),
+        expected.event_slices.len(),
+        "event_slices count mismatch"
+    );
+    for (i, (got, exp)) in output
+        .event_slices
+        .iter()
+        .zip(expected.event_slices.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            got.event_subgroup_id, exp.event_subgroup_id,
+            "event_slice[{i}] event_subgroup_id",
+        );
+        assert!(
+            (got.duration_secs - exp.duration_secs).abs() < 1e-6,
+            "event_slice[{i}] duration_secs: {} vs {}",
             got.duration_secs,
             exp.duration_secs,
         );

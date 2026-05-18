@@ -1473,7 +1473,7 @@ not the event-metadata fields the spec lists
       and implement the four-tag rule from `stats.mjs:2985-2989`.
       Re-mark `15.14-T/I` and `15.15-T/I` as `[x]` only after
       both turn green.
-- [ ] **C-1.7** Extend `tests/step15_regression.rs` to drive an
+- [x] **C-1.7** Extend `tests/step15_regression.rs` to drive an
       event open / close inside the existing 60-tick window
       (introduce a `subgroup_id` column in the fixture, or a
       sibling fixture `step15_events_session.json`). Regenerate
