@@ -596,6 +596,97 @@ BadSchema branch in `get_profile_me`, and one extra argument to
 the `AuthFailedBadSchema` error variant carrying a body-prefix
 slice.
 
+### 20.17 — SQLite persistence deferrals (from STEP-16)
+
+**Where it came from.** STEP-16 shipped `zwift-store` with three
+SQLite databases (`store.sqlite`, `athletes.sqlite`,
+`segments.sqlite`) but explicitly excluded six items from its
+"Out of scope" section. None of the six is tracked elsewhere; this
+entry is the parking lot for all of them so a future reader can find
+them without re-reading STEP-16.
+
+The six items split into three deferred-work items (expected to land
+in a later step), one spec-level deferral (FIT export), and two
+deliberate non-features (no encryption at rest, no operational
+hygiene tooling). They are grouped here because they share a single
+subsystem and decision-making context.
+
+**Deferred work, expected in a later step:**
+
+1. **Live `AthleteData` → `athletes.sqlite` persistence.** STEP-16
+   built `AthletesDb::upsert`/`touch`/`get` but no caller writes
+   ingest data into them. The store is exercised only by its own
+   tests. The natural home is the step that joins `zwift-stats`
+   ingest to persistence — STEP-16 calls this out as "probably
+   STEP 18+" without committing.
+2. **Background eviction for the segments cache.**
+   `SegmentsDb::evict_expired(now) -> Result<usize>` exists and is
+   tested, but no scheduled task calls it. The natural home is
+   whichever step first writes leaderboards into the cache
+   (segment-leaderboard fetcher, not yet planned). Until that step
+   lands, the cache is unused and unbounded growth is not a risk.
+3. **Schema introspection in `ranchero status`.** The persistence
+   block today is bytes-only. A future enhancement could report
+   `user_version`, row counts per table, or the oldest/newest
+   `last_seen` in the athletes cache. No step has committed to
+   this; it is a low-priority operator-ergonomic item.
+
+**Spec-level deferral:**
+
+4. **FIT export of finished sessions.** Deferred past v1 per the
+   spec stub (`stats.mjs:2057` in sauce4zwift's `exportFIT`) and
+   CLAUDE.md. Not a STEP-NN item — a v2 concern. Listed here only
+   so a reader of STEP-16 can find the trail.
+
+**Deliberate non-features (the "current resolution" is "never,
+unless the threat model changes"):**
+
+5. **Encryption at rest for the SQLite files.** Credentials live in
+   the OS keyring (STEP-05); the SQLite files contain no secrets
+   (athlete profiles, KV settings, cached leaderboards). Adding
+   SQLCipher or equivalent would cost a vendored fork of
+   `rusqlite`, an operator-managed key, and migration tooling for
+   existing on-disk DBs, in exchange for protecting data that is
+   not sensitive. Revisit only if the schema grows to hold
+   personally-identifying or financially-sensitive data, or a
+   deployment context (multi-tenant, regulated industry) requires
+   encryption-at-rest as a checkbox.
+6. **Backups, vacuum scheduling, integrity checks.** SQLite's
+   defaults plus WAL are sufficient for a single-user daemon.
+   `VACUUM` reclaims space after large deletes (which do not happen
+   in v1: athletes accumulate, segments expire-and-overwrite but
+   the row count stays bounded). `PRAGMA integrity_check` is a
+   recovery tool, not a steady-state task. Operator backups
+   (`cp` while the daemon is stopped, or `.backup` over the SQLite
+   CLI while it is running) sit outside ranchero by design — the
+   same place log rotation sits today (see 20.7).
+
+**Why this might come back.**
+
+- Items 1 and 2 come back the moment the upstream subsystem
+  (`AthleteData` ingest, segment-leaderboard fetcher) is wired in
+  and would otherwise duplicate the in-memory state across
+  restarts.
+- Item 3 comes back when an operator reports that the persistence
+  block is too thin to diagnose a real symptom (for example,
+  "athletes cache is huge — how many rows is that").
+- Item 4 comes back if v2 takes FIT export off the deferred list.
+- Items 5 and 6 come back only on a threat-model or
+  deployment-context change. Neither is expected.
+
+**Decision rule.**
+
+- Items 1 and 2: pull into the step that introduces the upstream
+  subsystem. Do not implement speculatively.
+- Item 3: implement on first operator request that the current
+  bytes-only line is insufficient. Each new field is a one-line
+  addition to `format_persistence_status` plus a corresponding
+  `KvStore` / `AthletesDb` / `SegmentsDb` accessor.
+- Item 4: tracked by the spec, not by this plan; no action here.
+- Items 5 and 6: do not implement. Re-evaluate only on an explicit
+  deployment-context or schema change that invalidates the
+  reasoning above.
+
 ---
 
 ## How to use this file

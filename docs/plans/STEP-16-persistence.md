@@ -515,6 +515,12 @@ CREATE INDEX leaderboards_expires_at ON leaderboards (expires_at);
 
 ## Out of scope for STEP 16
 
+All six items below are tracked in
+[STEP-20 §20.17](STEP-20-additional-considerations.md#2017--sqlite-persistence-deferrals-from-step-16)
+with provenance, decision rules, and revisit triggers. The
+summary here is for STEP-16 readers; the parking lot is the
+canonical record.
+
 - **FIT export of finished sessions.** Deferred past v1 per
   spec stub and CLAUDE.md.
 - **Writing live `AthleteData` snapshots to
