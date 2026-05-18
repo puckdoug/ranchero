@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[package]
+name = "zwift-store"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"

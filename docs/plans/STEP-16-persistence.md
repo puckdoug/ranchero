@@ -53,7 +53,7 @@ it fail, write the smallest code to pass.
 
 ### Foundations
 
-- [ ] **16.1-T** `tests/data_dir.rs` — `data_dir()` resolves
+- [x] **16.1-T** `tests/data_dir.rs` — `data_dir()` resolves
       to the platform-correct base under
       `~/Library/Application Support/net.heroic.ranchero` on
       darwin (mirrors the existing `default_config_path`
@@ -62,7 +62,7 @@ it fail, write the smallest code to pass.
       `default_config_path()`. Reuse the existing
       `directories::ProjectDirs` handle; create the directory
       with `create_dir_all` on first call.
-- [ ] **16.2-T** `tests/sqlite_open.rs` — opening a fresh DB
+- [x] **16.2-T** `tests/sqlite_open.rs` — opening a fresh DB
       file creates the file, runs the configured pragmas, and
       returns a usable `Connection`. Asserts:
       `PRAGMA journal_mode` returns `wal`,

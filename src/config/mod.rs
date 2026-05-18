@@ -503,6 +503,31 @@ mod tests {
     fn empty_cli() -> GlobalOpts { GlobalOpts::default() }
     fn empty_keyring() -> InMemoryKeyringStore { InMemoryKeyringStore::default() }
 
+    // 16.1-T — data_dir() resolves to the platform-correct base directory.
+    #[test]
+    fn data_dir_resolves_to_platform_correct_base() {
+        let dir = data_dir();
+        let dir_str = dir.to_string_lossy();
+
+        // On darwin the path must be rooted under
+        // ~/Library/Application Support/net.heroic.ranchero.
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                dir_str.contains("Application Support"),
+                "data_dir must be under Application Support on darwin, got: {dir_str}",
+            );
+            assert!(
+                dir_str.contains("net.heroic.ranchero"),
+                "data_dir must contain net.heroic.ranchero on darwin, got: {dir_str}",
+            );
+        }
+
+        // On all platforms the path must be absolute and non-empty.
+        assert!(dir.is_absolute(), "data_dir must be absolute, got: {dir_str}");
+        assert!(!dir_str.is_empty(), "data_dir must not be empty");
+    }
+
     #[test]
     fn default_config_when_no_file_and_no_overrides() {
         let r = ResolvedConfig::resolve(&empty_cli(), &empty_env(), &empty_keyring(), None).unwrap();
