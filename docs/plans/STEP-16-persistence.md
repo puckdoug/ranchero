@@ -89,7 +89,7 @@ it fail, write the smallest code to pass.
 
 ### Key-value store (`store.sqlite`)
 
-- [ ] **16.5-T** `tests/kv_round_trip.rs` — `put`/`get`/
+- [x] **16.5-T** `tests/kv_round_trip.rs` — `put`/`get`/
       `delete`/`exists` over `BLOB` data. Insert, read back
       the identical bytes (binary safety), overwrite, delete,
       `get` returns `None`.
@@ -98,14 +98,14 @@ it fail, write the smallest code to pass.
       &[u8])`, `get(&self, id: &str) -> Result<Option<Vec<u8>>>`,
       `delete(&self, id: &str) -> Result<bool>`,
       `exists(&self, id: &str) -> Result<bool>`.
-- [ ] **16.6-T** `tests/kv_concurrent.rs` — WAL allows a
+- [x] **16.6-T** `tests/kv_concurrent.rs` — WAL allows a
       reader to complete while a writer holds an open
       transaction. Spawn two threads sharing the same DB file;
       the reader must observe the pre-transaction value while
       the writer is mid-write, and the post-commit value
       afterwards. Marked `#[ignore = "slow: threads +
       busy-wait"]`.
-- [ ] **16.7-T** `tests/kv_json_helper.rs` — `put_json` /
+- [x] **16.7-T** `tests/kv_json_helper.rs` — `put_json` /
       `get_json` round-trip a `serde_json::Value` through the
       `BLOB` column without data corruption.
 - [ ] **16.7-I** Add `put_json<T: Serialize>` and
