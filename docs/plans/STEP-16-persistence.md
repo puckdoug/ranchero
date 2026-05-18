@@ -58,7 +58,7 @@ it fail, write the smallest code to pass.
       `~/Library/Application Support/net.heroic.ranchero` on
       darwin (mirrors the existing `default_config_path`
       shape in `src/config/paths.rs`).
-- [ ] **16.1-I** Add `pub fn data_dir() -> PathBuf` next to
+- [x] **16.1-I** Add `pub fn data_dir() -> PathBuf` next to
       `default_config_path()`. Reuse the existing
       `directories::ProjectDirs` handle; create the directory
       with `create_dir_all` on first call.
@@ -68,7 +68,7 @@ it fail, write the smallest code to pass.
       `PRAGMA journal_mode` returns `wal`,
       `PRAGMA foreign_keys` returns `1`,
       `PRAGMA busy_timeout` returns a positive integer.
-- [ ] **16.2-I** `zwift-store::open(path)` — open the
+- [x] **16.2-I** `zwift-store::open(path)` — open the
       connection, apply the standard pragma bundle, return
       the `Connection`. Single helper used by all three DBs.
 

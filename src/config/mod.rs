@@ -299,6 +299,16 @@ pub fn default_config_path() -> PathBuf {
     }
 }
 
+pub fn data_dir() -> PathBuf {
+    let dir = if let Some(dirs) = directories::ProjectDirs::from("net", "heroic", "ranchero") {
+        dirs.data_dir().to_path_buf()
+    } else {
+        PathBuf::from(".")
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
 // ---------------------------------------------------------------------------
 // RedactedString
 // ---------------------------------------------------------------------------

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use std::path::Path;
 use tempfile::tempdir;
 use zwift_store::open;
 
