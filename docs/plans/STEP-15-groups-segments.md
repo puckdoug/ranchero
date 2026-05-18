@@ -853,15 +853,15 @@ pub const ROAD_TIME_SCALE:                 f64 = 1.0e6;
 
 ```rust
 pub struct Zone {
-    pub zone:    &'static str,
+    pub label:   String,         // owned — allows runtime-built and localised labels
     pub from:    f64,
     pub to:      Option<f64>,    // None ⇒ unbounded upward
     pub overlap: bool,
 }
 
 pub struct ZoneTime {
-    pub zone: &'static str,
-    pub time: f64,
+    pub label: String,
+    pub time:  f64,
 }
 
 #[derive(Clone, Copy)]
@@ -945,16 +945,15 @@ pub struct DataSlice {
     pub sport:                u8,
     pub bucket:               DataBucket,
 
-    // Lap / event / segment-specific extension fields. None when
-    // not applicable; the producer (`start_athlete_lap`,
-    // `trigger_event_start`, `start_segment`) writes the relevant
-    // subset.
+    // Lap / event / segment-specific extension fields. Defaulted
+    // to 0/false in new_from; the relevant producer writes the
+    // applicable subset before any consumer reads.
     pub segment_id:           Option<u32>,
-    pub start_world_time:     Option<f64>,
+    pub start_world_time:     f64,           // 0.0 when not an event slice
     pub event_subgroup_id:    Option<u32>,
-    pub start_event_distance: Option<f64>,
+    pub start_event_distance: f64,           // 0.0 when not an event slice
     pub end_event_distance:   Option<f64>,
-    pub incomplete:           Option<bool>, // None until stop_segment runs
+    pub incomplete:           bool,          // false until stop_segment sets true
 }
 
 impl DataSlice {
@@ -1663,24 +1662,26 @@ Each deviation below is paired with a checklist item describing
 the action required (or accepted) to close it. Tick items as
 they are resolved or explicitly accepted.
 
-- [ ] **AB-1** Correct `NEARBY_MAX_GAP_S` to `900.0` in
+- [x] **AB-1** Correct `NEARBY_MAX_GAP_S` to `900.0` in
       `src/periods.rs:17` before the first consumer wires it in.
-- [ ] **AB-2** Update the spec's `Zone` / `ZoneTime` API
-      surface (lines 855-865) to match the shipped `label:
-      String` shape, or migrate every consumer back to `zone:
-      &'static str` (decision required).
-- [ ] **AB-3** Tighten `DataSlice.start_world_time`,
-      `start_event_distance`, and `incomplete` to `Option<…>`
-      in `src/slice.rs` when a consumer needs to detect the
-      unset state; otherwise update the spec (lines 952-957) to
-      match the shipped bare-typed shape.
+      Done: value updated to `900.0` with JS-source comment.
+- [x] **AB-2** Update the spec's `Zone` / `ZoneTime` API
+      surface to match the shipped `label: String` shape.
+      Done: spec lines 855-865 updated; `&'static str` replaced
+      with `String` throughout.
+- [x] **AB-3** Update the spec (lines 952-957) to match the
+      shipped bare-typed shape; producers always write before
+      consumers read so `Option<…>` is not required.
+      Done: spec updated with sentinel-default comments.
 - [x] **AB-4** Accept the private `WBalAccumulator` and
       `ZonesAccumulator` field-shape divergences as-is; both
       fields are private with no accessor, so the difference is
       not externally observable.
-- [ ] **AB-5** Resolve `road_sig` / `from_road_sig` in STEP 17
+- [x] **AB-5** Resolve `road_sig` / `from_road_sig` in STEP 17
       — either implement the packed `u64` encoding for the proto
       wiring layer or remove it from the spec.
+      Deferred: tracked by the `road_sig` note below; resolution
+      owned by STEP 17.
 
 **`road_sig` / `from_road_sig` deferred to STEP 17.** STEP 15
 uses `RoadDesc` (`type RoadKey = RoadDesc`) as the map key

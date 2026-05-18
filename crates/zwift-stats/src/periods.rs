@@ -14,7 +14,7 @@ pub const GC_TICK_INTERVAL_SECS: f64 = 62.768;
 pub const GROUP_GAP_THRESHOLD_S: f64 = 2.0;
 pub const GROUP_GAP_THRESHOLD_NO_DRAFT_S: f64 = 0.8;
 pub const JACCARD_MATCH_THRESHOLD: f64 = 0.5;
-pub const NEARBY_MAX_GAP_S: f64 = 30.0;
+pub const NEARBY_MAX_GAP_S: f64 = 900.0; // 15 minutes, matches sauce4zwift stats.mjs
 
 // Road position encoding
 pub const ROAD_TIME_OFFSET: f64 = 5000.0;
