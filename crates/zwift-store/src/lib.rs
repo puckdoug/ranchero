@@ -4,11 +4,13 @@ pub mod athletes;
 pub mod kv;
 pub mod migrations;
 pub mod open;
+pub mod segments;
 
 pub use athletes::{AthletesDb, AthleteRecord};
 pub use kv::KvStore;
 pub use migrations::{migrate, Migration};
 pub use open::open;
+pub use segments::SegmentsDb;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
