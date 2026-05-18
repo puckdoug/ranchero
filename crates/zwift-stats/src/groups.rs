@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
 use crate::athlete::GroupMeta;
+use crate::periods::{GROUP_GAP_THRESHOLD_S, GROUP_GAP_THRESHOLD_NO_DRAFT_S, JACCARD_MATCH_THRESHOLD};
 
 #[derive(Debug, Clone)]
 pub struct NearbyEntry {
@@ -52,7 +53,7 @@ pub fn compute_groups(
     for i in 1..nearby.len() {
         let prev = &nearby[i - 1];
         let curr = &nearby[i];
-        let threshold = if prev.draft > 0.0 || curr.draft > 0.0 { 2.0 } else { 0.8 };
+        let threshold = if prev.draft > 0.0 || curr.draft > 0.0 { GROUP_GAP_THRESHOLD_S } else { GROUP_GAP_THRESHOLD_NO_DRAFT_S };
         if (curr.gap - prev.gap).abs() > threshold {
             clumps.push(std::mem::take(&mut current));
         }
@@ -133,7 +134,7 @@ pub fn compute_groups(
                 let inter = identity.intersection(&meta.identity_set).count() as f64;
                 let union = identity.union(&meta.identity_set).count() as f64;
                 let j = if union == 0.0 { 0.0 } else { inter / union };
-                if j > 0.5 { Some((*pid, j)) } else { None }
+                if j > JACCARD_MATCH_THRESHOLD { Some((*pid, j)) } else { None }
             })
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 

@@ -1581,7 +1581,7 @@ and rolling-window constants from earlier steps.
 
 **Remediation.**
 
-- [ ] **C-6.1** Add the Public-API constants from L835-849 to
+- [x] **C-6.1** Add the Public-API constants from L835-849 to
       `src/periods.rs`:
       `GROUP_GAP_THRESHOLD_S = 2.0`,
       `GROUP_GAP_THRESHOLD_NO_DRAFT_S = 0.8`,
@@ -1599,7 +1599,7 @@ and rolling-window constants from earlier steps.
       `W_PRIME_DEFAULT = 20000.0`,
       `ROAD_TIME_OFFSET = 5000.0`,
       `ROAD_TIME_SCALE = 1_000_000.0`.
-- [ ] **C-6.2** Replace every magic-number call site in
+- [x] **C-6.2** Replace every magic-number call site in
       `groups.rs`, `segments.rs`, `road_history.rs` with the
       named constant. Run the full suite; values are unchanged
       so everything must stay green.

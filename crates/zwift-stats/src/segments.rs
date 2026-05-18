@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use crate::{AthleteData, DataSlice, PlayerStateView};
+use crate::periods::{
+    ROAD_TIME_OFFSET, ROAD_TIME_SCALE,
+    SEGMENT_START_WINDOW_PCT, SEGMENT_START_WINDOW_METRES,
+    SEGMENT_LONG_MIN_METRES, SEGMENT_MID_MIN_METRES,
+    SEGMENT_COMPLETION_LONG, SEGMENT_COMPLETION_MID, SEGMENT_COMPLETION_SHORT,
+};
 
 #[derive(Debug, Clone)]
 pub struct Segment {
@@ -24,7 +30,7 @@ pub fn active_segment_check(
     env: &dyn SegmentLookup,
     now: f64,
 ) {
-    let rpct = (state.road_time() - 5000.0) / 1_000_000.0;
+    let rpct = (state.road_time() - ROAD_TIME_OFFSET) / ROAD_TIME_SCALE;
 
     // Collect segments to close: those whose road no longer matches, or that the rider exited.
     let to_close: Vec<u32> = ad.active_segments.keys()
@@ -59,7 +65,7 @@ pub fn active_segment_check(
         if seg_progress < 0.0 {
             continue;
         }
-        let open_threshold = f64::max(0.05, 150.0 / seg.distance);
+        let open_threshold = f64::max(SEGMENT_START_WINDOW_PCT, SEGMENT_START_WINDOW_METRES / seg.distance);
         if seg_progress < open_threshold {
             let mut slice = DataSlice::new_from(ad, now);
             slice.segment_id = Some(seg.id);
@@ -106,11 +112,11 @@ pub fn stop_segment(
 }
 
 fn completion_threshold(distance: f64) -> f64 {
-    if distance > 1000.0 {
-        0.90
-    } else if distance > 400.0 {
-        0.60
+    if distance > SEGMENT_LONG_MIN_METRES {
+        SEGMENT_COMPLETION_LONG
+    } else if distance > SEGMENT_MID_MIN_METRES {
+        SEGMENT_COMPLETION_MID
     } else {
-        0.25
+        SEGMENT_COMPLETION_SHORT
     }
 }

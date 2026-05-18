@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use crate::PlayerStateView;
+use crate::periods::{ROAD_TIME_OFFSET, ROAD_TIME_SCALE, BOUNDARY_ERROR_TERM};
 
 pub type RoadKey = RoadDesc;
 
@@ -54,7 +55,7 @@ impl RoadHistory {
     }
 
     pub fn record(&mut self, state: &dyn PlayerStateView, prev: Option<&dyn PlayerStateView>) {
-        let rpct = (state.road_time() - 5000.0) / 1_000_000.0;
+        let rpct = (state.road_time() - ROAD_TIME_OFFSET) / ROAD_TIME_SCALE;
         let road_desc = RoadDesc {
             road_id: state.road_id(),
             course_id: state.course_id(),
@@ -70,7 +71,7 @@ impl RoadHistory {
                     } else if let Some(last) = self.tier_a.last() {
                         let delta = rpct - last.rpct;
                         if delta < 0.0 {
-                            if delta < -0.01 {
+                            if delta < -BOUNDARY_ERROR_TERM {
                                 shift = true;
                             } else {
                                 self.tier_a.clear();
@@ -149,7 +150,7 @@ pub fn compare_road_positions(
     if let Some(p1_b_road) = &p1.b_road {
         if p1_b_road == p2_a_road {
             if let Some(p1_b_last) = p1.tier_b.last() {
-                if p1_b_last.rpct >= p2_a_last.rpct - 0.01 {
+                if p1_b_last.rpct >= p2_a_last.rpct - BOUNDARY_ERROR_TERM {
                     let distance = env.road_distance(p1_b_road, p2_a_last.rpct, p1_b_last.rpct);
                     let world_time = p1_b_last.world_time - p2_a_last.world_time;
                     return Some(RoadComparison { world_time, distance, reversed: false });
