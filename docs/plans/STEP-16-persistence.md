@@ -530,6 +530,66 @@ CREATE INDEX leaderboards_expires_at ON leaderboards (expires_at);
 - **Backups, vacuum scheduling, integrity checks.** SQLite's
   defaults are sufficient for v1.
 
+## As-built notes
+
+After the implementation landed, an audit compared the shipped
+code against the plan above. Four deviations were found; all
+sit on the `zwift-store` public-surface, none affect runtime
+behaviour. The functional acceptance criteria (clean-machine
+boot creates the three DBs, `ranchero status` reports their
+sizes, no SQLite handle is opened outside `zwift-store`, the
+dev-loop test set finishes in 0.29 s) all pass.
+
+Items below use the **AB-N** convention from STEP 15: each is
+either a fix to land before STEP 16 closes, or a deliberate
+amendment to the plan.
+
+- [ ] **AB-1** — `crates/zwift-store/src/paths.rs` was never
+      created. The plan §"Crate layout" lists it and
+      §"Public API surface" promises
+      `pub use paths::{STORE_FILENAME, ATHLETES_FILENAME,
+      SEGMENTS_FILENAME}`. The filenames are instead defined
+      as private `const` items in `src/daemon/stores.rs`
+      (`STORE_FILE`, `ATHLETES_FILE`, `SEGMENTS_FILE`) and
+      surfaced through `Stores::store_filename()` /
+      `athletes_filename()` / `segments_filename()`. **Fix:**
+      add `crates/zwift-store/src/paths.rs` with the three
+      `pub const` names matching the plan, re-export from
+      `lib.rs`, and replace the daemon-side accessors with
+      direct use of the constants.
+
+- [ ] **AB-2** — `StandardPragmas` struct was not built.
+      §"Public API surface" declares
+      `pub struct StandardPragmas` with an `apply(&Connection)`
+      method, alongside `open(path)`. The implementation
+      applies the pragma bundle inline inside `open()` and
+      exposes only `pub fn open(path)`. No caller in the
+      workspace would benefit from a free-standing
+      `apply()` (no code opens its own `Connection`), so the
+      struct was redundant in practice. **Fix:** amend the
+      plan §"Public API surface" to drop `StandardPragmas`
+      and document the pragma bundle as an implementation
+      detail of `open()`. No code change.
+
+- [ ] **AB-3** — `lib.rs` re-exports are a subset of the plan.
+      Missing from the actual `pub use` list:
+      `StandardPragmas` (covered by AB-2) and the `paths::*`
+      filename constants (covered by AB-1). Closing AB-1 and
+      AB-2 closes AB-3 automatically.
+
+- [ ] **AB-4** — The daemon does not stash a long-lived
+      `Stores` handle on a top-level daemon struct. The plan
+      §16.16-I says "stashes them on the daemon handle"; the
+      implementation passes a `Stores` value into
+      `run_daemon` so it lives for the daemon's run, then
+      drops it on shutdown. There is no `Daemon` /
+      `Subsystems` struct yet, because nothing else needs
+      one in STEP 16. **Fix:** amend the plan §16.16-I to
+      describe the actual lifetime (a `Stores` value owned
+      by `run_daemon`'s stack frame for the duration of the
+      event loop). A `Subsystems` struct can wait for the
+      step that introduces the second long-lived subsystem.
+
 ## Open verification points
 
 Items to confirm with a quick read before starting
