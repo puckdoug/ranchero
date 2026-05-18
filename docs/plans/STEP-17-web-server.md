@@ -99,20 +99,39 @@ fail, write the smallest code that makes it pass.
       pages_root = "..."` in the TOML surfaces as
       `server_pages_root: PathBuf` on `ResolvedConfig`;
       `RANCHERO_PAGES_ROOT` overrides the file value;
-      default is `"pages"` next to the binary's current
-      working directory.
-- [ ] **17.2-I** Add `pages_root: Option<PathBuf>` to
+      default is the `pages/` directory that sits one
+      level above the binary (i.e.
+      `current_exe()?.parent()?.join("../pages")`),
+      mirroring sauce4zwift's `WD/../pages`.
+- [ ] **17.2-I** Add `pages_root: Option<String>` to
       `ServerConfig` and plumb it through
       `ResolvedConfig` as `server_pages_root: PathBuf`.
-      Canonicalise it at resolve time so the daemon
-      refuses to start when the directory is missing.
-- [ ] **17.3-T** `tests/web_config.rs` (continued) —
+      When no value is configured, derive the default
+      from the binary location:
+      `std::env::current_exe()?.parent()?.join("../pages")`.
+      At daemon startup (before opening any sockets),
+      check that the directory exists with a stat call.
+      If it does not exist, write a plain message to
+      stderr and exit. Also log the error through the
+      normal logging path if the logger is already
+      running.
+- [x] **17.3-T** `tests/web_config.rs` (continued) —
       `[server] https_cert_dir = "/some/path"` surfaces
       as `server_https_cert_dir: PathBuf`; default is
       `"https"` next to the binary's working directory.
-- [ ] **17.3-I** Add `https_cert_dir: Option<PathBuf>`
+- [x] **17.3-I** Add `https_cert_dir: Option<PathBuf>`
       to `ServerConfig` and plumb it through
       `ResolvedConfig`.
+
+**As-built note:** The current 17.2 implementation
+stores whatever string is in the config as a
+`PathBuf`, defaulting to the literal `"pages"`. That
+is wrong on two counts: the default should come from
+the binary location, not the working directory, and
+there is no existence check. Both items are captured
+in the revised 17.2-T and 17.2-I entries above and
+must be fixed before 17.23-I (static file serving),
+which depends on the path being correct.
 
 ### HTTP routing
 

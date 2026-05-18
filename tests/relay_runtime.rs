@@ -48,7 +48,9 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
         // wiring downstream of the gate, so the helper sets a default
         // ID; tests that exercise the gate itself live in
         // `tests/course_gate.rs` and build their own `ResolvedConfig`.
-        watched_athlete_id: Some(54321),
+        watched_athlete_id:    Some(54321),
+        server_pages_root:     std::path::PathBuf::from("pages"),
+        server_https_cert_dir: std::path::PathBuf::from("https"),
     }
 }
 

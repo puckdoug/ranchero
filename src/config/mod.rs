@@ -151,6 +151,8 @@ pub struct ServerConfig {
     pub bind: String,
     pub port: u32,
     pub https: bool,
+    pub pages_root: Option<String>,
+    pub https_cert_dir: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -159,6 +161,8 @@ impl Default for ServerConfig {
             bind: "127.0.0.1".to_string(),
             port: 1080,
             https: false,
+            pages_root: None,
+            https_cert_dir: None,
         }
     }
 }
@@ -370,6 +374,8 @@ pub struct ResolvedConfig {
     pub server_bind: String,
     pub server_port: u16,
     pub server_https: bool,
+    pub server_pages_root: PathBuf,
+    pub server_https_cert_dir: PathBuf,
     pub log_level: Option<LogLevel>,
     pub log_file: PathBuf,
     pub pidfile: PathBuf,
@@ -474,6 +480,15 @@ impl ResolvedConfig {
             }
         };
 
+        let server_pages_root = env.get("RANCHERO_PAGES_ROOT")
+            .map(PathBuf::from)
+            .or_else(|| file.server.pages_root.as_deref().map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("pages"));
+
+        let server_https_cert_dir = file.server.https_cert_dir.as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("https"));
+
         Ok(ResolvedConfig {
             main_email,
             main_password,
@@ -482,6 +497,8 @@ impl ResolvedConfig {
             server_bind,
             server_port: server_port_raw as u16,
             server_https: file.server.https,
+            server_pages_root,
+            server_https_cert_dir,
             log_level: file.logging.level,
             log_file,
             pidfile,

@@ -3448,8 +3448,10 @@ mod tests {
                 auth_base: "http://127.0.0.1:1".into(),
                 api_base: "http://127.0.0.1:1".into(),
             },
-            relay_enabled: true,
-            watched_athlete_id: None,
+            relay_enabled:         true,
+            watched_athlete_id:    None,
+            server_pages_root:     std::path::PathBuf::from("pages"),
+            server_https_cert_dir: std::path::PathBuf::from("https"),
         }
     }
 

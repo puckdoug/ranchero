@@ -1149,9 +1149,11 @@ impl Model {
                 monitor: AccountEntry { email: Some(monitor_email).filter(|s| !s.is_empty()) },
             },
             server: ServerConfig {
-                bind:  self.fields.text(FieldId::ServerBind),
+                bind:          self.fields.text(FieldId::ServerBind),
                 port,
-                https: self.fields.server_https,
+                https:         self.fields.server_https,
+                pages_root:    None,
+                https_cert_dir: None,
             },
             logging: LoggingConfig {
                 level: log_level,

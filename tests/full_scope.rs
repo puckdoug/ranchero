@@ -105,8 +105,10 @@ fn lib_config(
             auth_base: UNROUTABLE_ZWIFT_BASE.to_string(),
             api_base:  UNROUTABLE_ZWIFT_BASE.to_string(),
         },
-        relay_enabled: true,
+        relay_enabled:         true,
         watched_athlete_id,
+        server_pages_root:     std::path::PathBuf::from("pages"),
+        server_https_cert_dir: std::path::PathBuf::from("https"),
     }
 }
 
