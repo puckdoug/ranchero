@@ -1400,3 +1400,259 @@ plan can confirm they are not expected here:
 - License header `// SPDX-License-Identifier: AGPL-3.0-only` at
   the top of every new `.rs` file (matches the rest of the
   workspace).
+
+## Concerns and remediation (audit, 2026-05-18)
+
+A post-15.27 audit comparing the implementation under
+`crates/zwift-stats/src/` against the spec sections above found
+that several checklist items are marked `[x]` but the underlying
+production behaviour is absent, stubbed, or diverges from the
+Public API surface. The 15.27 regression fixture does not
+exercise events, so it produced false confidence: the full test
+suite is green even though pieces of STEP 15 are not actually
+implemented. The items below remediate every gap; complete them
+in order, restoring TDD discipline (a failing test must precede
+each fix).
+
+### C-1 — Event detection is not implemented (15.14 / 15.15)
+
+**Evidence.** `src/events.rs` body is the single line
+`// Placeholder: will implement event detection and privacy in
+STEP 15.14-I`. The 13 "tests" in `tests/event_detection.rs` and
+`tests/event_privacy.rs` only assert post-construction state
+(`event_slices.len() == 0`, `event_start_pending == false`)
+and carry comments such as `(actual implementation verified in
+15.14-I)`. None of them call `apply_event_state` or observe a
+state transition. `EventStateOutcome` is not defined.
+Spec-mandated `DataSlice` fields `event_subgroup_id`,
+`start_event_distance`, `end_event_distance` are absent.
+The current `EventSubgroup` struct carries privacy flags
+(`hide_w_bal`, `hide_ftp`, `hide_the_hud`, `no_overlays`) but
+not the event-metadata fields the spec lists
+(`course_id`, `all_tags`, `end_ts`, `end_distance`).
+
+**Remediation.**
+
+- [ ] **C-1.0** Revert `15.14-T`, `15.14-I`, `15.15-T`,
+      `15.15-I` to `[ ]` in the Summary checklist. Delete the
+      placeholder bodies from `tests/event_detection.rs` and
+      `tests/event_privacy.rs` (keep the file skeletons).
+- [ ] **C-1.1** Add `EventStateOutcome` enum to `src/events.rs`
+      per Public API L1128–1133 (`Idle`, `Started { slice_id }`,
+      `StartPending`, `Ended { slice_id }`).
+- [ ] **C-1.2** Reshape `EventSubgroup` (in `src/athlete.rs`)
+      so it carries the spec-mandated event metadata
+      (`id`, `course_id`, `all_tags: Vec<String>`, `end_ts: u64`,
+      `end_distance: f64`). Privacy flag derivation moves into
+      `events.rs` via `all_tags` parsing (`stats.mjs:2985-2989`:
+      `hidewbal`, `hideftp`, `hidethehud`, `nooverlays`).
+- [ ] **C-1.3** Extend `DataSlice` (in `src/slice.rs`) with
+      `event_subgroup_id: Option<u32>`,
+      `start_event_distance: f64`,
+      `end_event_distance: Option<f64>`. Update
+      `DataSlice::new_from` to seed them from current state;
+      update `close` to stamp `end_event_distance`.
+- [ ] **C-1.4** Re-do `15.14-T` for real, mirroring the
+      assertions named in the original bullet
+      (`new_subgroup_opens_slice_when_state_time_present`,
+      `new_subgroup_defers_when_state_time_zero_and_sets_pending`,
+      `same_subgroup_does_not_reopen_slice`,
+      `falsy_subgroup_after_active_closes_slice`,
+      `auto_end_by_distance_closes_slice`,
+      `auto_end_by_wall_clock_closes_slice`,
+      `behavior_auto_reset_resets_athlete_data_on_event_start`,
+      `behavior_auto_lap_starts_a_lap_on_event_start_when_not_resetting`).
+      Each test calls `apply_event_state(...)` and inspects
+      slices / pending flags / return value (`EventStateOutcome`).
+      Confirm all eight fail.
+- [ ] **C-1.5** Implement `apply_event_state` per the original
+      `15.14-I` brief: `trigger_event_start` / `trigger_event_end`,
+      `event_start_pending`, return `EventStateOutcome`. Mirrors
+      `stats.mjs:2880-2982`.
+- [ ] **C-1.6** Re-do `15.15-T` for real (the five named tests)
+      and implement the four-tag rule from `stats.mjs:2985-2989`.
+      Re-mark `15.14-T/I` and `15.15-T/I` as `[x]` only after
+      both turn green.
+- [ ] **C-1.7** Extend `tests/step15_regression.rs` to drive an
+      event open / close inside the existing 60-tick window
+      (introduce a `subgroup_id` column in the fixture, or a
+      sibling fixture `step15_events_session.json`). Regenerate
+      `step15_expected.json` so future regressions catch event
+      drift.
+
+### C-2 — `apply_gap` lacks the estimation fallback (15.21)
+
+**Evidence.** `src/gap.rs:13-16` sets `gap = None, is_gap_est =
+true` when `compare_road_positions` fails. Spec 15.21-I
+mandates an exponential-weighted-average fallback:
+`exp_weighted_avg(10, max(10, watching.speed))`. No test in
+`tests/gap.rs` asserts an estimated value, so the omission is
+invisible to CI.
+
+**Remediation.**
+
+- [ ] **C-2.1** Add `gap_est: ExpWeightedAvg` per athlete (the
+      sauce4zwift parity is one EMA per watched athlete, seeded
+      lazily). Decide whether it lives on `AthleteData` (likely)
+      or inside a helper struct owned by `apply_gap`. Record
+      the decision inline.
+- [ ] **C-2.2** Add `tests/gap.rs::estimated_gap_uses_ewma_of_watching_speed`
+      and `estimated_gap_updates_on_subsequent_failures`.
+      Both fail.
+- [ ] **C-2.3** Implement the fallback in `apply_gap`:
+      on `None`, derive
+      `est = gap_distance_running / max(10, watching.speed)`
+      with the EMA smoothing the divisor. Set `gap = Some(est)`
+      and `is_gap_est = true`. Tests pass.
+
+### C-3 — `PlayerStateView` trait is incomplete (15.12)
+
+**Evidence.** Spec lists 17 trait methods (Public API
+L1273-1296). Current trait in `src/athlete.rs:28-41` has 11,
+missing `speed`, `power`, `heartrate`, `cadence`, `draft`,
+`distance`, `altitude`, and the convenience `latlng`. STEP 17
+intends to implement this trait on `zwift-proto::PlayerState`;
+without the energy / motion accessors, the trait cannot replace
+the existing call sites that read those fields directly off
+`MostRecentState`.
+
+**Remediation.**
+
+- [ ] **C-3.1** Add the seven missing methods to
+      `PlayerStateView`, plus `latlng(&self) -> LatLng`.
+      Implement them on `MostRecentState`.
+- [ ] **C-3.2** Extend
+      `tests/player_state_view.rs::view_trait_exposes_road_event_and_group_fields`
+      (or add a new test) to assert each of the new methods
+      compiles and returns the value passed at construction.
+- [ ] **C-3.3** Audit existing call sites that take
+      `&MostRecentState` for the new fields and switch them to
+      `&dyn PlayerStateView` where it does not lose ergonomics
+      (do not refactor STEP 14 code; just leave a note for
+      STEP 17 if call sites would benefit).
+
+### C-4 — `Group::length_distance` missing (15.23)
+
+**Evidence.** Spec L1173 mandates the field; the JS-bug-fix
+called out in 15.23-I explicitly applies to *both*
+`length_time` and `length_distance` on the last group.
+`src/groups.rs:20-31` defines `Group` with only `length_time`.
+
+**Remediation.**
+
+- [ ] **C-4.1** Add `pub length_distance: f64` to `Group`.
+- [ ] **C-4.2** Decide the unit and derivation. The simplest
+      port-faithful answer is
+      `length_distance = length_time * speed` where `speed` is
+      the group's median speed (the JS uses the watching
+      athlete's `speed`; record whichever you choose).
+- [ ] **C-4.3** Add `tests/groups.rs::last_group_length_distance_is_nonzero_and_matches_time_times_speed`.
+      Fail, then implement, then green.
+- [ ] **C-4.4** Regenerate `step15_expected.json` after this
+      lands (new field flows through the regression output).
+
+### C-5 — `AutoLapConfig` shape diverges from spec (15.17)
+
+**Evidence.** Spec L1085-1089: `metric: AutoLapMetric,
+threshold: f64`. Code: `distance_interval: Option<f64>,
+time_interval: Option<f64>`. Functionally equivalent today but
+the API divergence will bite STEP 17 wiring.
+
+**Remediation.**
+
+- [ ] **C-5.1** Introduce `pub enum AutoLapMetric { Distance,
+      Time }` in `src/laps.rs`.
+- [ ] **C-5.2** Replace `AutoLapConfig` fields with `pub
+      metric: AutoLapMetric, pub threshold: f64`. Update
+      `auto_lap_check` to dispatch on `metric`. Update the four
+      `15.17-T` tests to construct `AutoLapConfig` the new way.
+      Tests stay green after the swap (no behavioural change).
+
+### C-6 — Magic numbers not factored into `periods` constants
+
+**Evidence.** `src/groups.rs:52` inlines `2.0` / `0.8`;
+groups.rs Jaccard threshold inlines `0.5`; `src/road_history.rs`
+inlines `0.01` (boundary tolerance); `src/segments.rs:62`
+inlines `0.05` / `150.0`; segments.rs:109-114 inlines
+`1000.0` / `400.0` / `0.90` / `0.60` / `0.25`; both
+road_history.rs and segments.rs inline `5000.0` / `1_000_000.0`
+for the rpct transform. `src/periods.rs` carries only the GC
+and rolling-window constants from earlier steps.
+
+**Remediation.**
+
+- [ ] **C-6.1** Add the Public-API constants from L835-849 to
+      `src/periods.rs`:
+      `GROUP_GAP_THRESHOLD_S = 2.0`,
+      `GROUP_GAP_THRESHOLD_NO_DRAFT_S = 0.8`,
+      `JACCARD_MATCH_THRESHOLD = 0.5`,
+      `NEARBY_MAX_GAP_S = 30.0` (verify against
+      `stats.mjs`; pick the JS value),
+      `BOUNDARY_ERROR_TERM = 0.01`,
+      `SEGMENT_START_WINDOW_PCT = 0.05`,
+      `SEGMENT_START_WINDOW_METRES = 150.0`,
+      `SEGMENT_COMPLETION_LONG = 0.90`,
+      `SEGMENT_COMPLETION_MID = 0.60`,
+      `SEGMENT_COMPLETION_SHORT = 0.25`,
+      `SEGMENT_LONG_MIN_METRES = 1000.0`,
+      `SEGMENT_MID_MIN_METRES = 400.0`,
+      `W_PRIME_DEFAULT = 20000.0`,
+      `ROAD_TIME_OFFSET = 5000.0`,
+      `ROAD_TIME_SCALE = 1_000_000.0`.
+- [ ] **C-6.2** Replace every magic-number call site in
+      `groups.rs`, `segments.rs`, `road_history.rs` with the
+      named constant. Run the full suite; values are unchanged
+      so everything must stay green.
+
+### C-7 — Missing accessors on accumulators
+
+**Evidence.** Spec mandates `ZonesAccumulator::ftp()`,
+`WBalAccumulator::cp()`, `WBalAccumulator::w_prime()`. The
+fields are private, so nothing outside the module can verify
+configuration.
+
+**Remediation.**
+
+- [ ] **C-7.1** Add `pub fn ftp(&self) -> Option<f64>` to
+      `ZonesAccumulator`. Add test
+      `tests/zones_accumulator.rs::ftp_accessor_returns_configured_value_or_none`.
+- [ ] **C-7.2** Add `pub fn cp(&self) -> Option<f64>` and
+      `pub fn w_prime(&self) -> Option<f64>` to
+      `WBalAccumulator`. Add tests in
+      `tests/wbal_unconfigured.rs`
+      (`cp_and_w_prime_accessors_return_none_when_unconfigured`,
+      `cp_and_w_prime_accessors_return_configured_values`).
+
+### C-8 — `road_sig` / `from_road_sig` not implemented
+
+**Evidence.** Spec L1031-1032 declares two free functions for
+packing `(course_id, road_id, reverse)` into a `u64`. Code uses
+a plain `RoadDesc` struct (`type RoadKey = RoadDesc`); no sig
+encoding exists.
+
+**Severity / scheduling.** Low: no STEP 15 call site needs the
+u64 form; the struct-keyed approach is functionally complete.
+Defer the sig encoding to STEP 17 wiring if it actually needs
+a packed map key. Action: record this as deferred in the
+as-built notes; do **not** add a no-op implementation now.
+
+- [ ] **C-8.1** Add a one-line note to the as-built section
+      (or the STEP 17 plan when it lands) recording the
+      deferral and the rationale.
+
+### Regression discipline
+
+The audit revealed that the 15.27 regression fixture covered
+only the subsystems the test author thought to wire in. To
+prevent a recurrence:
+
+- [ ] **C-R.1** After each of C-1 through C-4 lands, extend
+      `step15_session.json` (or add a sibling fixture) so the
+      regression exercises the newly-restored code path, then
+      regenerate `step15_expected.json`.
+- [ ] **C-R.2** Add a final acceptance gate: every `[x]` `-I`
+      bullet in the Summary checklist must have at least one
+      assertion in `tests/step15_regression.rs` (or a sibling
+      regression file) that would fail if the implementation
+      regressed to a stub. Audit and fill any remaining gaps
+      before declaring STEP 15 closed.
