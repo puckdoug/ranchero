@@ -139,13 +139,13 @@ it fail, write the smallest code to pass.
 
 ### Segments cache (`segments.sqlite`)
 
-- [ ] **16.12-T** `tests/segments_schema.rs` — fresh DB has
+- [x] **16.12-T** `tests/segments_schema.rs` — fresh DB has
       the `leaderboards` table (segment_id, payload BLOB,
       inserted_at, expires_at) with primary key on
       `segment_id` and an index on `expires_at`.
 - [ ] **16.12-I** Migration 1 of `segments.sqlite` creates
       the table per *Schema definitions*.
-- [ ] **16.13-T** `tests/segments_put_get.rs` — `put` inserts
+- [x] **16.13-T** `tests/segments_put_get.rs` — `put` inserts
       or overwrites a `(segment_id, payload, ttl)` entry,
       `get(segment_id, now)` returns the payload if
       `now < expires_at` and `None` otherwise (does not
@@ -154,13 +154,13 @@ it fail, write the smallest code to pass.
       ttl: Duration, now: SystemTime)`,
       `SegmentsDb::get(&self, segment_id, now) ->
       Result<Option<Vec<u8>>>`.
-- [ ] **16.14-T** `tests/segments_evict.rs` —
+- [x] **16.14-T** `tests/segments_evict.rs` —
       `evict_expired(now)` deletes every row with
       `expires_at <= now` and returns the count; entries with
       `expires_at > now` remain.
 - [ ] **16.14-I** `SegmentsDb::evict_expired(&self, now) ->
       Result<usize>`.
-- [ ] **16.15-T** `tests/segments_evict_idempotent.rs` —
+- [x] **16.15-T** `tests/segments_evict_idempotent.rs` —
       calling `evict_expired` repeatedly on the same DB is
       idempotent (returns 0 after the first sweep until new
       entries expire).
