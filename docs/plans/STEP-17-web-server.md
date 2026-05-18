@@ -95,7 +95,7 @@ fail, write the smallest code that makes it pass.
 
 ### Configuration surface
 
-- [ ] **17.2-T** `tests/web_config.rs` — `[server]
+- [x] **17.2-T** `tests/web_config.rs` — `[server]
       pages_root = "..."` in the TOML surfaces as
       `server_pages_root: PathBuf` on `ResolvedConfig`;
       `RANCHERO_PAGES_ROOT` overrides the file value;

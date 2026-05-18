@@ -73,11 +73,19 @@ fn pages_root_env_overrides_file() {
 }
 
 /// When neither TOML nor env sets `pages_root`, the resolved value is
-/// `"pages"` (a path relative to the binary's working directory).
+/// derived from the binary location: one level above the directory
+/// that contains the binary, in a `pages/` subdirectory. This mirrors
+/// sauce4zwift's `WD/../pages` where `WD` is the directory containing
+/// the main script.
 #[test]
-fn pages_root_default_is_pages() {
+fn pages_root_default_is_relative_to_binary() {
+    let expected = std::env::current_exe()
+        .expect("current_exe must be available")
+        .parent()
+        .expect("binary must have a parent directory")
+        .join("../pages");
     let r = resolve(None, empty_env());
-    assert_eq!(r.server_pages_root, PathBuf::from("pages"));
+    assert_eq!(r.server_pages_root, expected);
 }
 
 // ---------------------------------------------------------------------------
