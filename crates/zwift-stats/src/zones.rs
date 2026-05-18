@@ -125,6 +125,10 @@ impl ZonesAccumulator {
         }
     }
 
+    pub fn ftp(&self) -> Option<f64> {
+        self.ftp
+    }
+
     pub fn configure(&mut self, ftp: f64, zones: Vec<Zone>) {
         self.ftp = Some(ftp);
         self.zones = zones;

@@ -45,3 +45,19 @@ fn accumulator_clone_continue_carries_w_bal() {
     assert!(wbal_source_after > wbal_source, "Source should recover");
     assert!(wbal_clone_after < wbal_source, "Clone should deplete");
 }
+
+// C-7.2: cp and w_prime accessors
+#[test]
+fn cp_and_w_prime_accessors_return_none_when_unconfigured() {
+    let acc = WBalAccumulator::new();
+    assert_eq!(acc.cp(), None, "cp must be None before configure");
+    assert_eq!(acc.w_prime(), None, "w_prime must be None before configure");
+}
+
+#[test]
+fn cp_and_w_prime_accessors_return_configured_values() {
+    let mut acc = WBalAccumulator::new();
+    acc.configure(220.0, 18000.0);
+    assert_eq!(acc.cp(), Some(220.0), "cp must return the configured value");
+    assert_eq!(acc.w_prime(), Some(18000.0), "w_prime must return the configured value");
+}

@@ -164,3 +164,13 @@ fn clone_reset_starts_fresh() {
     let value_after_accumulate = acc_clone.value();
     assert_eq!(value_after_accumulate[2].time, 1.0, "clone_reset should accumulate normally");
 }
+
+// 15.17-T / C-7.1: ftp accessor
+#[test]
+fn ftp_accessor_returns_configured_value_or_none() {
+    let mut acc = ZonesAccumulator::new();
+    assert_eq!(acc.ftp(), None, "ftp must be None before configure");
+
+    acc.configure(280.0, coggan_zones(280.0));
+    assert_eq!(acc.ftp(), Some(280.0), "ftp must return the configured value");
+}

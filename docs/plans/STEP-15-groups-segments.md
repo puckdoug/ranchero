@@ -1613,10 +1613,10 @@ configuration.
 
 **Remediation.**
 
-- [ ] **C-7.1** Add `pub fn ftp(&self) -> Option<f64>` to
+- [x] **C-7.1** Add `pub fn ftp(&self) -> Option<f64>` to
       `ZonesAccumulator`. Add test
       `tests/zones_accumulator.rs::ftp_accessor_returns_configured_value_or_none`.
-- [ ] **C-7.2** Add `pub fn cp(&self) -> Option<f64>` and
+- [x] **C-7.2** Add `pub fn cp(&self) -> Option<f64>` and
       `pub fn w_prime(&self) -> Option<f64>` to
       `WBalAccumulator`. Add tests in
       `tests/wbal_unconfigured.rs`

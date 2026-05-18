@@ -20,6 +20,14 @@ impl WBalAccumulator {
         }
     }
 
+    pub fn cp(&self) -> Option<f64> {
+        self.cp
+    }
+
+    pub fn w_prime(&self) -> Option<f64> {
+        self.w_prime
+    }
+
     pub fn configure(&mut self, cp: f64, w_prime: f64) {
         self.cp = Some(cp);
         self.w_prime = Some(w_prime);
