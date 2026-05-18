@@ -20,6 +20,7 @@ fn make_prior(id: u32, members: &[u32]) -> GroupMeta {
     GroupMeta {
         id,
         identity_set: members.iter().copied().collect::<HashSet<u32>>(),
+        accessed: 0.0,
     }
 }
 

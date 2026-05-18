@@ -2,7 +2,7 @@
 
 //! [`AthleteData`] and [`AthleteRegistry`] — per-athlete state and garbage collection.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::{
     DataBucket, DataSlice, ExpWeightedAvg,
     wbal::WBalAccumulator, zones::ZonesAccumulator,
@@ -231,10 +231,11 @@ impl AthleteData {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct GroupMeta {
     pub id: u32,
     pub accessed: f64,
+    pub identity_set: HashSet<u32>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -295,7 +296,7 @@ impl AthleteRegistry {
         self.groups
             .entry(id)
             .and_modify(|gm| gm.accessed = now)
-            .or_insert(GroupMeta { id, accessed: now });
+            .or_insert(GroupMeta { id, accessed: now, identity_set: HashSet::new() });
     }
 
     pub fn group(&self, id: u32) -> Option<&GroupMeta> {

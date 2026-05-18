@@ -90,7 +90,8 @@ fn gap_distance_signed_by_direction() {
         record_road(&mut ad.road_history, 1, 10, false, 0.5, 95_000.0);
         apply_gap(&mut ad, &watching, &env);
         // distance = |0.6 − 0.5| × 1000 = 100; reversed=false → +100
-        assert_eq!(ad.gap_distance, Some(100.0));
+        let d = ad.gap_distance.expect("gap_distance should be Some");
+        assert!((d - 100.0).abs() < 1e-6, "expected +100.0, got {d}");
     }
 
     // reversed=true: target at 0.6 is ahead of watching at 0.5 → negative distance
@@ -101,7 +102,8 @@ fn gap_distance_signed_by_direction() {
         record_road(&mut ad.road_history, 1, 10, false, 0.6, 95_000.0);
         apply_gap(&mut ad, &watching, &env);
         // distance = 100; reversed=true → −100
-        assert_eq!(ad.gap_distance, Some(-100.0));
+        let d = ad.gap_distance.expect("gap_distance should be Some");
+        assert!((d - (-100.0)).abs() < 1e-6, "expected -100.0, got {d}");
     }
 }
 

@@ -2,6 +2,18 @@
 
 use crate::PlayerStateView;
 
+pub type RoadKey = RoadDesc;
+
+pub trait RoadGeometry {
+    fn road_distance(&self, road: &RoadKey, start_pct: f64, end_pct: f64) -> f64;
+}
+
+pub struct RoadComparison {
+    pub world_time: f64,
+    pub distance: f64,
+    pub reversed: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct RoadPoint {
     pub rpct: f64,
@@ -111,4 +123,53 @@ impl Default for RoadHistory {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub fn compare_road_positions(
+    p1: &RoadHistory,
+    p2: &RoadHistory,
+    env: &dyn RoadGeometry,
+) -> Option<RoadComparison> {
+    let p2_a_road = p2.a_road.as_ref()?;
+    let p2_a_last = p2.tier_a.last()?;
+
+    // Same current road — direct comparison.
+    if let Some(p1_a_road) = &p1.a_road {
+        if p1_a_road == p2_a_road {
+            if let Some(p1_a_last) = p1.tier_a.last() {
+                let reversed = p1_a_last.rpct < p2_a_last.rpct;
+                let distance = env.road_distance(p1_a_road, p2_a_last.rpct, p1_a_last.rpct);
+                let world_time = p1_a_last.world_time - p2_a_last.world_time;
+                return Some(RoadComparison { world_time, distance, reversed });
+            }
+        }
+    }
+
+    // p1 left p2's current road one road ago (tier B).
+    if let Some(p1_b_road) = &p1.b_road {
+        if p1_b_road == p2_a_road {
+            if let Some(p1_b_last) = p1.tier_b.last() {
+                if p1_b_last.rpct >= p2_a_last.rpct - 0.01 {
+                    let distance = env.road_distance(p1_b_road, p2_a_last.rpct, p1_b_last.rpct);
+                    let world_time = p1_b_last.world_time - p2_a_last.world_time;
+                    return Some(RoadComparison { world_time, distance, reversed: false });
+                }
+            }
+        }
+    }
+
+    // p1 left p2's current road two roads ago (tier C).
+    if let Some(p1_c_road) = &p1.c_road {
+        if p1_c_road == p2_a_road {
+            if let Some(p1_c_last) = p1.tier_c.last() {
+                if p1_c_last.rpct >= p2_a_last.rpct - 0.01 {
+                    let distance = env.road_distance(p1_c_road, p2_a_last.rpct, p1_c_last.rpct);
+                    let world_time = p1_c_last.world_time - p2_a_last.world_time;
+                    return Some(RoadComparison { world_time, distance, reversed: false });
+                }
+            }
+        }
+    }
+
+    None
 }

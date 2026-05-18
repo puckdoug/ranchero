@@ -293,7 +293,7 @@ Gap computation (`compare_road_positions`):
       `cross_tier_three_back_resolves_via_c_road`,
       `no_connection_returns_none`,
       `boundary_error_term_001_admits_near_matches`.
-- [ ] **15.20-I** Implement `compare_road_positions(p1, p2, env)
+- [x] **15.20-I** Implement `compare_road_positions(p1, p2, env)
   -> Option<RoadComparison>` in `src/road_history.rs`.
       `RoadGeometry` is a trait with `road_distance(road,
   start_pct, end_pct) -> f64` (test stub returns straight-line
@@ -305,7 +305,7 @@ Gap computation (`compare_road_positions`):
       `gap_distance_signed_by_direction`,
       `is_gap_est_false_when_world_time_match`,
       `is_gap_est_true_when_world_time_missing`.
-- [ ] **15.21-I** Add `apply_gap(ad, watching, env)` that fills
+- [x] **15.21-I** Add `apply_gap(ad, watching, env)` that fills
       the three `gap` / `gap_distance` / `is_gap_est` fields.
       Estimation fallback via
       `exp_weighted_avg(10, max(10, watching.speed))` is included.
@@ -317,7 +317,7 @@ Group classification:
       `gap_above_2_seconds_splits_group`,
       `gap_above_0_8_without_draft_splits_group`,
       `gap_at_or_below_0_8_with_no_draft_keeps_group`.
-- [ ] **15.22-I** Implement `compute_groups(nearby, watching_idx,
+- [x] **15.22-I** Implement `compute_groups(nearby, watching_idx,
   prior_groups, next_id, now) -> Vec<Group>` in
       `src/groups.rs`. First pass: clump by gap thresholds
       (2.0 s, or 0.8 s when `draft == 0`).
@@ -328,7 +328,7 @@ Group classification:
       `group_gap_is_zero_for_watching_group`,
       `group_gap_is_head_for_group_ahead_tail_for_group_behind`,
       `last_group_length_uses_head_and_tail_consistently_not_zero`.
-- [ ] **15.23-I** Second pass of `compute_groups`: aggregate
+- [x] **15.23-I** Second pass of `compute_groups`: aggregate
       `weight / power / draft / heartrate / speed`, fill per-group
       `gap` and `is_gap_est` from the edge nearest watching.
       Compute `length_time` / `length_distance` consistently for
@@ -340,7 +340,7 @@ Group classification:
       `jaccard_exactly_0_5_creates_fresh_meta_strict_threshold`,
       `members_who_left_get_group_id_cleared_only_if_still_pointing_to_meta`,
       `prior_meta_used_once_per_tick_greedy_first_wins`.
-- [ ] **15.24-I** Third pass: build `identity_set: HashSet<u32>`
+- [x] **15.24-I** Third pass: build `identity_set: HashSet<u32>`
       per multi-rider group, scan `prior_groups` for best Jaccard
       (skipping already-used metas), reuse if `> 0.5`, else mint a
       fresh id via `*next_id += 1`. Update outgoing

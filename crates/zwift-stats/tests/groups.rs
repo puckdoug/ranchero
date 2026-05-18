@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use std::collections::HashMap;
-use zwift_stats::{compute_groups, NearbyEntry, Group, GroupMeta};
+use zwift_stats::{compute_groups, NearbyEntry, GroupMeta};
 
 fn make_entry(athlete_id: u32, gap: f64, draft: f64) -> NearbyEntry {
     NearbyEntry {
@@ -195,9 +195,10 @@ fn group_gap_is_zero_for_watching_group() {
 #[test]
 fn group_gap_is_head_for_ahead_and_tail_for_behind() {
     // watching at 0.0; ahead group [5.0, 5.5] → gap=5.0; behind group [−4.0, −3.0] → gap=−4.0
+    // Riders 10 and 11 use draft=50 so their 1.0 s delta stays below the 2.0 s threshold.
     let nearby = vec![
-        make_entry(10, -4.0, 0.0),
-        make_entry(11, -3.0, 0.0),
+        NearbyEntry { athlete_id: 10, gap: -4.0, draft: 50.0, weight: None, power: 0.0, heartrate: None, speed: 10.0, is_gap_est: false },
+        NearbyEntry { athlete_id: 11, gap: -3.0, draft: 50.0, weight: None, power: 0.0, heartrate: None, speed: 10.0, is_gap_est: false },
         make_entry(1,   0.0, 0.0),  // watching (index 2)
         make_entry(2,   5.0, 0.0),
         make_entry(3,   5.5, 0.0),
@@ -228,8 +229,8 @@ fn group_length_time_is_span_between_head_and_tail() {
     let mut next_id = 1u32;
 
     // watching_idx=0; with no draft and gap > 0.8, watching is alone
-    // riders 2 and 3 are split too: gap between them is 1.5 > 0.8
-    // make them form one group by using draft
+    // riders 2 and 3 would split too (delta 1.5 > 0.8), so use draft=50 to keep them together
+    let _nearby = nearby; // shadow to satisfy unused-variable lint
     let nearby = vec![
         make_entry(1,  0.0, 0.0),   // watching alone
         NearbyEntry { athlete_id: 2, gap: 10.0, draft: 50.0, weight: None, power: 0.0, heartrate: None, speed: 10.0, is_gap_est: false },
