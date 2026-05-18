@@ -241,3 +241,28 @@ fn group_length_time_is_span_between_head_and_tail() {
     let ahead = groups.iter().find(|g| g.gap > 0.0).expect("ahead group");
     assert!((ahead.length_time - 1.5).abs() < 1e-9, "length_time = 11.5 - 10.0 = 1.5, got {}", ahead.length_time);
 }
+
+// 15.23-T: length_distance = length_time × median speed of the group
+#[test]
+fn last_group_length_distance_is_nonzero_and_matches_time_times_speed() {
+    // Two riders in the ahead group at gaps 10.0 and 11.5 s, both at speed 20.0 m/s.
+    // length_time = 1.5 s, median speed = 20.0 m/s → length_distance = 30.0 m.
+    let nearby = vec![
+        make_entry(1, 0.0, 0.0),   // watching, alone (gap > 0.8 s to next)
+        NearbyEntry { athlete_id: 2, gap: 10.0, draft: 50.0, weight: None, power: 0.0, heartrate: None, speed: 20.0, is_gap_est: false },
+        NearbyEntry { athlete_id: 3, gap: 11.5, draft: 50.0, weight: None, power: 0.0, heartrate: None, speed: 20.0, is_gap_est: false },
+    ];
+    let mut prior_groups: HashMap<u32, GroupMeta> = HashMap::new();
+    let mut next_id = 1u32;
+
+    let groups = compute_groups(&nearby, 0, &mut prior_groups, &mut next_id, 0.0);
+
+    let ahead = groups.iter().find(|g| g.gap > 0.0).expect("ahead group");
+    let expected = ahead.length_time * ahead.speed;
+    assert!(
+        (ahead.length_distance - expected).abs() < 1e-9,
+        "length_distance = length_time × speed = {expected}, got {}",
+        ahead.length_distance,
+    );
+    assert!(ahead.length_distance > 0.0, "length_distance must be nonzero for a multi-rider group");
+}

@@ -22,6 +22,9 @@ pub struct Group {
     pub members: Vec<u32>,
     pub gap: f64,
     pub length_time: f64,
+    // length_distance = length_time × group median speed (port of JS groups.mjs approach;
+    // median speed chosen over watching athlete's speed for self-contained derivation).
+    pub length_distance: f64,
     pub weight: Option<f64>,
     pub power: f64,
     pub draft: f64,
@@ -103,6 +106,7 @@ pub fn compute_groups(
             members,
             gap,
             length_time,
+            length_distance: length_time * speed,
             weight,
             power,
             draft,

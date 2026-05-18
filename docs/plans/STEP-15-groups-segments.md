@@ -1540,15 +1540,15 @@ called out in 15.23-I explicitly applies to *both*
 
 **Remediation.**
 
-- [ ] **C-4.1** Add `pub length_distance: f64` to `Group`.
-- [ ] **C-4.2** Decide the unit and derivation. The simplest
+- [x] **C-4.1** Add `pub length_distance: f64` to `Group`.
+- [x] **C-4.2** Decide the unit and derivation. The simplest
       port-faithful answer is
       `length_distance = length_time * speed` where `speed` is
       the group's median speed (the JS uses the watching
       athlete's `speed`; record whichever you choose).
-- [ ] **C-4.3** Add `tests/groups.rs::last_group_length_distance_is_nonzero_and_matches_time_times_speed`.
+- [x] **C-4.3** Add `tests/groups.rs::last_group_length_distance_is_nonzero_and_matches_time_times_speed`.
       Fail, then implement, then green.
-- [ ] **C-4.4** Regenerate `step15_expected.json` after this
+- [x] **C-4.4** Regenerate `step15_expected.json` after this
       lands (new field flows through the regression output).
 
 ### C-5 — `AutoLapConfig` shape diverges from spec (15.17)
