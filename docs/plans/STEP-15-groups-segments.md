@@ -218,7 +218,7 @@ Event detection and privacy:
       `auto_end_by_wall_clock_closes_slice`,
       `behavior_auto_reset_resets_athlete_data_on_event_start`,
       `behavior_auto_lap_starts_a_lap_on_event_start_when_not_resetting`.
-- [x] **15.14-I** Implement `apply_event_state(ad, state,
+- [ ] **15.14-I** Implement `apply_event_state(ad, state,
   self_athlete_id, sg_lookup, behavior, now, wall_clock_ms)`
       in `src/events.rs`. `sg_lookup: &HashMap<u32,
   EventSubgroup>` is provided by the caller (the daemon,
@@ -236,7 +236,7 @@ Event detection and privacy:
       `non_self_hideftp_sets_hide_ftp`,
       `hidethehud_sets_disabled_by_event`,
       `nooverlays_sets_disabled_by_event`.
-- [x] **15.15-I** Apply the four tag rules from
+- [ ] **15.15-I** Apply the four tag rules from
       `stats.mjs:2985-2989`: skip privacy assignment when
       `state.athlete_id == self_athlete_id`; otherwise stamp
       `event_privacy.hide_w_bal`, `event_privacy.hide_ftp`,
