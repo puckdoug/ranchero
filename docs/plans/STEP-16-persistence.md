@@ -115,22 +115,22 @@ it fail, write the smallest code to pass.
 
 ### Athletes cache (`athletes.sqlite`)
 
-- [ ] **16.8-T** `tests/athletes_schema.rs` — fresh DB has
+- [x] **16.8-T** `tests/athletes_schema.rs` — fresh DB has
       the `athletes` table with the documented columns,
       primary key on `id`, and an index on `last_seen DESC`.
 - [ ] **16.8-I** Migration 1 of `athletes.sqlite` creates the
       table per the schema in *Schema definitions* below.
-- [ ] **16.9-T** `tests/athletes_upsert.rs` — `upsert(record)`
+- [x] **16.9-T** `tests/athletes_upsert.rs` — `upsert(record)`
       inserts a new row and replaces an existing row by `id`,
       preserving all columns the caller filled and leaving
       unset optional columns as `NULL`.
 - [ ] **16.9-I** `AthletesDb::upsert(&self, &AthleteRecord)`
       using `INSERT … ON CONFLICT(id) DO UPDATE SET …`.
-- [ ] **16.10-T** `tests/athletes_touch.rs` — `touch(id, ts)`
+- [x] **16.10-T** `tests/athletes_touch.rs` — `touch(id, ts)`
       updates `last_seen` without rewriting any other column;
       missing row → `false`, present row → `true`.
 - [ ] **16.10-I** `AthletesDb::touch(&self, id, last_seen)`.
-- [ ] **16.11-T** `tests/athletes_get.rs` — `get(id)` returns
+- [x] **16.11-T** `tests/athletes_get.rs` — `get(id)` returns
       a populated record for a present row, `None` for
       missing, and round-trips `badges` as JSON without
       corruption.
