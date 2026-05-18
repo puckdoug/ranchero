@@ -1646,11 +1646,11 @@ The audit revealed that the 15.27 regression fixture covered
 only the subsystems the test author thought to wire in. To
 prevent a recurrence:
 
-- [ ] **C-R.1** After each of C-1 through C-4 lands, extend
+- [x] **C-R.1** After each of C-1 through C-4 lands, extend
       `step15_session.json` (or add a sibling fixture) so the
       regression exercises the newly-restored code path, then
       regenerate `step15_expected.json`.
-- [ ] **C-R.2** Add a final acceptance gate: every `[x]` `-I`
+- [x] **C-R.2** Add a final acceptance gate: every `[x]` `-I`
       bullet in the Summary checklist must have at least one
       assertion in `tests/step15_regression.rs` (or a sibling
       regression file) that would fail if the implementation
