@@ -1491,15 +1491,15 @@ invisible to CI.
 
 **Remediation.**
 
-- [ ] **C-2.1** Add `gap_est: ExpWeightedAvg` per athlete (the
+- [x] **C-2.1** Add `gap_est: ExpWeightedAvg` per athlete (the
       sauce4zwift parity is one EMA per watched athlete, seeded
       lazily). Decide whether it lives on `AthleteData` (likely)
       or inside a helper struct owned by `apply_gap`. Record
       the decision inline.
-- [ ] **C-2.2** Add `tests/gap.rs::estimated_gap_uses_ewma_of_watching_speed`
+- [x] **C-2.2** Add `tests/gap.rs::estimated_gap_uses_ewma_of_watching_speed`
       and `estimated_gap_updates_on_subsequent_failures`.
       Both fail.
-- [ ] **C-2.3** Implement the fallback in `apply_gap`:
+- [x] **C-2.3** Implement the fallback in `apply_gap`:
       on `None`, derive
       `est = gap_distance_running / max(10, watching.speed)`
       with the EMA smoothing the divisor. Set `gap = Some(est)`

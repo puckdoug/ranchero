@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use zwift_stats::{AthleteData, MostRecentState, RoadHistory, RoadKey, RoadGeometry, apply_gap,
-                  compare_road_positions, RoadComparison};
+                  compare_road_positions, RoadComparison, ExpWeightedAvg};
 
 struct StubGeometry {
     road_length_m: f64,
@@ -275,4 +275,96 @@ fn boundary_error_term_001_admits_near_matches() {
     let result = compare_road_positions(&p1, &p2, &env);
 
     assert!(result.is_some(), "rpct within 0.01 slop should resolve");
+}
+
+// ---------------------------------------------------------------------------
+// 15.21-T: estimated gap via EMA of watching speed
+// ---------------------------------------------------------------------------
+
+fn make_state_with_speed(course_id: u32, road_id: u32, rpct: f64, world_time: f64, speed: f64) -> MostRecentState {
+    MostRecentState {
+        world_time,
+        speed,
+        power: 0.0,
+        heartrate: 0,
+        cadence: 0,
+        draft: 0.0,
+        distance: 0.0,
+        altitude: 0.0,
+        lat: 0.0,
+        lng: 0.0,
+        course_id,
+        road_id,
+        road_time: rpct * 1_000_000.0 + 5000.0,
+        reverse: false,
+        event_subgroup_id: 0,
+        group_id: 0,
+        time: 0.0,
+        event_distance: 0.0,
+    }
+}
+
+// Force compare_road_positions to return None by moving watching to an unrelated road,
+// then verify that apply_gap produces a speed-based estimate from the last known gap_distance.
+#[test]
+fn estimated_gap_uses_ewma_of_watching_speed() {
+    let env = StubGeometry { road_length_m: 1000.0 };
+    let mut watching = AthleteData::new(1, 1, 1, 0.0, 0.0);
+    let mut ad = AthleteData::new(2, 1, 1, 0.0, 0.0);
+
+    // Successful comparison to establish gap_distance = 100.0 m.
+    record_road(&mut watching.road_history, 1, 10, false, 0.6, 100_000.0);
+    record_road(&mut ad.road_history, 1, 10, false, 0.5, 95_000.0);
+    apply_gap(&mut ad, &watching, &env);
+    let d = ad.gap_distance.expect("pre-condition: gap_distance must be Some");
+    assert!((d - 100.0).abs() < 1e-6, "pre-condition: gap_distance ≈ 100, got {d}");
+
+    // Move watching to road 99 (no shared history) and set speed = 10.0.
+    // EMA seeded and updated with max(10, 10.0) = 10.0 → smoothed speed = 10.0.
+    // Estimated gap = 100.0 / 10.0 = 10.0.
+    watching.road_history = RoadHistory::new();
+    record_road(&mut watching.road_history, 1, 99, false, 0.5, 101_000.0);
+    watching.most_recent_state = Some(make_state_with_speed(1, 99, 0.5, 101_000.0, 10.0));
+
+    apply_gap(&mut ad, &watching, &env);
+
+    assert!(ad.is_gap_est, "gap must be marked estimated when road comparison fails");
+    let gap = ad.gap.expect("gap must be Some when gap_distance is known");
+    assert!((gap - 10.0).abs() < 1e-6, "estimated gap = gap_distance / smoothed_speed = 100 / 10 = 10, got {gap}");
+}
+
+// Two consecutive failures update the EMA, causing the estimate to change.
+#[test]
+fn estimated_gap_updates_on_subsequent_failures() {
+    let env = StubGeometry { road_length_m: 1000.0 };
+    let mut watching = AthleteData::new(1, 1, 1, 0.0, 0.0);
+    let mut ad = AthleteData::new(2, 1, 1, 0.0, 0.0);
+
+    // Establish gap_distance = 100.0 m.
+    record_road(&mut watching.road_history, 1, 10, false, 0.6, 100_000.0);
+    record_road(&mut ad.road_history, 1, 10, false, 0.5, 95_000.0);
+    apply_gap(&mut ad, &watching, &env);
+
+    // First failure: watching speed = 10.0 → EMA = 10.0, est = 10.0.
+    watching.road_history = RoadHistory::new();
+    record_road(&mut watching.road_history, 1, 99, false, 0.5, 101_000.0);
+    watching.most_recent_state = Some(make_state_with_speed(1, 99, 0.5, 101_000.0, 10.0));
+    apply_gap(&mut ad, &watching, &env);
+    let first_est = ad.gap.expect("first estimate must be Some");
+
+    // Second failure: watching speed = 20.0 → EMA moves toward 20, smoothed > 10 → est < first.
+    watching.most_recent_state = Some(make_state_with_speed(1, 99, 0.5, 102_000.0, 20.0));
+    apply_gap(&mut ad, &watching, &env);
+    let second_est = ad.gap.expect("second estimate must be Some");
+
+    // Compute expected second estimate using the same EMA logic.
+    let mut ema = ExpWeightedAvg::new(10.0, 10.0);
+    ema.update(10.0); // first failure
+    let smoothed = ema.update(20.0); // second failure
+    let expected = 100.0 / smoothed;
+    assert!(
+        (second_est - expected).abs() < 1e-6,
+        "second estimate should be {expected}, got {second_est}",
+    );
+    assert!(second_est < first_est, "as watching.speed increases, gap estimate should decrease");
 }
