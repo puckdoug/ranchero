@@ -167,7 +167,7 @@ it fail, write the smallest code to pass.
 
 ### Wiring
 
-- [ ] **16.16-T** `tests/daemon_wiring.rs` (in the root
+- [x] **16.16-T** `tests/daemon_wiring.rs` (in the root
       crate) — daemon boot opens all three DBs under
       `data_dir()`, creates the files if missing, and runs
       migrations. Smoke test only; uses a `tempfile::TempDir`
@@ -178,7 +178,7 @@ it fail, write the smallest code to pass.
       the daemon handle. A test-only env var
       (`RANCHERO_DATA_DIR`) overrides `data_dir()` for the
       wiring test.
-- [ ] **16.17-T** `tests/cli_status.rs` — `ranchero status`
+- [x] **16.17-T** `tests/cli_status.rs` — `ranchero status`
       reports the on-disk size of each DB file when the
       daemon isn't running (read-only inspection that does
       not need a live connection).
