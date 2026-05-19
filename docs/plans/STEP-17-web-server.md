@@ -180,7 +180,7 @@ fail, write the smallest code that makes it pass.
 
 ### v2 endpoints (resource filtering)
 
-- [ ] **17.10-T** `tests/http_athlete_v2.rs` —
+- [x] **17.10-T** `tests/http_athlete_v2.rs` —
       `GET /api/athlete/v2/:id?resource=stats&resource=lap`
       returns only the requested resources; `?stats=true`
       includes the extended statistics block; omitting
@@ -190,7 +190,7 @@ fail, write the smallest code that makes it pass.
       parameter and the boolean `stats` parameter, reuse
       the v1 formatter, and apply resource filtering on
       the assembled value.
-- [ ] **17.11-T** `tests/http_nearby_v2.rs` and
+- [x] **17.11-T** `tests/http_nearby_v2.rs` and
       `tests/http_groups_v2.rs` — same resource
       filtering applied to nearby and groups.
 - [ ] **17.11-I** Implement `nearby_v2_handler` and
