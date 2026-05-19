@@ -4,6 +4,7 @@ mod server;
 pub mod state;
 pub mod http;
 pub mod rpc;
+pub mod proto_to_stats;
 pub(crate) mod ws;
 pub(crate) mod subs;
 

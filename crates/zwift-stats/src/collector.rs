@@ -377,6 +377,14 @@ impl PowerDataCollector {
         self.inner.periodized()
     }
 
+    pub fn flush(&mut self) -> usize {
+        let flushed = self.inner.flush();
+        if flushed > 0 {
+            self.update_np_peaks();
+        }
+        flushed
+    }
+
     pub fn max_value(&self) -> f64 {
         self.inner.max_value()
     }

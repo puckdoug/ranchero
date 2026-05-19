@@ -181,6 +181,25 @@ impl DataBucket {
         &mut self.draft
     }
 
+    /// Flush each collector's internal buffer immediately.
+    ///
+    /// Under normal operation `DataCollector::add` accumulates samples for up
+    /// to one second before flushing, matching sauce4zwift's buffering
+    /// behaviour.  That delay makes single-point ingestion invisible to
+    /// `max_value()` and `primary().avg()`.  This method forces a flush so
+    /// tests (and any caller that needs immediate visibility) can observe the
+    /// ingested values without waiting for a second data point to arrive.
+    ///
+    /// Note: the one-second-deferred flush is a potential logic bug inherited
+    /// from sauce4zwift's `_preprocessState`; see the 17.28-I as-built note.
+    pub fn flush_all(&mut self) {
+        self.power.flush();
+        self.hr.flush();
+        self.speed.flush();
+        self.cadence.flush();
+        self.draft.flush();
+    }
+
     pub fn ingest_power(&mut self, ts: f64, watts: f64) {
         self.power_mut().add(ts, watts);
     }

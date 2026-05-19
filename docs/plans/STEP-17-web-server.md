@@ -938,7 +938,7 @@ doc-comment naming the upstream call
       caller as monotonic seconds;
       `wall_clock_ms` is supplied by the caller
       as Unix-epoch milliseconds.
-- [ ] **17.28-I** Add `flush_all(&mut self)` to
+- [x] **17.28-I** Add `flush_all(&mut self)` to
       `DataBucket` that calls `flush()` on
       each of the five private collectors.
       Implement
