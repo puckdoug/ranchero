@@ -304,7 +304,7 @@ fail, write the smallest code that makes it pass.
 
 ### Subscription engine
 
-- [ ] **17.20-T** `tests/subs_source_lookup.rs` — a
+- [x] **17.20-T** `tests/subs_source_lookup.rs` — a
       subscribe with `source:"stats"` finds the
       registered source; an unknown source produces
       `success:false` with a clear error.
@@ -314,7 +314,7 @@ fail, write the smallest code that makes it pass.
       step: `stats`, `gameConnection`. Later steps
       register more (logs, mods, windows — see
       §"Out of scope").
-- [ ] **17.21-T** `tests/subs_delegation_dedup.rs` —
+- [x] **17.21-T** `tests/subs_delegation_dedup.rs` —
       two clients subscribe to the same
       `(source, event, options)` triple; the upstream
       listener is added once; both clients receive each
@@ -327,7 +327,7 @@ fail, write the smallest code that makes it pass.
       `Delegation`; when the last client drops its
       `Arc`, the delegation is removed and the upstream
       listener is released.
-- [ ] **17.22-T** `tests/subs_event_payload.rs` — an
+- [x] **17.22-T** `tests/subs_event_payload.rs` — an
       `athlete/:id` subscription with a known watched
       athlete emits frames whose `data` shape matches
       the v1 athlete formatter; the value updates as
