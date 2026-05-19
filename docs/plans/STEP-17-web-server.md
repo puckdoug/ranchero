@@ -897,7 +897,7 @@ doc-comment naming the upstream call
 
 #### Checklist (updated to reflect the resolutions above)
 
-- [ ] **17.28-P** Pre-requisite proto schema
+- [x] **17.28-P** Pre-requisite proto schema
       update. Rename `optional int32 ps_f10 =
       10` to `optional int32 draft = 10` in
       `crates/zwift-proto/proto/udp-node-msgs.proto`.

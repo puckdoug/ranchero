@@ -119,7 +119,7 @@ message PlayerState {
 	optional uint32 ps_f7 = 7;
 	optional int32 roadPosition = 8;
 	optional int32 cadenceUHz = 9; // =(cad / 60) * 1000000
-	optional int32 ps_f10 = 10; // BikeEntity.field_B58; 0 - ETA related (something around speed)
+	optional int32 draft = 10; // draft benefit (0–1000 scale); field identity confirmed by sauce4zwift's reverse-engineered schema (search sauce4zwift/src/zwift.proto for "int32 draft = 10"); the zoffline annotation "ps_f10 / BikeEntity.field_B58 / ETA-related" is rejected
 	optional int32 heartrate = 11;
 	optional int32 power = 12;
 	optional int64 heading = 13;
