@@ -959,7 +959,7 @@ doc-comment naming the upstream call
       follow-up read of the upstream code;
       for now `flush_all()` is the explicit
       knob.
-- [ ] **17.28-Q** Grow `AthleteData` so the
+- [x] **17.28-Q** Grow `AthleteData` so the
       router can store per-frame
       distance/altitude/grade. Adds:
       - `distance: f64`

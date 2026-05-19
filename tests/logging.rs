@@ -34,6 +34,7 @@ struct LogHarness {
     pidfile_path: PathBuf,
     socket_path: PathBuf,
     logfile_path: PathBuf,
+    pages_dir: PathBuf,
     child: Option<Child>,
 }
 
@@ -47,6 +48,9 @@ impl LogHarness {
         let pidfile_path = state.join("ranchero.pid");
         let socket_path = state.join("ranchero.sock");
         let logfile_path = state.join("ranchero.log");
+
+        let pages_dir = dir.path().join("p");
+        std::fs::create_dir_all(&pages_dir).unwrap();
 
         let toml = format!(
             "schema_version = 1\n\
@@ -69,6 +73,7 @@ impl LogHarness {
             pidfile_path,
             socket_path,
             logfile_path,
+            pages_dir,
             child: None,
         }
     }
@@ -82,6 +87,7 @@ impl LogHarness {
 
     fn run(&self, extra: &[&str]) -> Output {
         let mut cmd = Command::new(binary_path());
+        cmd.env("RANCHERO_PAGES_ROOT", &self.pages_dir);
         cmd.args(self.config_args()).args(extra);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd.output().expect("spawn")
@@ -89,6 +95,7 @@ impl LogHarness {
 
     fn run_with_env(&self, env: &[(&str, &str)], extra: &[&str]) -> Child {
         let mut cmd = Command::new(binary_path());
+        cmd.env("RANCHERO_PAGES_ROOT", &self.pages_dir);
         cmd.args(self.config_args()).args(extra);
         for (k, v) in env {
             cmd.env(k, v);
@@ -101,6 +108,7 @@ impl LogHarness {
 
     fn spawn_foreground(&mut self, flags: &[&str]) -> &mut Child {
         let mut cmd = Command::new(binary_path());
+        cmd.env("RANCHERO_PAGES_ROOT", &self.pages_dir);
         cmd.args(self.config_args());
         // Force foreground unless the caller already passed -D / --debug
         // (which implies --foreground via GlobalOpts::finalize).

@@ -41,7 +41,7 @@ pub use collector::{DataCollector, PowerDataCollector, PeakSnapshot, NpPeakSnaps
 pub use data_bucket::DataBucket;
 pub use athlete::{AthleteData, MostRecentState, AthleteRegistry, GroupMeta, GcReport, PlayerStateView};
 pub use groups::{NearbyEntry, Group, compute_groups};
-pub use periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, GC_TICK_INTERVAL_SECS};
+pub use periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, GC_TICK_INTERVAL_SECS, SMOOTH_GRADE_WINDOW};
 pub use wbal::WBalAccumulator;
 pub use slice::DataSlice;
 pub use streams::LatLng;

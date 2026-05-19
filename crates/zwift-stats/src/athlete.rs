@@ -7,7 +7,7 @@ use crate::{
     DataBucket, DataSlice, ExpWeightedAvg, Sample,
     wbal::WBalAccumulator, zones::ZonesAccumulator,
     streams::{Streams, LatLng}, road_history::RoadHistory,
-    periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS},
+    periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, SMOOTH_GRADE_WINDOW},
 };
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -160,7 +160,9 @@ pub struct AthleteData {
     pub created: f64,
     pub updated: f64,
     pub wt_offset: f64,
+    pub distance: f64,
     pub distance_offset: f64,
+    pub altitude: f64,
     pub internal_created: f64,
     pub internal_updated: f64,
     pub internal_accessed: f64,
@@ -197,7 +199,9 @@ impl AthleteData {
             created: now,
             updated: now,
             wt_offset: world_time,
+            distance: 0.0,
             distance_offset: 0.0,
+            altitude: 0.0,
             internal_created: now,
             internal_updated: now,
             internal_accessed: now,
@@ -206,7 +210,7 @@ impl AthleteData {
             slice_counter: 0,
             w_bal: WBalAccumulator::new(),
             time_in_power_zones: ZonesAccumulator::new(),
-            smooth_grade: ExpWeightedAvg::new(8.0, 0.0),
+            smooth_grade: ExpWeightedAvg::new(SMOOTH_GRADE_WINDOW, 0.0),
             streams: Streams::new(),
             road_history: RoadHistory::new(),
             lap_slices: Vec::new(),

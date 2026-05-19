@@ -124,6 +124,7 @@ struct DaemonHarness {
     socket: PathBuf,
     log_file: PathBuf,
     capture_path: PathBuf,
+    pages_dir: PathBuf,
     child: Option<Child>,
 }
 
@@ -138,6 +139,9 @@ impl DaemonHarness {
         let socket = state.join("ranchero.sock");
         let log_file = dir.path().join("ranchero.log");
         let capture_path = dir.path().join("capture.bin");
+
+        let pages_dir = dir.path().join("p");
+        std::fs::create_dir_all(&pages_dir).unwrap();
 
         let toml = format!(
             "schema_version = 1\n\
@@ -162,6 +166,7 @@ impl DaemonHarness {
             socket,
             log_file,
             capture_path,
+            pages_dir,
             child: None,
         }
     }
@@ -176,6 +181,7 @@ impl DaemonHarness {
     #[allow(dead_code)]
     fn run_cli(&self, extra: &[&str]) -> Output {
         let mut cmd = Command::new(binary_path());
+        cmd.env("RANCHERO_PAGES_ROOT", &self.pages_dir);
         cmd.args(self.config_args()).args(extra);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd.output().expect("spawn ranchero")
@@ -196,6 +202,7 @@ impl DaemonHarness {
     /// so logs flow to stderr at INFO+.
     fn spawn_foreground_start(&mut self, with_capture: bool) -> &mut Child {
         let mut cmd = Command::new(binary_path());
+        cmd.env("RANCHERO_PAGES_ROOT", &self.pages_dir);
         cmd.args(self.config_args());
         cmd.arg("--debug");
         cmd.arg("--monitoruser").arg("noone@example.invalid");
@@ -218,6 +225,7 @@ impl DaemonHarness {
     /// daemon has double-forked.
     fn spawn_background_start(&self, with_capture: bool) -> Output {
         let mut cmd = Command::new(binary_path());
+        cmd.env("RANCHERO_PAGES_ROOT", &self.pages_dir);
         cmd.args(self.config_args());
         cmd.arg("--monitoruser").arg("noone@example.invalid");
         cmd.arg("--monitorpassword").arg("not-a-real-password");

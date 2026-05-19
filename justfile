@@ -1,5 +1,8 @@
 default: help
 
+ranchero *ARGV:
+  cargo run -- {{ARGV}}
+
 help:
   cargo run -- help
 

@@ -32,3 +32,7 @@ pub const SEGMENT_COMPLETION_SHORT: f64 = 0.25;
 
 // W' balance default
 pub const W_PRIME_DEFAULT: f64 = 20000.0;
+
+/// Window size for the grade exponential weighted average.
+/// Matches sauce4zwift's `Sauce.data.expWeightedAvg(8)` in `_preprocessState`.
+pub const SMOOTH_GRADE_WINDOW: f64 = 8.0;

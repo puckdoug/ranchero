@@ -53,6 +53,12 @@ pub fn route_player_state(
     let hr_bpm      = proto.heartrate.unwrap_or(0) as f64;
     let draft       = proto.draft.unwrap_or(0) as f64;
 
+    // TODO: apply world-meta adjustment: (z - seaLevel + eleOffset) / 100 *
+    // physicsSlopeScale.  That requires vendoring the world-meta tables,
+    // deferred to a later step.
+    let altitude = proto.z.unwrap_or(0.0) as f64 / 100.0;
+    let distance = proto.distance.unwrap_or(0) as f64;
+
     let mut registry = state.registry.write().unwrap();
     let ad = registry.upsert(athlete_id, course_id, sport, world_time, now);
 
@@ -61,4 +67,12 @@ pub fn route_player_state(
     ad.ingest_speed(now, world_time, speed_mps);
     ad.ingest_cadence(now, world_time, cadence_rpm);
     ad.ingest_draft(now, world_time, draft);
+
+    let dist_delta = distance - ad.distance;
+    if dist_delta.abs() > f64::EPSILON {
+        let alt_delta = altitude - ad.altitude;
+        ad.smooth_grade.update(alt_delta / dist_delta);
+    }
+    ad.distance = distance;
+    ad.altitude = altitude;
 }
