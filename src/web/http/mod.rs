@@ -9,7 +9,9 @@ use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::http::{header, StatusCode};
 use actix_web::middleware::{from_fn, Next};
 use actix_web::{web, Error, HttpRequest, HttpResponse};
-use serde_json::json;
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use serde_json::{json, Value};
 use zwift_stats::AthleteData;
 
 use crate::web::state::WebState;
@@ -245,6 +247,122 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// RPC helpers
+// ---------------------------------------------------------------------------
+
+fn coerce_arg(s: &str) -> Value {
+    match s {
+        "null" | "undefined" => Value::Null,
+        "true"               => Value::Bool(true),
+        "false"              => Value::Bool(false),
+        // JSON has no NaN or ±Infinity; map them to null.
+        "NaN" | "Infinity" | "+Infinity" | "-Infinity" => Value::Null,
+        _ => {
+            if let Ok(n) = s.parse::<i64>() {
+                return json!(n);
+            }
+            if let Ok(n) = s.parse::<f64>() {
+                if let Some(num) = serde_json::Number::from_f64(n) {
+                    return Value::Number(num);
+                }
+            }
+            Value::String(s.to_string())
+        }
+    }
+}
+
+fn rpc_ok(data: Value) -> HttpResponse {
+    HttpResponse::Ok().json(json!({"success": true, "data": data}))
+}
+
+fn rpc_err(error: &str) -> HttpResponse {
+    HttpResponse::Ok().json(json!({"success": false, "error": error}))
+}
+
+// ---------------------------------------------------------------------------
+// RPC handlers
+// ---------------------------------------------------------------------------
+
+async fn rpc_discovery_handler(state: web::Data<Arc<WebState>>) -> HttpResponse {
+    let mut names: Vec<&str> = match &state.rpc {
+        Some(rpc) => rpc.names(),
+        None      => vec![],
+    };
+    names.sort_unstable();
+    HttpResponse::Ok().json(json!(names))
+}
+
+async fn rpc_v1_get_handler(
+    state: web::Data<Arc<WebState>>,
+    name:  web::Path<String>,
+    req:   HttpRequest,
+) -> HttpResponse {
+    let rpc = match state.rpc.as_ref() {
+        Some(r) => r,
+        None    => return HttpResponse::NotFound().finish(),
+    };
+    let args: Vec<Value> = serde_urlencoded::from_str::<Vec<(String, String)>>(req.query_string())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(k, _)| k == "arg")
+        .map(|(_, v)| coerce_arg(&v))
+        .collect();
+    match rpc.dispatch(&name.into_inner(), args).await {
+        None         => HttpResponse::NotFound().finish(),
+        Some(Ok(d))  => rpc_ok(d),
+        Some(Err(e)) => rpc_err(&e),
+    }
+}
+
+async fn rpc_v1_post_handler(
+    state: web::Data<Arc<WebState>>,
+    name:  web::Path<String>,
+    body:  web::Json<Vec<Value>>,
+) -> HttpResponse {
+    let rpc = match state.rpc.as_ref() {
+        Some(r) => r,
+        None    => return HttpResponse::NotFound().finish(),
+    };
+    match rpc.dispatch(&name.into_inner(), body.into_inner()).await {
+        None         => HttpResponse::NotFound().finish(),
+        Some(Ok(d))  => rpc_ok(d),
+        Some(Err(e)) => rpc_err(&e),
+    }
+}
+
+async fn rpc_v2_handler(
+    state: web::Data<Arc<WebState>>,
+    tail:  web::Path<String>,
+) -> HttpResponse {
+    let rpc = match state.rpc.as_ref() {
+        Some(r) => r,
+        None    => return HttpResponse::NotFound().finish(),
+    };
+    let tail = tail.into_inner();
+    let parts: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return HttpResponse::NotFound().finish();
+    }
+    let name = parts[0];
+    let mut args: Vec<Value> = Vec::new();
+    for seg in &parts[1..] {
+        let decoded = match URL_SAFE_NO_PAD.decode(seg) {
+            Ok(b)  => b,
+            Err(_) => return HttpResponse::BadRequest().finish(),
+        };
+        match serde_json::from_slice::<Value>(&decoded) {
+            Ok(v)  => args.push(v),
+            Err(_) => return HttpResponse::BadRequest().finish(),
+        }
+    }
+    match rpc.dispatch(name, args).await {
+        None         => HttpResponse::NotFound().finish(),
+        Some(Ok(d))  => rpc_ok(d),
+        Some(Err(e)) => rpc_err(&e),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -266,6 +384,11 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .route("/nearby/v2",       web::get().to(nearby_v2_handler))
             .route("/groups/v1",       web::get().to(groups_v1_handler))
             .route("/groups/v2",       web::get().to(groups_v2_handler))
+            .route("/rpc/v1",          web::get().to(rpc_discovery_handler))
+            .route("/rpc/v1/{name}",   web::get().to(rpc_v1_get_handler))
+            .route("/rpc/v1/{name}",   web::post().to(rpc_v1_post_handler))
+            .route("/rpc/v2",          web::get().to(rpc_discovery_handler))
+            .route("/rpc/v2/{tail:.*}", web::get().to(rpc_v2_handler))
             .default_service(web::route().to(api_root_handler)),
     );
 }

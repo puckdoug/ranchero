@@ -207,7 +207,7 @@ fail, write the smallest code that makes it pass.
       `POST /api/rpc/v1/:name` with body
       `[1, true, "foo"]` dispatches with the same args.
       Unknown handler returns 404.
-- [ ] **17.12-I** Implement `rpc_v1_handler` (GET) and
+- [x] **17.12-I** Implement `rpc_v1_handler` (GET) and
       `rpc_v1_post_handler` (POST). Share the handler
       registry between HTTP and WebSocket dispatch by
       passing it as `web::Data<RpcRegistry>`.
@@ -215,14 +215,14 @@ fail, write the smallest code that makes it pass.
       `GET /api/rpc/v2/:name*` decodes a base64url-encoded
       JSON array tail as `[arg, arg, ...]` and
       dispatches.
-- [ ] **17.13-I** Implement `rpc_v2_handler` (GET).
+- [x] **17.13-I** Implement `rpc_v2_handler` (GET).
       Decode the tail with
       `base64::engine::general_purpose::URL_SAFE_NO_PAD`,
       parse as JSON, dispatch.
 - [x] **17.14-T** `tests/http_rpc_discovery.rs` —
       `GET /api/rpc/v1` and `GET /api/rpc/v2` both return
       a JSON array of registered handler names.
-- [ ] **17.14-I** Implement both discovery routes
+- [x] **17.14-I** Implement both discovery routes
       against the shared handler registry.
 
 ### WebSocket protocol
