@@ -36,14 +36,23 @@ use zwift_proto::PlayerState;
 use zwift_stats::ExpWeightedAvg;
 use zwift_stats::periods::SMOOTH_GRADE_WINDOW;
 
-fn make_proto(id: i64, world: i32, sport: i32, distance: i32, z: f32, power: i32) -> PlayerState {
+fn make_proto(
+    id:            i64,
+    world:         i32,
+    sport:         i32,
+    distance:      i32,
+    z:             f32,
+    power:         i32,
+    world_time_ms: u64,
+) -> PlayerState {
     PlayerState {
-        id:       Some(id),
-        world:    Some(world),
-        sport:    Some(sport),
-        distance: Some(distance),
-        z:        Some(z),
-        power:    Some(power),
+        id:         Some(id),
+        world:      Some(world),
+        sport:      Some(sport),
+        distance:   Some(distance),
+        z:          Some(z),
+        power:      Some(power),
+        world_time: Some(world_time_ms as i64),
         ..Default::default()
     }
 }
@@ -56,9 +65,10 @@ fn make_proto(id: i64, world: i32, sport: i32, distance: i32, z: f32, power: i32
 fn world_change_triggers_session_context_update() {
     let state = Arc::new(WebState::new());
 
-    // First call: course 3, 1000 m distance, altitude 5 m (z=500), power 300 W.
+    // First call: course 3, 1000 m distance, altitude 5 m (z=500), power 300 W,
+    // world_time 1000 ms (1.0 s).
     // dist_delta = 1000, alt_delta = 5.0  →  raw_grade = 0.005.
-    let p1 = make_proto(3001, 3, 0, 1000, 500.0, 300);
+    let p1 = make_proto(3001, 3, 0, 1000, 500.0, 300, 1_000);
     proto_to_stats::route_player_state(&p1, &state, 1.0, 0);
 
     // Confirm the first call produced a non-zero grade so the later reset
@@ -79,9 +89,12 @@ fn world_change_triggers_session_context_update() {
         "smooth_grade after first call must be non-zero for the reset assertion to be meaningful",
     );
 
-    // Second call: world changes to 5; distance and altitude reset to 0 at
-    // the start of the new course.  Power drops to 100 W.
-    let p2 = make_proto(3001, 5, 0, 0, 0.0, 100);
+    // Second call: world changes to 5; distance and altitude are 0 at the
+    // start of the new course.  Power drops to 100 W.  world_time 2000 ms
+    // (2.0 s) ensures the first call's 300 W reading is flushed naturally
+    // before the 100 W reading is buffered, so max_value() reliably returns
+    // 300 W regardless of context-change handling.
+    let p2 = make_proto(3001, 5, 0, 0, 0.0, 100, 2_000);
     proto_to_stats::route_player_state(&p2, &state, 2.0, 0);
 
     let mut registry = state.registry.write().unwrap();
@@ -134,11 +147,11 @@ fn sport_change_triggers_session_context_update() {
     let state = Arc::new(WebState::new());
 
     // First call: course 7, sport 0 (cycling), some distance and power.
-    let p1 = make_proto(3002, 7, 0, 500, 0.0, 200);
+    let p1 = make_proto(3002, 7, 0, 500, 0.0, 200, 1_000);
     proto_to_stats::route_player_state(&p1, &state, 1.0, 0);
 
     // Second call: same world, sport changes to 1 (running).
-    let p2 = make_proto(3002, 7, 1, 0, 0.0, 150);
+    let p2 = make_proto(3002, 7, 1, 0, 0.0, 150, 2_000);
     proto_to_stats::route_player_state(&p2, &state, 2.0, 0);
 
     let registry = state.registry.read().unwrap();

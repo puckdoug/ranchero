@@ -14,6 +14,8 @@
 
 use std::sync::Arc;
 
+use zwift_stats::{start_athlete_lap, ExpWeightedAvg, periods::SMOOTH_GRADE_WINDOW};
+
 use crate::web::WebState;
 
 /// Route a decoded `PlayerState` proto into the athlete registry.
@@ -62,16 +64,33 @@ pub fn route_player_state(
     let mut registry = state.registry.write().unwrap();
     let ad = registry.upsert(athlete_id, course_id, sport, world_time, now);
 
+    // Detect a session-context change (world or sport changed since the last
+    // frame for this athlete).  Matches sauce4zwift's `_preprocessState`
+    // world/sport change handler.
+    let context_changed = course_id != ad.course_id || sport != ad.sport;
+    if context_changed {
+        ad.course_id       = course_id;
+        ad.sport           = sport;
+        ad.distance_offset += ad.distance;
+        ad.smooth_grade    = ExpWeightedAvg::new(SMOOTH_GRADE_WINDOW, 0.0);
+        start_athlete_lap(ad, now);
+    }
+
     ad.ingest_power(now, world_time, power_w);
     ad.ingest_hr(now, world_time, hr_bpm);
     ad.ingest_speed(now, world_time, speed_mps);
     ad.ingest_cadence(now, world_time, cadence_rpm);
     ad.ingest_draft(now, world_time, draft);
 
-    let dist_delta = distance - ad.distance;
-    if dist_delta.abs() > f64::EPSILON {
-        let alt_delta = altitude - ad.altitude;
-        ad.smooth_grade.update(alt_delta / dist_delta);
+    // Skip the grade update on context-change frames: the distance and
+    // altitude deltas would span two different courses and are meaningless.
+    // Matches sauce4zwift's `state.grade = 0` in `_preprocessState`.
+    if !context_changed {
+        let dist_delta = distance - ad.distance;
+        if dist_delta.abs() > f64::EPSILON {
+            let alt_delta = altitude - ad.altitude;
+            ad.smooth_grade.update(alt_delta / dist_delta);
+        }
     }
     ad.distance = distance;
     ad.altitude = altitude;

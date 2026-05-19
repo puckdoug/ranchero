@@ -1020,7 +1020,7 @@ doc-comment naming the upstream call
       reset, because they are anchored on
       `world_time` rather than on course
       context.
-- [ ] **17.29-I** Add the session-context
+- [x] **17.29-I** Add the session-context
       update path inside `route_player_state`
       (or a sibling private helper). On
       every call, compare `proto.world` and
