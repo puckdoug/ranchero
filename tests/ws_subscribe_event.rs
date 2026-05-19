@@ -138,13 +138,15 @@ async fn ws_subscribe_receives_event_then_unsubscribe_stops_stream() {
     assert_eq!(unsub_resp["success"], true,        "unsubscribe must succeed; got {unsub_resp}");
 
     // Send another event; no further event frame should arrive.
+    // After unsubscribe the subscription task is aborted, leaving no receivers —
+    // the send failure is expected and intentional.
     tx.send(GameEvent::PlayerState {
         athlete_id:    1001,
         power_w:       250,
         cadence_u_hz:  5200,
         speed_mm_h:    37_000_000,
         world_time_ms: 2_000_000,
-    }).expect("broadcast send must succeed");
+    }).ok();
 
     let nothing = tokio::time::timeout(
         std::time::Duration::from_millis(200),

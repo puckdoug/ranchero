@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use std::sync::RwLock;
+use tokio::sync::broadcast;
 use zwift_stats::AthleteRegistry;
 
+use crate::daemon::relay::GameEvent;
 use super::rpc::RpcRegistry;
 
 /// Shared state threaded through every actix-web request handler.
@@ -11,6 +13,7 @@ pub struct WebState {
     pub watching_id:     Option<u32>,
     pub self_athlete_id: Option<u32>,
     pub rpc:             Option<RpcRegistry>,
+    pub game_events_tx:  Option<broadcast::Sender<GameEvent>>,
 }
 
 impl WebState {
@@ -20,6 +23,7 @@ impl WebState {
             watching_id:     None,
             self_athlete_id: None,
             rpc:             None,
+            game_events_tx:  None,
         }
     }
 
@@ -32,7 +36,8 @@ impl WebState {
             registry: RwLock::new(registry),
             watching_id,
             self_athlete_id,
-            rpc: None,
+            rpc:             None,
+            game_events_tx:  None,
         }
     }
 
@@ -42,6 +47,14 @@ impl WebState {
             watching_id:     None,
             self_athlete_id: None,
             rpc:             Some(rpc),
+            game_events_tx:  None,
         }
+    }
+
+    /// Builder method: attach a game-event broadcast sender so the stats
+    /// subscription source can create receivers.
+    pub fn and_game_events(mut self, tx: broadcast::Sender<GameEvent>) -> Self {
+        self.game_events_tx = Some(tx);
+        self
     }
 }

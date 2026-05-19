@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use zwift_stats::AthleteData;
 
 use crate::web::state::WebState;
+use crate::web::ws;
 
 // ---------------------------------------------------------------------------
 // Preflight middleware
@@ -71,7 +72,7 @@ fn api_directory() -> serde_json::Value {
 // Formatters
 // ---------------------------------------------------------------------------
 
-fn format_athlete(
+pub(crate) fn format_athlete(
     athlete: &AthleteData,
     watching_id: Option<u32>,
     self_athlete_id: Option<u32>,
@@ -389,6 +390,7 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .route("/rpc/v1/{name}",   web::post().to(rpc_v1_post_handler))
             .route("/rpc/v2",          web::get().to(rpc_discovery_handler))
             .route("/rpc/v2/{tail:.*}", web::get().to(rpc_v2_handler))
+            .route("/ws/events",        web::get().to(ws::ws_handler))
             .default_service(web::route().to(api_root_handler)),
     );
 }

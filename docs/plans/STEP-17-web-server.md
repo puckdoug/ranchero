@@ -230,7 +230,7 @@ fail, write the smallest code that makes it pass.
 - [x] **17.15-T** `tests/ws_handshake.rs` — a WebSocket
       client completes the upgrade on `/api/ws/events`.
       Marked `#[ignore = "slow: real socket"]`.
-- [ ] **17.15-I** Add the WebSocket route. The handler
+- [x] **17.15-I** Add the WebSocket route. The handler
       calls `actix_ws::handle(&req, body)` to perform
       the upgrade and returns `(HttpResponse, Session,
       MessageStream)`. The session and message stream
@@ -258,7 +258,7 @@ fail, write the smallest code that makes it pass.
       structurally malformed frame (no `method`)
       produces `success:false` with the echoed uid
       where available, otherwise `-1`.
-- [ ] **17.16-I** Implement the WebSocket frame codec.
+- [x] **17.16-I** Implement the WebSocket frame codec.
       The decoder is one `#[derive(Deserialize)]`
       struct with both `data: Option<MethodArg>` and the
       flat fields `method: Option<Method>` and
@@ -279,7 +279,7 @@ fail, write the smallest code that makes it pass.
       `{type:"event", uid:7, success:true, data:...}`
       frames as the registry changes. An `unsubscribe`
       request with `arg:{subId:7}` ends the stream.
-- [ ] **17.17-I** Wire the subscription engine
+- [x] **17.17-I** Wire the subscription engine
       (§17.20-22) into the client task's
       `method: "subscribe"` and
       `method: "unsubscribe"` branches.
@@ -288,7 +288,7 @@ fail, write the smallest code that makes it pass.
       different `subId`s; each gets its own stream;
       unsubscribe on client A does not stop events on
       client B.
-- [ ] **17.18-I** Per-client `subs: HashMap<SubId, Sub>`
+- [x] **17.18-I** Per-client `subs: HashMap<SubId, Sub>`
       lives inside the client task. Subscription dedup
       across clients is a process-wide concern
       (§17.21); per-client tracking is local.
@@ -297,7 +297,7 @@ fail, write the smallest code that makes it pass.
       active drops the delegation reference counts;
       when a count reaches zero the upstream listener
       is removed.
-- [ ] **17.19-I** On client task exit, walk `subs` and
+- [x] **17.19-I** On client task exit, walk `subs` and
       release each. The registry's release path drops
       the upstream listener once the last subscriber
       departs.
