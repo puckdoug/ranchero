@@ -339,7 +339,7 @@ fail, write the smallest code that makes it pass.
 
 ### Static files and CORS
 
-- [ ] **17.23-T** `tests/http_static_pages.rs` —
+- [x] **17.23-T** `tests/http_static_pages.rs` —
       `GET /pages/index.html` returns the file with
       content-type `text/html` and
       `Access-Control-Allow-Origin: *`. `GET
@@ -356,14 +356,14 @@ fail, write the smallest code that makes it pass.
       `private, max-age=8640000`. Attach the headers as
       nested `Files` scopes wrapped with
       `actix_web::middleware::DefaultHeaders`.
-- [ ] **17.24-T** `tests/http_root_index.rs` — `GET /`
+- [x] **17.24-T** `tests/http_root_index.rs` — `GET /`
       returns `pages/index.html`.
 - [ ] **17.24-I** Add a `web::resource("/")` handler
       that reads and returns the index file with
       content-type `text/html`. `Files::new` mounted at
       `/pages` does not serve the bare-root case, so it
       needs an explicit route.
-- [ ] **17.25-T** `tests/http_mime_types.rs` —
+- [x] **17.25-T** `tests/http_mime_types.rs` —
       `GET /pages/main.css` returns content-type
       `text/css`; `GET /pages/app.mjs` returns
       `text/javascript`. The MIME map must agree with
