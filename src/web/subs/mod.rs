@@ -2,14 +2,22 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Notify};
 use tokio::task::AbortHandle;
 
 use crate::daemon::relay::GameEvent;
 use crate::web::http::format_athlete;
 use crate::web::state::WebState;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Disconnect a client whose outbound queue exceeds this many bytes.
+const MAX_BUFFERED_BYTES: usize = 8_388_608; // 8 MB
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -18,24 +26,42 @@ use crate::web::state::WebState;
 /// Returned to the WebSocket handler after a successful subscribe call.
 /// The caller must keep `delegation` alive for the lifetime of the subscription.
 pub struct SubscriptionHandle {
-    pub sink:       mpsc::UnboundedReceiver<Value>,
-    pub delegation: Arc<DelegationHandle>,
+    pub sink:           mpsc::UnboundedReceiver<(Value, usize)>,
+    pub buffered_bytes: Arc<AtomicUsize>,
+    /// Fires when the outbound buffer exceeds `MAX_BUFFERED_BYTES`.
+    pub close_notify:   Arc<Notify>,
+    pub delegation:     Arc<DelegationHandle>,
 }
 
 /// Shared per-(source, event) state.  The Arc strong-count equals the number
 /// of active subscribers.  When it reaches zero the Drop impl aborts the
 /// fanout task, releasing the upstream broadcast receiver.
 pub struct DelegationHandle {
-    sinks:        Arc<Mutex<Vec<mpsc::UnboundedSender<Value>>>>,
+    sinks:        Arc<Mutex<Vec<ClientSink>>>,
     abort_handle: AbortHandle,
 }
 
+struct ClientSink {
+    tx:             mpsc::UnboundedSender<(Value, usize)>,
+    buffered_bytes: Arc<AtomicUsize>,
+    close_notify:   Arc<Notify>,
+}
+
 impl DelegationHandle {
-    /// Adds a new per-client sink and returns the receiving end.
-    pub fn add_sink(&self) -> mpsc::UnboundedReceiver<Value> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.sinks.lock().unwrap().push(tx);
-        rx
+    /// Adds a new per-client sink and returns the receiving end, the byte
+    /// counter, and the close-signal notifier.
+    pub fn add_sink(
+        &self,
+    ) -> (mpsc::UnboundedReceiver<(Value, usize)>, Arc<AtomicUsize>, Arc<Notify>) {
+        let (tx, rx)       = mpsc::unbounded_channel();
+        let buffered_bytes = Arc::new(AtomicUsize::new(0));
+        let close_notify   = Arc::new(Notify::new());
+        self.sinks.lock().unwrap().push(ClientSink {
+            tx,
+            buffered_bytes: Arc::clone(&buffered_bytes),
+            close_notify:   Arc::clone(&close_notify),
+        });
+        (rx, buffered_bytes, close_notify)
     }
 }
 
@@ -75,16 +101,18 @@ impl DelegationMap {
         // Reuse a live delegation.
         if let Some(weak) = map.get(&key) {
             if let Some(arc) = weak.upgrade() {
-                let sink = arc.add_sink();
-                return Ok(SubscriptionHandle { sink, delegation: arc });
+                let (sink, buffered_bytes, close_notify) = arc.add_sink();
+                return Ok(SubscriptionHandle {
+                    sink, buffered_bytes, close_notify, delegation: arc,
+                });
             }
         }
 
         // No live delegation; create one (tokio::spawn is safe under a Mutex guard).
         let arc = create_delegation(source, event, state)?;
-        let sink = arc.add_sink();
+        let (sink, buffered_bytes, close_notify) = arc.add_sink();
         map.insert(key, Arc::downgrade(&arc));
-        Ok(SubscriptionHandle { sink, delegation: arc })
+        Ok(SubscriptionHandle { sink, buffered_bytes, close_notify, delegation: arc })
     }
 }
 
@@ -97,8 +125,7 @@ fn create_delegation(
     event:  &str,
     state:  &Arc<WebState>,
 ) -> Result<Arc<DelegationHandle>, String> {
-    let sinks: Arc<Mutex<Vec<mpsc::UnboundedSender<Value>>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    let sinks: Arc<Mutex<Vec<ClientSink>>> = Arc::new(Mutex::new(Vec::new()));
 
     let task = match source {
         "stats" => {
@@ -126,7 +153,7 @@ fn create_delegation(
 
 async fn stats_fanout_task(
     mut rx: broadcast::Receiver<GameEvent>,
-    sinks:  Arc<Mutex<Vec<mpsc::UnboundedSender<Value>>>>,
+    sinks:  Arc<Mutex<Vec<ClientSink>>>,
     state:  Arc<WebState>,
     event:  String,
 ) {
@@ -147,8 +174,31 @@ async fn stats_fanout_task(
                     })
                 };
                 if let Some(data) = data {
+                    // Estimate the serialized byte size of the complete event frame.
+                    // The actual frame wraps `data` with ~50 bytes of event envelope.
+                    let byte_estimate = serde_json::to_string(&data)
+                        .map(|s| s.len())
+                        .unwrap_or(256)
+                        + 50;
+
                     let mut sinks = sinks.lock().unwrap();
-                    sinks.retain(|tx| tx.send(data.clone()).is_ok());
+                    sinks.retain(|sink| {
+                        let queued = sink.buffered_bytes.load(Relaxed);
+                        if queued + byte_estimate > MAX_BUFFERED_BYTES {
+                            // Queue too deep: fire the out-of-band close signal so
+                            // the subscription_task closes the session immediately,
+                            // regardless of how many frames are still in the sink.
+                            tracing::warn!(
+                                buffered = queued,
+                                "outbound buffer exceeded limit; disconnecting client"
+                            );
+                            sink.close_notify.notify_one();
+                            false // remove this sink
+                        } else {
+                            sink.buffered_bytes.fetch_add(byte_estimate, Relaxed);
+                            sink.tx.send((data.clone(), byte_estimate)).is_ok()
+                        }
+                    });
                 }
             }
             Ok(_) => {}

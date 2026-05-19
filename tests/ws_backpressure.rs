@@ -83,10 +83,12 @@ async fn subscribe(ws: &mut WsStream, source: &str, event: &str, sub_id: u64) {
 }
 
 /// Push enough events through `tx` to exceed 8 MB of outbound data for a
-/// client that is not reading.  Each PlayerState event produces a JSON frame;
-/// 10 000 events at ~1 KB each comfortably exceeds the threshold.
+/// client that is not reading.  Each PlayerState event produces a JSON frame
+/// of ~140 bytes; 65 000 events × 140 bytes ≈ 9 MB, comfortably over the
+/// 8 MB threshold.  Events are sent in batches with a yield between each
+/// batch so the fanout task can process them as they arrive.
 async fn flood(tx: &broadcast::Sender<GameEvent>) {
-    for i in 0u64..10_000 {
+    for i in 0u64..65_000 {
         tx.send(GameEvent::PlayerState {
             athlete_id:    1001,
             power_w:       (i % 400) as i32,
@@ -94,13 +96,16 @@ async fn flood(tx: &broadcast::Sender<GameEvent>) {
             speed_mm_h:    36_000_000,
             world_time_ms: (i * 1000) as i64,
         }).ok();
+        if i % 128 == 0 {
+            tokio::task::yield_now().await;
+        }
     }
 }
 
 #[tokio::test]
 #[ignore = "slow: pushes 8 MB through a real socket"]
 async fn slow_client_is_disconnected_at_8mb_and_fast_client_is_unaffected() {
-    let (tx, _) = broadcast::channel::<GameEvent>(1024);
+    let (tx, _) = broadcast::channel::<GameEvent>(65_536);
 
     let mut registry = AthleteRegistry::new();
     registry.upsert(1001, 5, 0, 0.0, 0.0);
@@ -143,23 +148,29 @@ async fn slow_client_is_disconnected_at_8mb_and_fast_client_is_unaffected() {
     // Give the server time to process the flood and disconnect the slow client.
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-    // The slow client must have been closed by the server (Policy close or
-    // connection reset — either way the stream must end or return an error).
-    let next = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        slow.next(),
+    // The slow client must have been closed by the server.  TCP delivers
+    // already-buffered Text frames before the Close frame arrives, so drain
+    // until we observe a non-Text result (Close, stream end, or error).
+    // A test failure is when no such terminator arrives within the timeout.
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            loop {
+                match slow.next().await {
+                    Some(Ok(Message::Text(_))) => continue,        // buffered frame
+                    Some(Ok(Message::Close(_))) => return "close",
+                    None                        => return "end",
+                    Some(Err(_))                => return "err",
+                    Some(Ok(_))                 => continue,        // ping/pong/etc.
+                }
+            }
+        },
     ).await;
-    match next {
-        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) => {
-            // Closed by server, stream ended, or timeout — all acceptable.
-        }
-        Ok(Some(Ok(other))) => {
-            panic!("slow client must have been disconnected; got frame: {other:?}");
-        }
-        Ok(Some(Err(_))) => {
-            // Socket error — server dropped the connection cleanly.
-        }
-    }
+    let outcome = outcome.expect("slow client must reach a terminator within 5s");
+    assert!(
+        matches!(outcome, "close" | "end" | "err"),
+        "slow client must have been disconnected; got outcome: {outcome}"
+    );
 
     // The fast client must have received at least 100 frames uninterrupted.
     let received = tokio::time::timeout(

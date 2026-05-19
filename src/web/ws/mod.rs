@@ -2,13 +2,14 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 
 use actix_web::{web, HttpRequest, HttpResponse};
-use actix_ws::{AggregatedMessage, Session};
+use actix_ws::{AggregatedMessage, CloseCode, CloseReason, Session};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
 
 use crate::web::subs::DelegationHandle;
@@ -226,6 +227,8 @@ fn handle_subscribe(
 
     let handle = actix_web::rt::spawn(subscription_task(
         sub.sink,
+        sub.buffered_bytes,
+        sub.close_notify,
         sub.delegation,
         sub_id,
         session.clone(),
@@ -259,14 +262,35 @@ fn handle_unsubscribe(
 // ---------------------------------------------------------------------------
 
 async fn subscription_task(
-    mut sink:    mpsc::UnboundedReceiver<Value>,
-    _delegation: Arc<DelegationHandle>,
-    sub_id:      i64,
-    mut session: Session,
+    mut sink:       mpsc::UnboundedReceiver<(Value, usize)>,
+    buffered_bytes: Arc<std::sync::atomic::AtomicUsize>,
+    close_notify:   Arc<Notify>,
+    _delegation:    Arc<DelegationHandle>,
+    sub_id:         i64,
+    mut session:    Session,
 ) {
-    while let Some(data) = sink.recv().await {
-        if session.text(event_text(sub_id, data)).await.is_err() {
-            break;
+    loop {
+        tokio::select! {
+            // Out-of-band backpressure signal: fires immediately when the fanout
+            // task detects the outbound queue has grown past MAX_BUFFERED_BYTES,
+            // regardless of how many frames are still queued in `sink`.
+            _ = close_notify.notified() => {
+                tracing::warn!(sub_id, "outbound buffer exceeded limit; disconnecting");
+                session.close(Some(CloseReason {
+                    code:        CloseCode::Policy,
+                    description: None,
+                })).await.ok();
+                break;
+            }
+            msg = sink.recv() => {
+                let Some((data, byte_estimate)) = msg else { break };
+                buffered_bytes.fetch_update(Relaxed, Relaxed, |cur| {
+                    Some(cur.saturating_sub(byte_estimate))
+                }).ok();
+                if session.text(event_text(sub_id, data)).await.is_err() {
+                    break;
+                }
+            }
         }
     }
 }

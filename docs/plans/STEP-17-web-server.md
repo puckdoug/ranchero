@@ -400,7 +400,7 @@ fail, write the smallest code that makes it pass.
       appears in the tracing log; other clients are
       unaffected. Marked `#[ignore = "slow: pushes 8 MB
       through a real socket"]`.
-- [ ] **17.27-I** Each per-client task owns an
+- [x] **17.27-I** Each per-client task owns an
       `mpsc::Sender<Bytes>` of bounded capacity. A
       separate `BufferedBytes(AtomicUsize)` per client
       tracks the sum of `frame.len()` for everything
