@@ -37,6 +37,7 @@ prost-reflect = "0.14"
 zwift-api = { path = "crates/zwift-api" }
 zwift-proto = { path = "crates/zwift-proto" }
 zwift-relay = { path = "crates/zwift-relay" }
+zwift-stats = { path = "crates/zwift-stats" }
 zwift-store = { path = "crates/zwift-store" }
 actix-web   = { version = "4", features = ["rustls-0_23"] }
 actix-cors  = "0.7"

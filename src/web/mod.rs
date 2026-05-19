@@ -2,9 +2,10 @@
 
 mod server;
 pub mod state;
-pub(crate) mod http;
+pub mod http;
 pub(crate) mod ws;
 pub(crate) mod subs;
 
 pub use server::{start, WebError, WebServerHandle};
 pub use state::WebState;
+pub use zwift_stats::AthleteRegistry;

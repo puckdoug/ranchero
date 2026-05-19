@@ -131,7 +131,7 @@ fail, write the smallest code that makes it pass.
       `GET /api/` returns a JSON directory listing of
       registered endpoints, status 200, content-type
       `application/json`.
-- [ ] **17.4-I** Build the actix-web `App` inside the
+- [x] **17.4-I** Build the actix-web `App` inside the
       `HttpServer::new(...)` factory closure. Register
       the API directory handler that returns the list of
       mounted `/api/...` routes from a static manifest.
@@ -140,7 +140,7 @@ fail, write the smallest code that makes it pass.
       `Access-Control-Allow-Origin: *` and
       `Access-Control-Allow-Headers: *`. The same applies
       to `OPTIONS /pages/...` and `OPTIONS /shared/...`.
-- [ ] **17.5-I** Wrap the `/api`, `/pages`, and `/shared`
+- [x] **17.5-I** Wrap the `/api`, `/pages`, and `/shared`
       scopes with `actix_cors::Cors`. Allow any origin
       and any header; allow methods `GET`, `HEAD`,
       `OPTIONS`, and `POST`.
@@ -150,7 +150,7 @@ fail, write the smallest code that makes it pass.
       missing one; accepts `self`, `watching`, or a
       numeric id; emits JSON whose top-level field names
       match `_formatAthleteData` in `stats.mjs:2050+`.
-- [ ] **17.6-I** Implement `athlete_v1_handler(path)`.
+- [x] **17.6-I** Implement `athlete_v1_handler(path)`.
       Resolve `self` / `watching` through the daemon's
       `WatchedAthlete` state. The formatter is a port of
       `_formatAthleteData`; the test contract is
@@ -159,14 +159,14 @@ fail, write the smallest code that makes it pass.
       `GET /api/nearby/v1` returns a JSON array of
       nearby athletes; element fields match
       `_formatNearby` in `stats.mjs:2117+`.
-- [ ] **17.7-I** Implement `nearby_v1_handler()`. Reads
+- [x] **17.7-I** Implement `nearby_v1_handler()`. Reads
       from `AthleteRegistry` through the daemon's
       read-only snapshot path (see §17.20).
 - [x] **17.8-T** `tests/http_groups_v1.rs` —
       `GET /api/groups/v1` returns a JSON object with
       the v1 group-classification shape
       (`stats.mjs:2150+`).
-- [ ] **17.8-I** Implement `groups_v1_handler()`. Uses
+- [x] **17.8-I** Implement `groups_v1_handler()`. Uses
       `AthleteRegistry::groups`, which is already
       populated by `compute_groups` in
       `zwift-stats::groups`.
@@ -174,7 +174,7 @@ fail, write the smallest code that makes it pass.
       `GET /api/anything-unknown` returns 200 with the
       API directory listing rather than a 404 body,
       matching `webserver.mjs:490-494`.
-- [ ] **17.9-I** Add a `default_service` on the `/api`
+- [x] **17.9-I** Add a `default_service` on the `/api`
       scope so unmatched `/api/...` paths delegate to the
       API directory handler.
 

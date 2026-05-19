@@ -2906,6 +2906,7 @@ dependencies = [
  "zwift-api",
  "zwift-proto",
  "zwift-relay",
+ "zwift-stats",
  "zwift-store",
 ]
 

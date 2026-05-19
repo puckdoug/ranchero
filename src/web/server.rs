@@ -7,6 +7,7 @@ use actix_web::{web, App, HttpServer};
 use tokio::sync::Notify;
 
 use crate::config::ResolvedConfig;
+use super::http::configure_api;
 use super::state::WebState;
 
 // ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ pub async fn start(
     let server = HttpServer::new(move || {
         App::new()
             .app_data(state_data.clone())
+            .configure(configure_api)
     })
     .bind(&bind_addr)
     .map_err(WebError::Bind)?;
