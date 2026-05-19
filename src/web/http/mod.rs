@@ -8,7 +8,7 @@ use actix_web::body::MessageBody;
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::http::{header, StatusCode};
 use actix_web::middleware::{from_fn, Next};
-use actix_web::{web, Error, HttpResponse};
+use actix_web::{web, Error, HttpRequest, HttpResponse};
 use serde_json::json;
 use zwift_stats::AthleteData;
 
@@ -66,12 +66,8 @@ fn api_directory() -> serde_json::Value {
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// Formatters
 // ---------------------------------------------------------------------------
-
-async fn api_root_handler() -> HttpResponse {
-    HttpResponse::Ok().json(api_directory())
-}
 
 fn format_athlete(
     athlete: &AthleteData,
@@ -94,30 +90,98 @@ fn format_athlete(
     obj
 }
 
+fn format_athlete_v2(
+    athlete: &AthleteData,
+    resources: &[String],
+    watching_id: Option<u32>,
+    self_athlete_id: Option<u32>,
+) -> serde_json::Value {
+    if resources.is_empty() {
+        // No filter: v1 shape with version: 2 added.
+        let mut obj = format_athlete(athlete, watching_id, self_athlete_id);
+        obj["version"] = json!(2);
+        obj
+    } else {
+        // Return only the requested resource fields.
+        let mut obj = serde_json::Map::new();
+        for resource in resources {
+            let value = match resource.as_str() {
+                "stats"            => json!({}),
+                "lap"              => json!({}),
+                "lastLap"          => json!(null),
+                "laps"             => json!([]),
+                "segments"         => json!([]),
+                "events"           => json!([]),
+                "state"            => json!(null),
+                "athlete"          => json!(null),
+                "timeInPowerZones" => json!(null),
+                _                  => continue,
+            };
+            obj.insert(resource.clone(), value);
+        }
+        serde_json::Value::Object(obj)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Query helpers
+// ---------------------------------------------------------------------------
+
+fn parse_resources(query: &str) -> Vec<String> {
+    serde_urlencoded::from_str::<Vec<(String, String)>>(query)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(k, _)| k == "resource")
+        .map(|(_, v)| v)
+        .collect()
+}
+
+fn resolve_athlete_id(id_str: &str, state: &WebState) -> Option<u32> {
+    match id_str {
+        "watching" => state.watching_id,
+        "self"     => state.self_athlete_id,
+        s          => s.parse::<u32>().ok(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+async fn api_root_handler() -> HttpResponse {
+    HttpResponse::Ok().json(api_directory())
+}
+
 async fn athlete_v1_handler(
     state: web::Data<Arc<WebState>>,
     path:  web::Path<String>,
 ) -> HttpResponse {
-    let id_str = path.into_inner();
-    let athlete_id = match id_str.as_str() {
-        "watching" => match state.watching_id {
-            Some(id) => id,
-            None     => return HttpResponse::NotFound().finish(),
-        },
-        "self" => match state.self_athlete_id {
-            Some(id) => id,
-            None     => return HttpResponse::NotFound().finish(),
-        },
-        s => match s.parse::<u32>() {
-            Ok(id)  => id,
-            Err(_)  => return HttpResponse::NotFound().finish(),
-        },
+    let athlete_id = match resolve_athlete_id(&path.into_inner(), &state) {
+        Some(id) => id,
+        None     => return HttpResponse::NotFound().finish(),
     };
-
     let registry = state.registry.read().unwrap();
     match registry.get(athlete_id) {
         Some(athlete) => HttpResponse::Ok()
             .json(format_athlete(athlete, state.watching_id, state.self_athlete_id)),
+        None => HttpResponse::NotFound().finish(),
+    }
+}
+
+async fn athlete_v2_handler(
+    state: web::Data<Arc<WebState>>,
+    path:  web::Path<String>,
+    req:   HttpRequest,
+) -> HttpResponse {
+    let athlete_id = match resolve_athlete_id(&path.into_inner(), &state) {
+        Some(id) => id,
+        None     => return HttpResponse::NotFound().finish(),
+    };
+    let resources = parse_resources(req.query_string());
+    let registry = state.registry.read().unwrap();
+    match registry.get(athlete_id) {
+        Some(athlete) => HttpResponse::Ok()
+            .json(format_athlete_v2(athlete, &resources, state.watching_id, state.self_athlete_id)),
         None => HttpResponse::NotFound().finish(),
     }
 }
@@ -131,24 +195,53 @@ async fn nearby_v1_handler(state: web::Data<Arc<WebState>>) -> HttpResponse {
     HttpResponse::Ok().json(body)
 }
 
+async fn nearby_v2_handler(
+    state: web::Data<Arc<WebState>>,
+    req:   HttpRequest,
+) -> HttpResponse {
+    let resources = parse_resources(req.query_string());
+    let registry = state.registry.read().unwrap();
+    let body: Vec<serde_json::Value> = registry
+        .iter()
+        .map(|(_, a)| format_athlete_v2(a, &resources, state.watching_id, state.self_athlete_id))
+        .collect();
+    HttpResponse::Ok().json(body)
+}
+
 async fn groups_v1_handler(state: web::Data<Arc<WebState>>) -> HttpResponse {
     let registry = state.registry.read().unwrap();
+    let body = group_athletes(&registry, |a| {
+        format_athlete(a, state.watching_id, state.self_athlete_id)
+    });
+    HttpResponse::Ok().json(body)
+}
 
+async fn groups_v2_handler(
+    state: web::Data<Arc<WebState>>,
+    req:   HttpRequest,
+) -> HttpResponse {
+    let resources = parse_resources(req.query_string());
+    let registry = state.registry.read().unwrap();
+    let body = group_athletes(&registry, |a| {
+        format_athlete_v2(a, &resources, state.watching_id, state.self_athlete_id)
+    });
+    HttpResponse::Ok().json(body)
+}
+
+fn group_athletes<F>(registry: &zwift_stats::AthleteRegistry, fmt: F) -> Vec<serde_json::Value>
+where
+    F: Fn(&AthleteData) -> serde_json::Value,
+{
     let mut by_group: HashMap<u32, Vec<serde_json::Value>> = HashMap::new();
     for (_, athlete) in registry.iter() {
         if let Some(gid) = athlete.group_id {
-            by_group
-                .entry(gid)
-                .or_default()
-                .push(format_athlete(athlete, state.watching_id, state.self_athlete_id));
+            by_group.entry(gid).or_default().push(fmt(athlete));
         }
     }
-
-    let body: Vec<serde_json::Value> = by_group
+    by_group
         .into_values()
         .map(|athletes| json!({ "athletes": athletes }))
-        .collect();
-    HttpResponse::Ok().json(body)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -168,8 +261,11 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .wrap(from_fn(fix_preflight))
             .route("/", web::get().to(api_root_handler))
             .route("/athlete/v1/{id}", web::get().to(athlete_v1_handler))
-            .route("/nearby/v1", web::get().to(nearby_v1_handler))
-            .route("/groups/v1", web::get().to(groups_v1_handler))
+            .route("/athlete/v2/{id}", web::get().to(athlete_v2_handler))
+            .route("/nearby/v1",       web::get().to(nearby_v1_handler))
+            .route("/nearby/v2",       web::get().to(nearby_v2_handler))
+            .route("/groups/v1",       web::get().to(groups_v1_handler))
+            .route("/groups/v2",       web::get().to(groups_v2_handler))
             .default_service(web::route().to(api_root_handler)),
     );
 }

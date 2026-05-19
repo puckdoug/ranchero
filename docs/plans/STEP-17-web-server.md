@@ -185,7 +185,7 @@ fail, write the smallest code that makes it pass.
       returns only the requested resources; `?stats=true`
       includes the extended statistics block; omitting
       the query returns the v1 shape under a v2 wrapper.
-- [ ] **17.10-I** Implement `athlete_v2_handler(path,
+- [x] **17.10-I** Implement `athlete_v2_handler(path,
       query)`. Parse the multi-valued `resource` query
       parameter and the boolean `stats` parameter, reuse
       the v1 formatter, and apply resource filtering on
@@ -193,7 +193,7 @@ fail, write the smallest code that makes it pass.
 - [x] **17.11-T** `tests/http_nearby_v2.rs` and
       `tests/http_groups_v2.rs` — same resource
       filtering applied to nearby and groups.
-- [ ] **17.11-I** Implement `nearby_v2_handler` and
+- [x] **17.11-I** Implement `nearby_v2_handler` and
       `groups_v2_handler` using the shared filter
       helper.
 
