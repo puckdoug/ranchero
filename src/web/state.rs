@@ -6,6 +6,7 @@ use zwift_stats::AthleteRegistry;
 
 use crate::daemon::relay::GameEvent;
 use super::rpc::RpcRegistry;
+use super::subs::DelegationMap;
 
 /// Shared state threaded through every actix-web request handler.
 pub struct WebState {
@@ -14,6 +15,7 @@ pub struct WebState {
     pub self_athlete_id: Option<u32>,
     pub rpc:             Option<RpcRegistry>,
     pub game_events_tx:  Option<broadcast::Sender<GameEvent>>,
+    pub delegations:     DelegationMap,
 }
 
 impl WebState {
@@ -24,6 +26,7 @@ impl WebState {
             self_athlete_id: None,
             rpc:             None,
             game_events_tx:  None,
+            delegations:     DelegationMap::new(),
         }
     }
 
@@ -38,6 +41,7 @@ impl WebState {
             self_athlete_id,
             rpc:             None,
             game_events_tx:  None,
+            delegations:     DelegationMap::new(),
         }
     }
 
@@ -48,6 +52,7 @@ impl WebState {
             self_athlete_id: None,
             rpc:             Some(rpc),
             game_events_tx:  None,
+            delegations:     DelegationMap::new(),
         }
     }
 

@@ -8,11 +8,10 @@ use actix_ws::{AggregatedMessage, Session};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::daemon::relay::GameEvent;
-use crate::web::http::format_athlete;
+use crate::web::subs::DelegationHandle;
 use crate::web::state::WebState;
 
 // ---------------------------------------------------------------------------
@@ -139,7 +138,7 @@ async fn client_task(
                 let reply = match method.as_deref() {
                     Some("rpc")         => dispatch_rpc(&state, uid, arg).await,
                     Some("subscribe")   => {
-                        handle_subscribe(&state, &mut session, &mut subs, uid, arg).await
+                        handle_subscribe(&state, &mut session, &mut subs, uid, arg)
                     }
                     Some("unsubscribe") => handle_unsubscribe(&mut subs, uid, arg),
                     _                   => err_frame(uid, "missing or unknown method"),
@@ -195,7 +194,7 @@ async fn dispatch_rpc(state: &WebState, uid: i64, arg: Option<Value>) -> String 
 // Subscribe / unsubscribe
 // ---------------------------------------------------------------------------
 
-async fn handle_subscribe(
+fn handle_subscribe(
     state:   &Arc<WebState>,
     session: &mut Session,
     subs:    &mut HashMap<i64, JoinHandle<()>>,
@@ -220,24 +219,18 @@ async fn handle_subscribe(
         None     => return err_frame(uid, "subscribe arg.subId is required"),
     };
 
-    if source != "stats" {
-        return err_frame(uid, format!("unknown source: {source}"));
-    }
-
-    let game_tx = match state.game_events_tx.as_ref() {
-        Some(tx) => tx.clone(),
-        None     => return err_frame(uid, "stats source not available"),
+    let sub = match state.delegations.subscribe(&source, &event, state) {
+        Ok(h)  => h,
+        Err(e) => return err_frame(uid, e),
     };
 
     let handle = actix_web::rt::spawn(subscription_task(
-        game_tx.subscribe(),
-        Arc::clone(state),
-        event,
+        sub.sink,
+        sub.delegation,
         sub_id,
         session.clone(),
     ));
     subs.insert(sub_id, handle);
-
     ok_frame(uid, None)
 }
 
@@ -266,43 +259,14 @@ fn handle_unsubscribe(
 // ---------------------------------------------------------------------------
 
 async fn subscription_task(
-    mut rx: broadcast::Receiver<GameEvent>,
-    state:  Arc<WebState>,
-    event:  String,
-    sub_id: i64,
+    mut sink:    mpsc::UnboundedReceiver<Value>,
+    _delegation: Arc<DelegationHandle>,
+    sub_id:      i64,
     mut session: Session,
 ) {
-    loop {
-        match rx.recv().await {
-            Ok(GameEvent::PlayerState { athlete_id, .. }) => {
-                if event == "athlete/watching" {
-                    let watched = state.watching_id.map(|id| id as i64);
-                    if watched != Some(athlete_id) {
-                        continue;
-                    }
-                }
-
-                let athlete_id_u32 = match u32::try_from(athlete_id) {
-                    Ok(id) => id,
-                    Err(_) => continue,
-                };
-
-                let data = {
-                    let registry = state.registry.read().unwrap();
-                    registry.get(athlete_id_u32).map(|a| {
-                        format_athlete(a, state.watching_id, state.self_athlete_id)
-                    })
-                };
-
-                if let Some(data) = data {
-                    if session.text(event_text(sub_id, data)).await.is_err() {
-                        break;
-                    }
-                }
-            }
-            Ok(_) => {}
-            Err(broadcast::error::RecvError::Closed)     => break,
-            Err(broadcast::error::RecvError::Lagged(_))  => continue,
+    while let Some(data) = sink.recv().await {
+        if session.text(event_text(sub_id, data)).await.is_err() {
+            break;
         }
     }
 }

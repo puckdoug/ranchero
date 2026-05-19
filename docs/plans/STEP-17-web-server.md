@@ -308,7 +308,7 @@ fail, write the smallest code that makes it pass.
       subscribe with `source:"stats"` finds the
       registered source; an unknown source produces
       `success:false` with a clear error.
-- [ ] **17.20-I** Add a `SourceRegistry`
+- [x] **17.20-I** Add a `SourceRegistry`
       (`HashMap<&'static str, Box<dyn EventSource>>`)
       to the shared web state. Built-in sources at this
       step: `stats`, `gameConnection`. Later steps
@@ -321,7 +321,7 @@ fail, write the smallest code that makes it pass.
       emission; one unsubscribes; the upstream listener
       stays attached; the second unsubscribes; the
       upstream listener is removed.
-- [ ] **17.21-I** `Delegations: HashMap<(SourceId,
+- [x] **17.21-I** `Delegations: HashMap<(SourceId,
       EventId, OptionsHash), Arc<Delegation>>`. The
       reference count is `Arc::strong_count` on the
       `Delegation`; when the last client drops its
@@ -332,7 +332,7 @@ fail, write the smallest code that makes it pass.
       athlete emits frames whose `data` shape matches
       the v1 athlete formatter; the value updates as
       the underlying `AthleteData` ingests samples.
-- [ ] **17.22-I** Implement the `stats` source. It
+- [x] **17.22-I** Implement the `stats` source. It
       exposes `subscribe(event_path, options, sink)`
       and internally subscribes to the daemon-internal
       stats broadcast, filtering by event path.
