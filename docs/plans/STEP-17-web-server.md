@@ -911,7 +911,7 @@ doc-comment naming the upstream call
       production callers of `ps_f10` exist
       (confirm with a grep across `src/` and
       `crates/`), so the rename is mechanical.
-- [ ] **17.28-T** `tests/proto_to_stats_routing.rs`.
+- [x] **17.28-T** `tests/proto_to_stats_routing.rs`.
       Given a fixture `zwift_proto::PlayerState`
       built in-test with explicit field
       assignments, `route_player_state(&proto,
