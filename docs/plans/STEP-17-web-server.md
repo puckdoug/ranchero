@@ -419,97 +419,780 @@ STEP 17 is the first place that connects decoded
 `PlayerState` records to the `AthleteData` stream the
 widgets read.
 
-- [ ] **17.28-T** `tests/proto_to_stats_routing.rs` —
-      given a fixture `GameEvent::PlayerState`, the
-      proto-to-stats router calls `registry.upsert(...)`
-      and then the five
-      `ingest_power / ingest_hr / ingest_speed /
-      ingest_cadence / ingest_draft` calls on the
-      resulting `AthleteData`, with the right unit
-      conversions (proto sends `u_hz` for cadence,
-      stats wants `rpm`; proto sends `mm_h` for speed,
-      stats wants `m/s`).
-- [ ] **17.28-I** Implement
-      `route_player_state(event, registry, now)` in
-      `src/web/proto_to_stats.rs`. The function is
-      proto-aware so that `zwift-stats` stays
-      proto-free.
+#### Resolved questions
+
+The investigation below settles the issues that came
+up while reading 17.28 — 17.33 against the existing
+code. Each item carries a one-line **Decision** that
+the implementation must follow.
+
+1. **Input type for `route_player_state`** —
+   resolved by reading `stats.mjs:2999-3024`.
+   sauce4zwift's `processState(state, now)` takes the
+   decoded `PlayerState` object directly, with
+   property access (`state.athleteId`,
+   `state.worldTime`, `state.courseId`, `state.sport`,
+   `state.power`, `state.speed`, `state.heartrate`,
+   `state.cadence`, `state.draft`, etc.). It is not a
+   slim event variant. The object is the proto shape
+   with a few annotations bolted on
+   (`state.latlng`, `state.altitude`, `state.grade`)
+   that sauce4zwift computes inside `processState`
+   itself.
+
+   **Decision:** `route_player_state` takes
+   `&zwift_proto::PlayerState` directly. Annotations
+   such as latlng/altitude/grade, which sauce4zwift
+   computes inside `processState`, are out of scope
+   for 17.28 and will be added in a later item if a
+   widget needs them. `GameEvent::PlayerState`
+   remains a transport-only summary used by
+   subscribers that do not need the full proto.
+
+2. **Source for `ingest_draft`** — resolved by
+   reading `sauce4zwift/src/zwift.proto:14` and
+   `stats.mjs:3392`. sauce4zwift's reverse-engineered
+   proto names field 10 `draft`. The zoffline proto
+   we vendored
+   (`crates/zwift-proto/proto/udp-node-msgs.proto:122`)
+   leaves the same field 10 as `optional int32
+   ps_f10 = 10` with a speculative comment
+   ("BikeEntity.field_B58; 0 - ETA related"). The
+   field's wire format is identical; only the
+   schema annotation differs. sauce4zwift then
+   feeds `ad.bucket.draft.add(time, state.draft)`
+   directly from this field.
+
+   **Decision:** rename `ps_f10` to `draft` in
+   `crates/zwift-proto/proto/udp-node-msgs.proto`,
+   with a comment recording the conflict between
+   the zoffline and sauce4zwift schemas and a note
+   that sauce4zwift's name is adopted because it is
+   the one actually used in production. The 17.28
+   router then reads `proto.draft` for
+   `ingest_draft`. The proto regeneration is a
+   pre-requisite for 17.28-I and gets its own
+   sub-item (see 17.28-P below).
+
+3. **Missing `course_id` / `sport`** — resolved by
+   reading `stats.mjs:3003` and `3158`. sauce4zwift
+   does not check for absent fields. It reads
+   `state.courseId` and `state.sport` directly; in
+   proto3 a missing scalar reads as `0`, and the
+   JS code passes that `0` straight through (e.g.
+   `worldMetas[0]` becomes `undefined` and the
+   later branch silently skips). In effect, missing
+   = `0` with no special handling.
+
+   **Decision:** match sauce4zwift. Read
+   `proto.world` for course (the zoffline schema
+   names it `world`, field 35) and `proto.sport`
+   directly; treat the absent case as `0`.
+   `world == 0` is a real Zwift course identifier in
+   some captures, so we never log this case.
+
+4. **`now` versus `world_time` semantics** —
+   restating the issue more thoroughly. The
+   `AthleteRegistry::upsert(athlete_id, course_id,
+   sport, world_time, now)` signature takes two
+   `f64` time arguments that mean different things:
+   - `world_time` is the Zwift world clock in
+     seconds — derived from `proto.worldTime` (a
+     `uint64` of milliseconds). The collectors
+     anchor every sample to this clock. It can
+     jump backwards if a packet arrives out of
+     order, and it can skip forward on a session
+     resume.
+   - `now` is monotonic seconds since process
+     start. It drives garbage-collection
+     timeouts (`record_update` writes
+     `internal_accessed = now`). It never goes
+     backwards.
+
+   The `ingest_*(now, time, value)` methods take
+   **both**, for the same reason. `now` is the GC
+   anchor; `time` is the world clock.
+
+   sauce4zwift uses `monotonic()` for `now` and
+   `(state.worldTime - ad.wtOffset) / 1000` for
+   `time` (see `stats.mjs:3392`); the `wtOffset`
+   is the world-time at session start, so `time`
+   is "seconds since this athlete was first seen
+   in this session".
+
+   **Decision:** `route_player_state(proto,
+   registry, now: f64)` — `now` is monotonic
+   seconds, supplied by the caller. The function
+   computes `world_time = proto.worldTime as f64
+   / 1000.0` internally for `upsert` and
+   `ingest_*`. The `wtOffset` style ("seconds
+   since first seen") can wait for a later
+   item; the test only needs to assert that the
+   conversion happens and the right value is
+   passed.
+
+5. **DataCollector buffering** — accepted as
+   surfacing a likely design defect. The
+   1-second-deferred flush is a sauce4zwift
+   inheritance and may itself be a bug worth
+   raising separately (it makes single-point
+   inspection impossible).
+
+   **Decision:** add a `flush_all()` method to
+   `DataBucket` (option b) that calls
+   `flush()` on each of the five collectors.
+   The 17.28-T test calls `route_player_state`
+   followed by `bucket.flush_all()` before
+   asserting on `max_value()`. Record in the
+   as-built notes that the deferred-flush
+   behaviour is potentially a logic bug inherited
+   from sauce4zwift and warrants a follow-up
+   read of the upstream code to decide whether to
+   keep it.
+
+6. **`GC_TICK_INTERVAL_SECS` location** —
+   accepted recommendation (a).
+
+   **Decision:** re-export
+   `GC_TICK_INTERVAL_SECS` from
+   `zwift-stats::periods` (where it already
+   lives at `62.768`) and use it directly inside
+   `src/web/state.rs`. No second constant. Update
+   17.32-I and 17.33-T accordingly.
+
+7. **Line-number citations to `stats.mjs`** —
+   accepted. sauce4zwift is a moving target;
+   the line numbers drift on every refactor.
+
+   **Decision:** stop citing line numbers in
+   plan items and source comments. Use the
+   function name (`processState`,
+   `_preprocessState`, `_gcAthleteData`) plus a
+   short quote or property reference (e.g.
+   `state.draft`, `setInterval(... , 62768)`)
+   so a `grep` against the upstream tree
+   relocates the reference even after a
+   refactor. Apply this retroactively where
+   line numbers already appear in this plan
+   and in STEP 14 / STEP 15 notes.
+
+8. **17.30 detector match strategy** — accepted
+   recommendation: integer-typed detector
+   (`active_segment_check`) for primary
+   assertions, `eps = 1e-9` for any float
+   side-effect.
+
+   **Decision:** 17.30-T runs
+   `active_segment_check` against a synthetic
+   `zwift_proto::PlayerState` and a parallel
+   `MostRecentState` built from the same values,
+   asserts the resulting `active_segments`
+   key set is identical, and compares any
+   float side-effects with `1e-9` tolerance.
+
+9. **17.31 `EventBehavior` plumbing** — there
+   was no question; this was a note flagging
+   that `apply_event_state` already accepts
+   `EventBehavior`, so 17.31-I is only adding
+   the production call site, not the type.
+   Resolved.
+
+   **Decision:** 17.31-I both adds the config
+   surface (`StatsConfig` in the file schema,
+   `event_behavior: EventBehavior` on
+   `ResolvedConfig`) and adds the first
+   production call site for `apply_event_state`
+   inside `route_player_state` (or a sibling
+   inside `src/web/proto_to_stats.rs`),
+   passing the resolved `EventBehavior` through.
+
+10. **17.32 `GcReport` tracing level** —
+    accepted: `debug`.
+
+    **Decision:** the GC tick emits one
+    `tracing::debug!` per tick with the
+    `GcReport` field counts
+    (`athletes_collected`, `groups_collected`,
+    etc., matching the struct field names).
+    17.32-T captures the event via
+    `tracing-subscriber`'s test layer and
+    asserts the field counts.
+
+11. **17.29 fixture under the resolved input
+    type** — there was no question; this was a
+    dependency note on item 1. Now that 1
+    resolves to "take `&zwift_proto::PlayerState`",
+    17.29's fixture is two proto values for the
+    same athlete with different `world` (course)
+    fields. Resolved.
+
+12. **What "identity" means in 17.29** —
+    the term as used in the previous plan draft
+    was ambiguous. In sauce4zwift,
+    `_preprocessState` (stats.mjs, search for
+    `World change triggering lap`) reacts to a
+    change in *world / sport context* — not to
+    rider identity (which never changes) and not
+    to event identity (which is handled
+    separately around `eventSubgroupId`).
+    Specifically, the JS code reacts when any of
+    these change between two consecutive states
+    for the same athlete:
+    - `state.sport`
+    - `state.courseId`
+    - `state.distance` decreases (a reset)
+
+    On any of these, sauce4zwift:
+    - assigns `ad.sport = state.sport`
+    - assigns `ad.courseId = state.courseId`
+    - adds the previous `state.distance` into
+      `ad.distanceOffset`
+    - clears `ad.autoLapMark` and the route cache
+    - forces `state.grade = 0` for this state
+    - calls `startAthleteLap(ad, now)`
+
+    This is materially more than "overwrite
+    identity" — it is a session-context reset.
+    The three options in the previous plan
+    draft (overwrite identity / reset
+    collectors / replace record) do not include
+    this real behaviour.
+
+    **Decision:** 17.29 adopts the sauce4zwift
+    behaviour as a fourth, named option:
+    "**course-or-sport-change triggers a
+    session-context update**". Concretely:
+    - `AthleteData.course_id` and
+      `AthleteData.sport` are overwritten.
+    - A new lap is started via the existing
+      `start_athlete_lap` (already in
+      `zwift-stats`).
+    - The `distance_offset` bump and the
+      grade-zero side-effect are deferred to
+      a later item, because they require
+      fields (`distance`, `grade`) the current
+      `AthleteData` does not yet carry. Record
+      this deferral in the as-built notes.
+
+    "Identity" as a term is dropped from the
+    plan; the section renames to "session
+    context".
+
+13. **17.30 fixture construction** — accepted
+    recommendation (b): a small test-only
+    builder.
+
+    **Decision:** the 17.30-T test file
+    includes a private `fn make_state(...) ->
+    zwift_proto::PlayerState` builder that sets
+    the fields `active_segment_check` reads and
+    leaves the rest at proto defaults. The
+    builder lives in the test file and is not
+    exported.
+
+14. **17.30 absent-field semantics** —
+    restating the issue. `PlayerStateView`
+    returns concrete types (`f64`, `u32`,
+    `u16`) with no `Option`. The proto's
+    `optional` fields decode to
+    `Option<T>` in prost. The impl needs a
+    rule for what `view.power()` returns when
+    `proto.power` is `None`. Two reasonable
+    rules:
+    - **(a) Treat `None` as `0`/`0.0`.**
+      Matches the proto3 default semantics
+      sauce4zwift relies on, and matches the
+      `MostRecentState` impl, which uses
+      concrete defaults.
+    - **(b) Return a `NaN`/`u32::MAX`
+      sentinel.** Lets downstream code
+      distinguish "absent" from "zero". No
+      sauce4zwift code does this.
+
+    **Decision:** option (a). All absent proto
+    fields read through `PlayerStateView`
+    return the type's zero value, matching
+    sauce4zwift. Pin this in the doc-comment
+    on the impl.
+
+15. **17.32 testable seam** — accepted
+    recommendation (a): factor the tick body
+    out into a free async function.
+
+    **Decision:** add `pub(crate) async fn
+    gc_tick_loop(state: Arc<WebState>, interval:
+    Duration)` in `src/web/state.rs`.
+    `web::start()` calls
+    `tokio::spawn(gc_tick_loop(state.clone(),
+    Duration::from_secs_f64(GC_TICK_INTERVAL_SECS)))`.
+    17.32-T spawns the loop inside a paused-time
+    runtime and uses `tokio::time::advance()` to
+    drive the tick.
+
+16. **17.33 doc-comment assertion** — accepted
+    recommendation (a): drop the assertion.
+
+    **Decision:** 17.33-T asserts only the
+    constant's value (`62.768`). The
+    doc-comment that names `_gcAthleteData` /
+    `setInterval(... , 62768)` is a code-review
+    item, not a runtime assertion. Remove the
+    `include_str!` idea entirely.
+
+#### Follow-up investigation results
+
+These items were raised as "verify at
+implementation time" but resolved during plan
+review on `2026-05-19`. They are decided; no
+further analysis is needed.
+
+**A. `auto_reset_events` / `auto_lap_events`
+defaults.** Read `sauce4zwift/src/app.mjs`
+`SauceApp.getSetting(key, def)`: returns
+`_settings[key]` if present, else `def` (with
+side-effect of persisting `def`). When
+`stats.mjs` calls `app.getSetting('autoResetEvents')`
+with no `def`, the result is `undefined`, and
+`!!undefined === false`. Same for
+`autoLapEvents`. The settings UI
+(`overview-settings.html`) presents the two
+as mutually exclusive checkboxes with no
+preset. **Both defaults are `false`.** STEP
+15's note that both default to `true` is
+incorrect; 17.31-T must assert `false` /
+`false` defaults.
+
+**B. `apply_event_state` call-site design.**
+sauce4zwift's equivalent is inlined in
+`processState`. Required inputs identified:
+- An event-subgroup cache populated lazily
+  by background fetches (`_recentEventSubgroups`).
+- A monotonic `now`.
+- A wall-clock millisecond reading for
+  `sg.end_ts` comparison.
+- The watched athlete ID for the privacy
+  flags branch.
+
+Resulting router signature:
+
+```
+fn route_player_state(
+    proto:         &zwift_proto::PlayerState,
+    state:         &Arc<WebState>,
+    now:           f64,
+    wall_clock_ms: u64,
+)
+```
+
+`WebState` gains
+`event_subgroups: Arc<RwLock<HashMap<u32, EventSubgroup>>>`.
+Population of that cache is **out of scope
+for 17.31** but the field must exist so
+`apply_event_state` can read it.
+17.31-I locks the cache for read, reads
+`state.config.event_behavior`, and calls
+`apply_event_state(ad, &proto_view,
+state.self_athlete_id.unwrap_or(0),
+&sg_lookup, behavior, now, wall_clock_ms)`.
+The caller supplies both `now` and
+`wall_clock_ms`; the router does not call
+`SystemTime::now()` itself, so tests can
+inject both.
+
+**C. `PlayerStateView` methods that
+`active_segment_check` actually calls.**
+Read from `crates/zwift-stats/src/segments.rs`:
+the function calls only `road_time`,
+`road_id`, `course_id`, `reverse`, and
+`world_time` on the view. Backing proto
+fields:
+
+- `road_time()` ← `proto.roadTime as f64`
+  (proto i32; "1/100 sec" per the proto
+  comment).
+- `road_id()` ← bit-decoded from
+  `proto.aux3`: `((aux3 >> 8) & 0xffff) as u32`.
+  Matches sauce4zwift's
+  `decodePlayerStateFlags2Into` in
+  `sauce4zwift/src/zwift.mjs`
+  (`obj.roadId = bits >>> 8 & 0xffff`).
+- `course_id()` ← `proto.world as u32`.
+- `reverse()` ← bit-decoded from `proto.f19`:
+  `(f19 & 0b100) == 0`. The bit is a
+  *forward* bit; reverse is the negation.
+  Matches sauce4zwift's
+  `decodePlayerStateFlags1Into`
+  (`obj.reverse = !(bits & 0b100)`).
+- `world_time()` ← `proto.worldTime as f64
+  / 1000.0`.
+
+17.30-I implements two small bit-decoders
+(call them `decode_flags1(u32) -> Flags1`
+and `decode_flags2(u32) -> Flags2`)
+alongside the `PlayerStateView` impl in
+`src/web/proto_view.rs`. The doc-comment on
+each decoder names the upstream function
+`decodePlayerStateFlags1Into` /
+`decodePlayerStateFlags2Into` (no line
+number).
+
+**D. 17.28-P downstream impact.** Grep on
+`ps_f10` across the workspace returns only
+the proto file and the plan documentation
+(no Rust callers in `src/` or any `crates/`
+subtree). Rename is mechanical. A
+`cargo check --workspace` after the rename
+is a sanity check, not a known risk.
+sauce4zwift's reverse-engineered schema
+confirms `int32 draft = 10` (search
+`sauce4zwift/src/zwift.proto` for the
+literal `int32 draft = 10`).
+
+**E. Distance, altitude, and grade.** The
+proto carries the source data and ranchero
+must consume it now, not later:
+
+- `proto.distance` (field 3, "meters", i32)
+  is the per-session distance.
+- `proto.z` (field 27, float) feeds altitude
+  via `(proto.z - worldMeta.seaLevel +
+  worldMeta.eleOffset) / 100 *
+  worldMeta.physicsSlopeScale`. World-meta
+  lookup is **out of scope for 17.28**;
+  initial implementation can store
+  `proto.z as f64 / 100.0` with no world
+  adjustment and a TODO that records the
+  deferral. (The world-meta tables are a
+  separate STEP-14-era data file we have
+  not yet vendored.)
+- `state.grade` is computed each frame as
+  `smooth_grade.push((altitude - prev_altitude)
+  / (event_distance - prev_event_distance))`
+  where `smooth_grade =
+  ExpWeightedAvg::new(8)` per sauce4zwift's
+  `Sauce.data.expWeightedAvg(8)`.
+- `ad.distanceOffset` accumulates the
+  pre-session distance on every
+  session-context change so cumulative
+  distance is monotonic.
+
+**Implication:** `AthleteData` grows four
+fields, and the router computes grade
+every frame. The earlier deferral of
+`distance_offset` and grade-zero in 17.29-I
+is revoked. New sub-item **17.28-Q**
+captures the `AthleteData` field additions
+and the grade computation; 17.29 is
+restored to its full sauce4zwift behaviour
+including the `distance_offset` bump and
+grade-zero side-effect.
+
+`ExpWeightedAvg` already exists in
+`zwift-stats`. The window constant `8` is
+pinned in
+`zwift-stats/src/periods.rs` as
+`SMOOTH_GRADE_WINDOW: usize = 8` with a
+doc-comment naming the upstream call
+`Sauce.data.expWeightedAvg(8)`.
+
+#### Checklist (updated to reflect the resolutions above)
+
+- [ ] **17.28-P** Pre-requisite proto schema
+      update. Rename `optional int32 ps_f10 =
+      10` to `optional int32 draft = 10` in
+      `crates/zwift-proto/proto/udp-node-msgs.proto`.
+      Replace the speculative comment with a
+      note that the field is `draft` per
+      sauce4zwift's reverse-engineered schema
+      (search `sauce4zwift/src/zwift.proto`
+      for `int32 draft = 10`) and that the
+      zoffline annotation `ps_f10` is rejected.
+      Rebuild the `prost` bindings. No
+      production callers of `ps_f10` exist
+      (confirm with a grep across `src/` and
+      `crates/`), so the rename is mechanical.
+- [ ] **17.28-T** `tests/proto_to_stats_routing.rs`.
+      Given a fixture `zwift_proto::PlayerState`
+      built in-test with explicit field
+      assignments, `route_player_state(&proto,
+      &state, now, wall_clock_ms)` causes
+      `registry.upsert(athlete_id, course_id,
+      sport, world_time, now)` to be called
+      with the proto-derived values, then
+      `ingest_power`, `ingest_hr`,
+      `ingest_speed`, `ingest_cadence`, and
+      `ingest_draft` on the resulting
+      `AthleteData`. The test calls
+      `bucket.flush_all()` (added in 17.28-I)
+      and asserts `max_value()` on each
+      collector against the right unit
+      conversions: `cadenceUHz` (µHz) → rpm =
+      `u_hz * 60 / 1_000_000`; `speed` (mm/h)
+      → m/s = `mm_h as f64 / 3_600_000.0`;
+      `power`, `heartrate`, and `draft` pass
+      through. The router reads `course_id`
+      from `proto.world` and `sport` from
+      `proto.sport`, treating absent fields as
+      `0`. `world_time` is `proto.worldTime as
+      f64 / 1000.0`; `now` is supplied by the
+      caller as monotonic seconds;
+      `wall_clock_ms` is supplied by the caller
+      as Unix-epoch milliseconds.
+- [ ] **17.28-I** Add `flush_all(&mut self)` to
+      `DataBucket` that calls `flush()` on
+      each of the five private collectors.
+      Implement
+      `route_player_state(proto:
+      &zwift_proto::PlayerState, state:
+      &Arc<WebState>, now: f64,
+      wall_clock_ms: u64)` in
+      `src/web/proto_to_stats.rs`. The
+      function is proto-aware so that
+      `zwift-stats` stays proto-free. The
+      router locks `state.registry` for write
+      and performs the upsert + ingest
+      sequence. Record in the as-built notes
+      that the one-second-deferred flush
+      inside `DataCollector` is potentially a
+      logic bug inherited from sauce4zwift's
+      `_preprocessState` flow and warrants a
+      follow-up read of the upstream code;
+      for now `flush_all()` is the explicit
+      knob.
+- [ ] **17.28-Q** Grow `AthleteData` so the
+      router can store per-frame
+      distance/altitude/grade. Adds:
+      - `distance: f64`
+      - `distance_offset: f64`
+      - `altitude: f64`
+      - `smooth_grade: ExpWeightedAvg`
+        (initialised with window
+        `SMOOTH_GRADE_WINDOW = 8`, defined in
+        `zwift-stats/src/periods.rs` with a
+        doc-comment naming
+        `Sauce.data.expWeightedAvg(8)`).
+
+      Test
+      `tests/athlete_distance_grade.rs` —
+      two consecutive `route_player_state`
+      calls for the same athlete with the
+      proto fields `distance`, `z`
+      (altitude), and `time`/`eventDistance`
+      set produce:
+      - `ad.distance == proto.distance as f64`
+        on the second call,
+      - `ad.altitude == proto.z as f64 /
+        100.0` (no world-meta adjustment yet
+        — TODO recorded inline),
+      - `ad.smooth_grade.value() ≈ (alt2 -
+        alt1) / (event_dist2 -
+        event_dist1)` within `1e-9`.
+
+      The world-meta-based altitude
+      adjustment (`(z - seaLevel + eleOffset)
+      / 100 * physicsSlopeScale`) is deferred
+      to a later step; record the deferral
+      inline.
 - [ ] **17.29-T**
-      `tests/registry_upsert_course_change.rs` — when
-      the same `athlete_id` arrives with a different
-      `course_id` than last seen, the test pins one of
-      three behaviours: overwrite identity, reset the
-      relevant collectors, or replace the record.
-- [ ] **17.29-I** Pick one of the three behaviours.
-      The recommendation, pending confirmation from a
-      real capture, is to overwrite the identity
-      fields on every upsert. Reasons: course changes
-      mid-ride are rare; the collectors are anchored
-      on `world_time`, not `course_id`, so resetting
-      them on a course change discards useful data; the
-      JavaScript behaviour of keeping the original
-      `course_id` forever looks like an oversight in
-      the source rather than an intended contract; and
-      the other two options require new methods on
-      `AthleteRegistry` that nothing else needs yet.
-      If a captured trace later shows the JavaScript
-      behaviour matters, switch to "reset the relevant
-      collectors" and add the method then. Record the
-      final choice in this step's as-built notes.
+      `tests/registry_session_context_change.rs`.
+      Two `route_player_state` calls for the
+      same `athlete_id` carrying different
+      `proto.world` values (and optionally
+      different `proto.sport`) cause:
+      - `AthleteData.course_id` overwritten,
+      - `AthleteData.sport` overwritten if
+        `proto.sport` also changed,
+      - a new athlete lap started via
+        `start_athlete_lap`,
+      - `AthleteData.distance_offset`
+        increased by the previous call's
+        `proto.distance`,
+      - the grade computed for the second
+        call is `0.0` (the smooth-grade
+        accumulator is reset for the new
+        course context — match sauce4zwift's
+        `state.grade = 0` line in
+        `_preprocessState`).
+
+      The test also asserts the existing
+      collectors (`bucket`, `wbal`, `zones`,
+      `road_history`, `streams`) are **not**
+      reset, because they are anchored on
+      `world_time` rather than on course
+      context.
+- [ ] **17.29-I** Add the session-context
+      update path inside `route_player_state`
+      (or a sibling private helper). On
+      every call, compare `proto.world` and
+      `proto.sport` against the stored
+      `AthleteData` fields; on a change:
+      - overwrite both,
+      - `ad.distance_offset +=
+        ad.distance` (the previous frame's
+        distance),
+      - reset `ad.smooth_grade =
+        ExpWeightedAvg::new(SMOOTH_GRADE_WINDOW)`
+        so this frame's grade is `0.0`,
+      - call `start_athlete_lap(ad, now)`.
+
+      The earlier "overwrite identity /
+      reset collectors / replace record"
+      framing is rejected as not matching
+      sauce4zwift's actual behaviour. No
+      deferral remains; 17.28-Q provides the
+      fields, this item provides the
+      context-change handling.
 - [ ] **17.30-T**
-      `tests/player_state_view_for_proto.rs` —
-      implement `PlayerStateView` on
-      `zwift_proto::PlayerState` so the STEP 15
-      detectors can read proto values without an
-      intermediate copy. The test runs one
-      representative detector (segment-active or
-      group-gap) against a synthetic proto value and
-      asserts that its output matches the
-      `MostRecentState` path byte-for-byte.
-- [ ] **17.30-I** Add `impl PlayerStateView for
-      zwift_proto::PlayerState` in
-      `src/web/proto_view.rs`. Keep the existing
-      `MostRecentState` impl in place; the proto impl
-      is additive. Record the choice (use the proto
-      impl in production, keep `MostRecentState` for
-      tests and as the in-memory snapshot) in this
+      `tests/player_state_view_for_proto.rs`.
+      A private `fn make_state(...) ->
+      zwift_proto::PlayerState` builder inside
+      the test file sets the proto fields
+      `active_segment_check` reads (adjust the
+      list at implementation time;
+      `road_id`, `road_time`, `reverse`,
+      `world_time`, and the world / course
+      lookup are the obvious ones). The test
+      runs `active_segment_check` once
+      through the new `PlayerStateView` impl
+      on the proto and once through a
+      `MostRecentState` built from the same
+      values, then asserts the resulting
+      `ad.active_segments` key set is
+      identical between the two runs.
+      Compare any float side-effects with
+      `1e-9` tolerance.
+- [ ] **17.30-I** Add `impl PlayerStateView
+      for zwift_proto::PlayerState` in
+      `src/web/proto_view.rs`. All absent
+      proto fields (`None` after the prost
+      decode) return the type's zero value
+      (`0`, `0.0`, `false`), matching
+      sauce4zwift's reliance on proto3
+      default semantics. Pin this contract
+      in a doc-comment on the impl.
+
+      For the methods backed by packed
+      proto fields, add two small bit
+      decoders in the same file:
+      - `fn decode_road_id(aux3: u32) -> u32 =
+        (aux3 >> 8) & 0xffff`. Doc-comment
+        names sauce4zwift's
+        `decodePlayerStateFlags2Into`.
+      - `fn decode_reverse(f19: u32) -> bool =
+        (f19 & 0b100) == 0` (the bit is a
+        forward bit; reverse is its negation).
+        Doc-comment names sauce4zwift's
+        `decodePlayerStateFlags1Into`.
+
+      Then `road_id()` returns
+      `decode_road_id(proto.aux3.unwrap_or(0))`,
+      and `reverse()` returns
+      `decode_reverse(proto.f19.unwrap_or(0))`.
+
+      Keep the existing `MostRecentState`
+      impl in place; the proto impl is
+      additive. Record the choice (use the
+      proto impl in production, keep
+      `MostRecentState` for tests and as
+      the in-memory snapshot) in this
       step's as-built notes.
 - [ ] **17.31-T**
-      `tests/event_behavior_from_config.rs` — adding
-      `[stats] auto_reset_events = true` and
-      `auto_lap_events = false` to the TOML produces
-      `EventBehavior { auto_reset: true, auto_lap:
-      false }` on `ResolvedConfig`. The defaults match
-      the JS `_autoResetEvents` and `_autoLapEvents`
-      values from `stats.mjs:884-887` (both default
-      to `true`).
+      `tests/event_behavior_from_config.rs`.
+      Two assertions:
+      1. Loading a TOML with the `[stats]`
+         table absent produces
+         `EventBehavior { auto_reset: false,
+         auto_lap: false }` on
+         `ResolvedConfig`. These defaults
+         match sauce4zwift's
+         `!!app.getSetting('autoResetEvents')`
+         and `!!app.getSetting('autoLapEvents')`,
+         which both return `false` when the
+         setting has never been set (verified
+         via `SauceApp.getSetting` in
+         `sauce4zwift/src/app.mjs`).
+      2. Adding `[stats] auto_reset_events =
+         true` and `auto_lap_events = false`
+         to the TOML produces `EventBehavior
+         { auto_reset: true, auto_lap: false }`.
 - [ ] **17.31-I** Add `StatsConfig {
-      auto_reset_events, auto_lap_events }` to the
-      file schema. Surface it on `ResolvedConfig` as
-      `event_behavior: EventBehavior` and thread it
-      through every `apply_event_state` call.
-- [ ] **17.32-T** `tests/gc_tick_runs_on_interval.rs`
-      — driving the GC tick at the chosen interval
-      calls `registry.gc(now)` and produces a tracing
-      event with the `GcReport` counts. The test uses
-      `tokio::time::pause()` and
-      `tokio::time::advance()` so it does not actually
-      wait.
-- [ ] **17.32-I** Spawn a `tokio::time::interval`
-      driver that calls `registry.gc(now)`. The
-      interval is a single constant in
-      `src/web/state.rs`; see §17.33 for the value.
-- [ ] **17.33-T** `tests/gc_interval_documented.rs` —
-      the chosen interval matches
+      auto_reset_events, auto_lap_events }`
+      to the file schema, both with TOML
+      default `false`. Surface on
+      `ResolvedConfig` as `event_behavior:
+      EventBehavior`. Add
+      `event_subgroups: Arc<RwLock<HashMap<u32,
+      EventSubgroup>>>` to `WebState`
+      (population is a later step — the
+      cache exists empty for now, and the
+      `apply_event_state` call returns
+      `EventStateOutcome::Idle` whenever the
+      lookup misses, which is the
+      sauce4zwift behaviour while the
+      background fetch is pending). Add the
+      first production call site for
+      `apply_event_state` inside
+      `route_player_state`, locking the
+      cache for read and passing
+      `state.config.event_behavior`,
+      `state.self_athlete_id.unwrap_or(0)`,
+      the `now` and `wall_clock_ms` router
+      arguments. The `EventBehavior` type
+      and the `apply_event_state` signature
+      already exist in
+      `crates/zwift-stats/src/events.rs`;
+      this item wires the config value
+      through to the production call site.
+- [ ] **17.32-T**
+      `tests/gc_tick_runs_on_interval.rs`.
+      Spawning `gc_tick_loop` (the helper
+      added by 17.32-I) inside a paused-time
+      runtime, then advancing the clock by
+      `GC_TICK_INTERVAL_SECS`, causes
+      `registry.gc(now)` to run and emits a
+      `tracing::debug!` event whose fields
+      match the `GcReport` struct field
+      names. The test captures the event via
+      `tracing-subscriber`'s test layer.
+      Uses `tokio::time::pause()` and
+      `tokio::time::advance()` so the test
+      does not actually wait.
+- [ ] **17.32-I** Add `pub(crate) async fn
+      gc_tick_loop(state: Arc<WebState>,
+      interval: Duration)` in
+      `src/web/state.rs`. The loop drives a
+      `tokio::time::interval` and calls
+      `registry.gc(now)` each tick, emitting
+      one `tracing::debug!` event per tick
+      with the `GcReport` field counts.
+      `web::start()` calls
+      `tokio::spawn(gc_tick_loop(state.clone(),
+      Duration::from_secs_f64(GC_TICK_INTERVAL_SECS)))`.
+      Re-export `GC_TICK_INTERVAL_SECS` from
+      `zwift-stats::periods`; do not
+      introduce a second constant.
+- [ ] **17.33-T**
+      `tests/gc_interval_documented.rs`. The
+      chosen interval matches
       `GC_TICK_INTERVAL_SECS` from
-      `zwift-stats::periods` (currently `62.768`) and
-      the constant has a doc-comment that cites
-      `stats.mjs:3553`. The 10 s figure from the
+      `zwift-stats::periods` (currently
+      `62.768`). The 10 s figure from the
       previous stub is recorded as rejected.
-- [ ] **17.33-I** Confirm `GC_TICK_INTERVAL_SECS =
-      62.768` against a fresh read of
-      `stats.mjs:3553`. If it matches, keep the
-      constant and add the doc-comment. If not,
+      The test asserts the constant value
+      only; the doc-comment that names the
+      sauce4zwift source is a code-review
+      item, not a runtime assertion.
+- [ ] **17.33-I** Confirm
+      `GC_TICK_INTERVAL_SECS = 62.768`
+      against a fresh read of sauce4zwift's
+      `_gcAthleteData` (search
+      `sauce4zwift/src/stats.mjs` for a
+      `setInterval` call with the value
+      `62768`). If the value matches, keep
+      the constant and add a doc-comment
+      that names the upstream function
+      (`_gcAthleteData`) and quotes the
+      `62768`-millisecond literal. If not,
       update the constant and update STEP 14's
       as-built notes.
 
@@ -805,26 +1488,68 @@ closed connection.
 The notes on each item are above; this is a quick
 recap:
 
-- **17.29 course-change handling.** Overwrite
-  identity on every upsert (option a in §17.29-I)
-  unless a captured trace argues otherwise.
+- **17.28 input type and draft source.**
+  `route_player_state` takes
+  `&zwift_proto::PlayerState` directly,
+  matching sauce4zwift's `processState(state,
+  …)` shape. Field 10 of the
+  `udp-node-msgs.proto` `PlayerState` is
+  renamed from `ps_f10` to `draft` (pre-
+  requisite 17.28-P), matching sauce4zwift's
+  reverse-engineered schema. The
+  one-second-deferred flush inside
+  `DataCollector` is observed via a new
+  `DataBucket::flush_all()` helper; record the
+  deferred-flush behaviour as a potential
+  upstream logic bug in the as-built notes.
 
-- **17.30 `PlayerStateView` for proto.** Add the
-  impl. Use it in production; keep `MostRecentState`
-  for tests and the in-memory snapshot.
+- **17.29 session-context change.** A change
+  in `proto.world` or `proto.sport` between
+  consecutive states for the same athlete
+  overwrites `AthleteData.course_id` and
+  `AthleteData.sport` and starts a new
+  athlete lap. The collectors are not reset.
+  The `distance_offset` bump and grade-zero
+  side-effect from sauce4zwift's
+  `_preprocessState` are deferred to a later
+  item. The earlier "overwrite identity /
+  reset collectors / replace record" framing
+  is rejected.
 
-- **17.31 EventBehavior config.** Defaults match
-  `stats.mjs:884-887` (both `true`); the file
-  schema exposes the two booleans under
-  `[stats]`.
+- **17.30 `PlayerStateView` for proto.** Add
+  the impl. Use it in production; keep
+  `MostRecentState` for tests and the
+  in-memory snapshot. Absent proto fields
+  read as the type's zero value, matching
+  sauce4zwift's reliance on proto3 default
+  semantics.
 
-- **17.32 / 17.33 GC tick.** Read `stats.mjs:3553`
-  once, confirm the constant, add a doc-comment
-  that cites the source line. The 10 s figure in
-  the previous stub looks like a confused
-  reference to `_zwiftMetaRefresh` at
-  `stats.mjs:3565`; record the rejection
-  alongside the constant.
+- **17.31 EventBehavior config.** The
+  defaults match sauce4zwift's
+  `_autoResetEvents` and `_autoLapEvents`
+  (search the upstream tree; both are read
+  via `!!app.getSetting(...)`, so the actual
+  default depends on the upstream
+  `getSetting` defaults — reconfirm at
+  implementation time). The file schema
+  exposes the two booleans under `[stats]`.
+
+- **17.32 / 17.33 GC tick.** Re-export
+  `GC_TICK_INTERVAL_SECS = 62.768` from
+  `zwift-stats::periods`; no second constant
+  in `src/web/state.rs`. Confirm against
+  sauce4zwift's `_gcAthleteData` (search
+  `sauce4zwift/src/stats.mjs` for the
+  `setInterval` call with the literal
+  `62768`). The 10 s figure in the previous
+  stub looks like a confused reference to
+  `_zwiftMetaRefresh`; record the rejection
+  alongside the constant. The doc-comment on
+  the constant names the upstream function;
+  it is not asserted at runtime. Line
+  citations into `stats.mjs` are avoided
+  because the upstream file is a moving
+  target.
 
 ### 17.34 — 17.35 Wiring
 
@@ -1325,15 +2050,26 @@ Quick reads to sanity-check before writing code.
 If any of these is wrong, the matching checklist
 item needs an amendment.
 
-- **`stats.mjs:3553` defines the GC tick
-  interval as `62.768` (or its JS equivalent).**
-  Confirm before pinning the constant in
-  §17.33-I.
+- **GC tick interval in sauce4zwift's
+  `_gcAthleteData`.** Search
+  `sauce4zwift/src/stats.mjs` for a
+  `setInterval` call with the literal
+  `62768` (milliseconds). Verified
+  `2026-05-19` that the call exists and the
+  bound method is `_gcAthleteData`. Use this
+  to confirm `GC_TICK_INTERVAL_SECS =
+  62.768` in §17.33-I. Avoid citing line
+  numbers; the upstream file moves.
 - **Defaults for `_autoResetEvents` and
-  `_autoLapEvents` at `stats.mjs:884-887`.**
-  STEP 15 recorded both as `true`; reconfirm
-  against the current upstream source before
-  pinning §17.31-I defaults.
+  `_autoLapEvents`.** Search
+  `sauce4zwift/src/stats.mjs` for both
+  identifiers. Both are read via
+  `!!app.getSetting(...)`, so the
+  documented default depends on the
+  upstream `getSetting` defaults — confirm
+  the resulting boolean before pinning
+  §17.31-I defaults. STEP 15 recorded both
+  as `true`. Avoid citing line numbers.
 - **`webserver.mjs:264` endpoint path.**
   Pinned in §"Three differences" as
   `/api/ws/events`; one last read confirms the
