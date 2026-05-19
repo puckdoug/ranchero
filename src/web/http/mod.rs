@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use actix_cors::Cors;
 use actix_web::body::MessageBody;
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::http::{header, StatusCode};
-use actix_web::middleware::{from_fn, Next};
+use actix_web::middleware::{DefaultHeaders, from_fn, Next};
 use actix_web::{web, Error, HttpRequest, HttpResponse};
+use actix_files::NamedFile;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{json, Value};
@@ -393,4 +395,80 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .route("/ws/events",        web::get().to(ws::ws_handler))
             .default_service(web::route().to(api_root_handler)),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Static file router
+// ---------------------------------------------------------------------------
+
+/// Returns a configuration closure that mounts the widget pages tree.
+///
+/// - `/`         → `pages_root/index.html` (explicit route; Files::new does
+///                 not serve the bare root path)
+/// - `/pages/*`  → files under `pages_root`, with CORS
+/// - `/shared/*` → files under `pages_root/../shared`, with CORS (only
+///                 mounted when that directory exists)
+///
+/// `.mjs` files are served as `text/javascript` regardless of what
+/// `mime_guess` returns for the extension.
+pub fn configure_static(pages_root: PathBuf) -> impl Fn(&mut web::ServiceConfig) {
+    move |cfg| {
+        // Bare-root handler — serves pages/index.html.
+        let index_path = pages_root.join("index.html");
+        cfg.route("/", web::get().to(move || {
+            let p = index_path.clone();
+            async move {
+                NamedFile::open(p).map_err(actix_web::error::ErrorNotFound)
+            }
+        }));
+
+        // /pages/* — CORS added unconditionally via DefaultHeaders so that
+        // cross-origin font and asset loads work without requiring an Origin
+        // header on the request.
+        cfg.service(
+            web::scope("/pages")
+                .wrap(DefaultHeaders::new().add(("Access-Control-Allow-Origin", "*")))
+                .wrap(from_fn(fix_preflight))
+                .wrap(from_fn(fix_mjs_content_type))
+                .service(
+                    actix_files::Files::new("", &pages_root)
+                        .use_last_modified(true)
+                )
+        );
+
+        // /shared/* — same setup (optional; only mounted when the directory is present).
+        if let Some(parent) = pages_root.parent() {
+            let shared_root = parent.join("shared");
+            if shared_root.exists() {
+                cfg.service(
+                    web::scope("/shared")
+                        .wrap(DefaultHeaders::new().add(("Access-Control-Allow-Origin", "*")))
+                        .wrap(from_fn(fix_preflight))
+                        .wrap(from_fn(fix_mjs_content_type))
+                        .service(
+                            actix_files::Files::new("", &shared_root)
+                                .use_last_modified(true)
+                        )
+                );
+            }
+        }
+    }
+}
+
+// Rewrites Content-Type to `text/javascript` for `.mjs` responses.
+// mime_guess 2.0.x maps .mjs to application/javascript; the IANA-registered
+// value (and the one sauce4zwift uses) is text/javascript.
+async fn fix_mjs_content_type(
+    req: ServiceRequest,
+    next: Next<impl MessageBody>,
+) -> Result<ServiceResponse<impl MessageBody>, Error> {
+    let is_mjs = req.path().ends_with(".mjs");
+    let mut res = next.call(req).await?;
+    if is_mjs && res.status().is_success() {
+        res.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("text/javascript"),
+        );
+    }
+    Ok(res)
 }

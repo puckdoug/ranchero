@@ -344,7 +344,7 @@ fail, write the smallest code that makes it pass.
       content-type `text/html` and
       `Access-Control-Allow-Origin: *`. `GET
       /pages/missing.html` returns 404.
-- [ ] **17.23-I** Mount `actix_files::Files::new("/pages",
+- [x] **17.23-I** Mount `actix_files::Files::new("/pages",
       &server_pages_root)` with `.index_file("index.html")`
       and `.use_last_modified(true)`. Mount the same at
       `/shared` rooted at
@@ -358,7 +358,7 @@ fail, write the smallest code that makes it pass.
       `actix_web::middleware::DefaultHeaders`.
 - [x] **17.24-T** `tests/http_root_index.rs` — `GET /`
       returns `pages/index.html`.
-- [ ] **17.24-I** Add a `web::resource("/")` handler
+- [x] **17.24-I** Add a `web::resource("/")` handler
       that reads and returns the index file with
       content-type `text/html`. `Files::new` mounted at
       `/pages` does not serve the bare-root case, so it
@@ -368,7 +368,7 @@ fail, write the smallest code that makes it pass.
       `text/css`; `GET /pages/app.mjs` returns
       `text/javascript`. The MIME map must agree with
       sauce4zwift's `src/mime.mjs`.
-- [ ] **17.25-I** `actix_files` uses `mime_guess`
+- [x] **17.25-I** `actix_files` uses `mime_guess`
       internally. Some `mime_guess` versions return
       `application/javascript` for `.mjs`; sauce4zwift
       returns `text/javascript`. Use
@@ -377,7 +377,7 @@ fail, write the smallest code that makes it pass.
 
 ### HTTPS
 
-- [ ] **17.26-T** `tests/https_conditional.rs` — when
+- [x] **17.26-T** `tests/https_conditional.rs` — when
       `{cert_dir}/key.pem` and `{cert_dir}/cert.pem`
       exist, starting the server produces both an HTTP
       listener on `server_port` and an HTTPS listener
@@ -385,7 +385,7 @@ fail, write the smallest code that makes it pass.
       missing, only the HTTP listener exists, and a
       warning reaches the tracing log. Marked
       `#[ignore = "slow: generates a self-signed cert"]`.
-- [ ] **17.26-I** Read certs with `rustls-pemfile`.
+- [x] **17.26-I** Read certs with `rustls-pemfile`.
       Bind both listeners on the same `HttpServer` by
       chaining `.bind(addr)?` and
       `.bind_rustls_0_23(https_addr, server_config)?`
