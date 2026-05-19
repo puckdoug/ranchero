@@ -199,7 +199,7 @@ fail, write the smallest code that makes it pass.
 
 ### RPC
 
-- [ ] **17.12-T** `tests/http_rpc_v1.rs` —
+- [x] **17.12-T** `tests/http_rpc_v1.rs` —
       `GET /api/rpc/v1/:name?arg=1&arg=true&arg=foo`
       dispatches to the registered handler with args
       `[1, true, "foo"]`. Types come from the lexical
@@ -211,7 +211,7 @@ fail, write the smallest code that makes it pass.
       `rpc_v1_post_handler` (POST). Share the handler
       registry between HTTP and WebSocket dispatch by
       passing it as `web::Data<RpcRegistry>`.
-- [ ] **17.13-T** `tests/http_rpc_v2.rs` —
+- [x] **17.13-T** `tests/http_rpc_v2.rs` —
       `GET /api/rpc/v2/:name*` decodes a base64url-encoded
       JSON array tail as `[arg, arg, ...]` and
       dispatches.
@@ -219,7 +219,7 @@ fail, write the smallest code that makes it pass.
       Decode the tail with
       `base64::engine::general_purpose::URL_SAFE_NO_PAD`,
       parse as JSON, dispatch.
-- [ ] **17.14-T** `tests/http_rpc_discovery.rs` —
+- [x] **17.14-T** `tests/http_rpc_discovery.rs` —
       `GET /api/rpc/v1` and `GET /api/rpc/v2` both return
       a JSON array of registered handler names.
 - [ ] **17.14-I** Implement both discovery routes
