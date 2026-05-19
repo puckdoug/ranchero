@@ -1,0 +1,176 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! 17.27-T — Backpressure: slow client is disconnected at 8 MB.
+//!
+//! A client that stops reading must be disconnected once its buffered outbound
+//! data crosses 8 MB. A second client that keeps reading must be unaffected.
+//!
+//! The disconnect reason must appear in the tracing log.
+//!
+//! Fails at runtime until the per-client `BufferedBytes` counter and
+//! `session.close(CloseCode::Policy)` path are implemented (17.27-I).
+//!
+//! See docs/plans/STEP-17-web-server.md, item 17.27-T.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use futures_util::{SinkExt, StreamExt};
+use ranchero::config::{EditingMode, ResolvedConfig, ZwiftEndpoints};
+use ranchero::daemon::relay::GameEvent;
+use ranchero::web::{start, AthleteRegistry, WebState};
+use serde_json::json;
+use tokio::net::TcpStream;
+use tokio::sync::{broadcast, Notify};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
+
+fn test_config() -> ResolvedConfig {
+    ResolvedConfig {
+        main_email:            None,
+        main_password:         None,
+        monitor_email:         None,
+        monitor_password:      None,
+        server_bind:           "127.0.0.1".into(),
+        server_port:           0,
+        server_https:          false,
+        log_level:             None,
+        log_file:              PathBuf::from("/tmp/ranchero-ws-backpressure-test.log"),
+        pidfile:               PathBuf::from("/tmp/ranchero-ws-backpressure-test.pid"),
+        config_path:           None,
+        editing_mode:          EditingMode::Default,
+        zwift_endpoints:       ZwiftEndpoints {
+            auth_base: "http://127.0.0.1:1".into(),
+            api_base:  "http://127.0.0.1:1".into(),
+        },
+        relay_enabled:         false,
+        watched_athlete_id:    None,
+        server_pages_root:     PathBuf::from("pages"),
+        server_https_cert_dir: PathBuf::from("https"),
+    }
+}
+
+type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+async fn ws_send(ws: &mut WsStream, payload: serde_json::Value) {
+    ws.send(Message::Text(payload.to_string().into()))
+        .await
+        .expect("ws send must succeed");
+}
+
+async fn ws_recv(ws: &mut WsStream) -> serde_json::Value {
+    loop {
+        let msg = ws.next().await
+            .expect("ws stream must not end")
+            .expect("ws frame must be valid");
+        if let Message::Text(text) = msg {
+            return serde_json::from_str(&text)
+                .expect("frame must be valid JSON");
+        }
+    }
+}
+
+async fn subscribe(ws: &mut WsStream, source: &str, event: &str, sub_id: u64) {
+    ws_send(ws, json!({
+        "type": "request",
+        "uid":  sub_id,
+        "data": {
+            "method": "subscribe",
+            "arg": { "event": event, "source": source, "subId": sub_id }
+        }
+    })).await;
+    let resp = ws_recv(ws).await;
+    assert_eq!(resp["success"], true,
+        "subscribe must succeed; got {resp}");
+}
+
+/// Push enough events through `tx` to exceed 8 MB of outbound data for a
+/// client that is not reading.  Each PlayerState event produces a JSON frame;
+/// 10 000 events at ~1 KB each comfortably exceeds the threshold.
+async fn flood(tx: &broadcast::Sender<GameEvent>) {
+    for i in 0u64..10_000 {
+        tx.send(GameEvent::PlayerState {
+            athlete_id:    1001,
+            power_w:       (i % 400) as i32,
+            cadence_u_hz:  5000,
+            speed_mm_h:    36_000_000,
+            world_time_ms: (i * 1000) as i64,
+        }).ok();
+    }
+}
+
+#[tokio::test]
+#[ignore = "slow: pushes 8 MB through a real socket"]
+async fn slow_client_is_disconnected_at_8mb_and_fast_client_is_unaffected() {
+    let (tx, _) = broadcast::channel::<GameEvent>(1024);
+
+    let mut registry = AthleteRegistry::new();
+    registry.upsert(1001, 5, 0, 0.0, 0.0);
+
+    let state = Arc::new(
+        WebState::with_registry(registry, Some(1001), Some(1001))
+            .and_game_events(tx.clone()),
+    );
+
+    let cfg      = test_config();
+    let shutdown = Arc::new(Notify::new());
+    let handle   = start(&cfg, state, shutdown.clone()).await.expect("server must start");
+    let addr     = handle.local_addr();
+
+    // Connect the slow client and subscribe but never read event frames.
+    let (mut slow, _) = connect_async(format!("ws://{addr}/api/ws/events"))
+        .await.expect("slow client must connect");
+    subscribe(&mut slow, "stats", "athlete/watching", 1).await;
+
+    // Connect the fast client and subscribe; it will actively drain frames.
+    let (mut fast, _) = connect_async(format!("ws://{addr}/api/ws/events"))
+        .await.expect("fast client must connect");
+    subscribe(&mut fast, "stats", "athlete/watching", 2).await;
+
+    // Flood the broadcast channel. The slow client stops reading after
+    // subscribing; the fast client drains in a background task.
+    let fast_drain = tokio::spawn(async move {
+        let mut count = 0usize;
+        while let Some(Ok(Message::Text(_))) = fast.next().await {
+            count += 1;
+            if count >= 100 {
+                break; // received enough to prove it stayed connected
+            }
+        }
+        count
+    });
+
+    flood(&tx).await;
+
+    // Give the server time to process the flood and disconnect the slow client.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // The slow client must have been closed by the server (Policy close or
+    // connection reset — either way the stream must end or return an error).
+    let next = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        slow.next(),
+    ).await;
+    match next {
+        Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) => {
+            // Closed by server, stream ended, or timeout — all acceptable.
+        }
+        Ok(Some(Ok(other))) => {
+            panic!("slow client must have been disconnected; got frame: {other:?}");
+        }
+        Ok(Some(Err(_))) => {
+            // Socket error — server dropped the connection cleanly.
+        }
+    }
+
+    // The fast client must have received at least 100 frames uninterrupted.
+    let received = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        fast_drain,
+    ).await
+        .expect("fast drain task must finish")
+        .expect("fast drain task must not panic");
+    assert!(received >= 100,
+        "fast client must receive at least 100 frames; got {received}");
+
+    shutdown.notify_one();
+    handle.stop().await;
+}

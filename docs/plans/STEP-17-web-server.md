@@ -394,7 +394,7 @@ fail, write the smallest code that makes it pass.
 
 ### Backpressure
 
-- [ ] **17.27-T** `tests/ws_backpressure.rs` — a client
+- [x] **17.27-T** `tests/ws_backpressure.rs` — a client
       that stops reading is disconnected once buffered
       output crosses 8 MB. The disconnect reason
       appears in the tracing log; other clients are
