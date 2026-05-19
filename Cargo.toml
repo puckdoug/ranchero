@@ -58,3 +58,4 @@ tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "macros", "time", "io-util", "sync", "test-util"] }
 tracing-test = { version = "0.2", features = ["no-env-filter"] }
 wiremock = "0.6"
+tokio-tungstenite = "0.26"

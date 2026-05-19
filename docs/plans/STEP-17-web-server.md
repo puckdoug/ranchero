@@ -227,7 +227,7 @@ fail, write the smallest code that makes it pass.
 
 ### WebSocket protocol
 
-- [ ] **17.15-T** `tests/ws_handshake.rs` — a WebSocket
+- [x] **17.15-T** `tests/ws_handshake.rs` — a WebSocket
       client completes the upgrade on `/api/ws/events`.
       Marked `#[ignore = "slow: real socket"]`.
 - [ ] **17.15-I** Add the WebSocket route. The handler
@@ -238,7 +238,7 @@ fail, write the smallest code that makes it pass.
       (`actix_web::rt::spawn`); the task owns the read
       loop, the write loop, and the per-client `subs`
       map.
-- [ ] **17.16-T** `tests/ws_request_response.rs` —
+- [x] **17.16-T** `tests/ws_request_response.rs` —
       three cases exercise the accept-liberal /
       emit-strict rule:
       (a) the nested wire form
@@ -271,7 +271,7 @@ fail, write the smallest code that makes it pass.
       `Response` and `Event` structs defined in §17.15
       so the field order is fixed by the struct
       definition.
-- [ ] **17.17-T** `tests/ws_subscribe_event.rs` — a
+- [x] **17.17-T** `tests/ws_subscribe_event.rs` — a
       `subscribe` request with `arg:{event:
       "athlete/watching", source:"stats", subId:7}`
       produces a `{type:"response", success:true,
@@ -283,7 +283,7 @@ fail, write the smallest code that makes it pass.
       (§17.20-22) into the client task's
       `method: "subscribe"` and
       `method: "unsubscribe"` branches.
-- [ ] **17.18-T** `tests/ws_uid_isolation.rs` — two
+- [x] **17.18-T** `tests/ws_uid_isolation.rs` — two
       clients subscribe to the same event with
       different `subId`s; each gets its own stream;
       unsubscribe on client A does not stop events on
@@ -292,7 +292,7 @@ fail, write the smallest code that makes it pass.
       lives inside the client task. Subscription dedup
       across clients is a process-wide concern
       (§17.21); per-client tracking is local.
-- [ ] **17.19-T** `tests/ws_disconnect_cleanup.rs` —
+- [x] **17.19-T** `tests/ws_disconnect_cleanup.rs` —
       closing the WebSocket while subscriptions are
       active drops the delegation reference counts;
       when a count reaches zero the upstream listener
