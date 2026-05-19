@@ -993,7 +993,7 @@ doc-comment naming the upstream call
       / 100 * physicsSlopeScale`) is deferred
       to a later step; record the deferral
       inline.
-- [ ] **17.29-T**
+- [x] **17.29-T**
       `tests/registry_session_context_change.rs`.
       Two `route_player_state` calls for the
       same `athlete_id` carrying different
