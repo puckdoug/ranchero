@@ -96,6 +96,7 @@ async fn flood(tx: &broadcast::Sender<GameEvent>) {
             cadence_u_hz:  5000,
             speed_mm_h:    36_000_000,
             world_time_ms: (i * 1000) as i64,
+            world: 0, sport: 0, distance: 0, z: 0.0, draft: 0, heartrate: 0,
         }).ok();
         if i % 128 == 0 {
             tokio::task::yield_now().await;

@@ -107,3 +107,35 @@ pub fn route_player_state(
         wall_clock_ms,
     );
 }
+
+/// Populate the athlete registry from `proto`, then emit a
+/// `GameEvent::PlayerState` on the web state's broadcast channel.
+///
+/// The registry update MUST happen before the event is sent so that the
+/// stats fanout task reads an already-populated entry when it wakes up.
+/// Reversing the order causes the fanout to find an empty registry and
+/// discard the event.
+pub fn bridge_player_state_event(
+    proto:         &zwift_proto::PlayerState,
+    state:         &Arc<WebState>,
+    now:           f64,
+    wall_clock_ms: u64,
+) {
+    route_player_state(proto, state, now, wall_clock_ms);
+
+    if let Some(tx) = &state.game_events_tx {
+        let _ = tx.send(crate::daemon::relay::GameEvent::PlayerState {
+            athlete_id:    proto.id.unwrap_or(0),
+            power_w:       proto.power.unwrap_or(0),
+            cadence_u_hz:  proto.cadence_u_hz.unwrap_or(0),
+            speed_mm_h:    proto.speed.unwrap_or(0),
+            world_time_ms: proto.world_time.unwrap_or(0),
+            world:         proto.world.unwrap_or(0),
+            sport:         proto.sport.unwrap_or(0),
+            distance:      proto.distance.unwrap_or(0),
+            z:             proto.z.unwrap_or(0.0),
+            draft:         proto.draft.unwrap_or(0),
+            heartrate:     proto.heartrate.unwrap_or(0),
+        });
+    }
+}

@@ -296,10 +296,15 @@ async fn run_daemon(
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
     let web_shutdown = Arc::new(tokio::sync::Notify::new());
+    let (game_events_tx, _) =
+        tokio::sync::broadcast::channel::<super::relay::GameEvent>(4096);
     let web_state = {
-        let mut s = crate::web::WebState::new();
+        let mut s = crate::web::WebState::with_rpc(crate::web::RpcRegistry::new())
+            .and_game_events(game_events_tx);
         s.event_behavior = cfg.event_behavior;
         s.watching_id    = cfg.watched_athlete_id.map(|id| id as u32);
+        // TODO 17.36-I: populate self_athlete_id when the relay exposes a
+        //               watched-athlete subscription.
         Arc::new(s)
     };
     let web_handle = crate::web::start(&cfg, Arc::clone(&web_state), Arc::clone(&web_shutdown))

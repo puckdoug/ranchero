@@ -598,10 +598,16 @@ async fn run_state_refresher<A: AuthLogin>(
                 if let Some(athlete_id) = state.id {
                     let _ = inner.game_events_tx.send(GameEvent::PlayerState {
                         athlete_id,
-                        power_w: state.power.unwrap_or(0),
-                        cadence_u_hz: state.cadence_u_hz.unwrap_or(0),
-                        speed_mm_h: state.speed.unwrap_or(0),
+                        power_w:       state.power.unwrap_or(0),
+                        cadence_u_hz:  state.cadence_u_hz.unwrap_or(0),
+                        speed_mm_h:    state.speed.unwrap_or(0),
                         world_time_ms: state.world_time.unwrap_or(0),
+                        world:         state.world.unwrap_or(0),
+                        sport:         state.sport.unwrap_or(0),
+                        distance:      state.distance.unwrap_or(0),
+                        z:             state.z.unwrap_or(0.0),
+                        draft:         state.draft.unwrap_or(0),
+                        heartrate:     state.heartrate.unwrap_or(0),
                     });
                 }
 
@@ -1123,14 +1129,29 @@ impl WatchedAthleteState {
 
 /// High-level events emitted by the orchestrator for downstream
 /// consumers (web/WS server, the per-athlete data model).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Eq` is intentionally absent: the `z` (altitude) field is `f32` and
+/// floating-point types do not implement `Eq`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum GameEvent {
     PlayerState {
-        athlete_id: i64,
-        power_w: i32,
-        cadence_u_hz: i32,
-        speed_mm_h: u32,
+        athlete_id:    i64,
+        power_w:       i32,
+        cadence_u_hz:  i32,
+        speed_mm_h:    u32,
         world_time_ms: i64,
+        /// Course identifier: `proto.world`.
+        world:         i32,
+        /// Sport: `proto.sport` (0 = cycling, 1 = running, 2 = swimming).
+        sport:         i32,
+        /// Per-session distance in metres: `proto.distance`.
+        distance:      i32,
+        /// Raw altitude from `proto.z`; world-meta adjustment deferred.
+        z:             f32,
+        /// Draft factor: `proto.draft`.
+        draft:         i32,
+        /// Heart rate in bpm: `proto.heartrate`.
+        heartrate:     i32,
     },
     Latency {
         latency_ms: i64,
@@ -3250,10 +3271,16 @@ where
                             if let Some(athlete_id) = state.id {
                                 let _ = inner.game_events_tx.send(GameEvent::PlayerState {
                                     athlete_id,
-                                    power_w: state.power.unwrap_or(0),
-                                    cadence_u_hz: state.cadence_u_hz.unwrap_or(0),
-                                    speed_mm_h: state.speed.unwrap_or(0),
+                                    power_w:       state.power.unwrap_or(0),
+                                    cadence_u_hz:  state.cadence_u_hz.unwrap_or(0),
+                                    speed_mm_h:    state.speed.unwrap_or(0),
                                     world_time_ms: state.world_time.unwrap_or(0),
+                                    world:         state.world.unwrap_or(0),
+                                    sport:         state.sport.unwrap_or(0),
+                                    distance:      state.distance.unwrap_or(0),
+                                    z:             state.z.unwrap_or(0.0),
+                                    draft:         state.draft.unwrap_or(0),
+                                    heartrate:     state.heartrate.unwrap_or(0),
                                 });
                                 // L2: an inbound self-state for the watched
                                 // athlete updates the idle-age clock and resumes
@@ -4805,6 +4832,7 @@ mod tests {
                 cadence_u_hz,
                 speed_mm_h,
                 world_time_ms,
+                ..
             } => {
                 assert_eq!(athlete_id, 12345);
                 assert_eq!(power_w, 250);

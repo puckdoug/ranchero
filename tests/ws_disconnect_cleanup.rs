@@ -124,6 +124,12 @@ async fn ws_new_client_can_subscribe_after_previous_client_disconnects() {
         cadence_u_hz:  5000,
         speed_mm_h:    36_000_000,
         world_time_ms: 1_000_000,
+        world:         0,
+        sport:         0,
+        distance:      0,
+        z:             0.0,
+        draft:         0,
+        heartrate:     0,
     }).expect("broadcast send");
 
     let ev = tokio::time::timeout(

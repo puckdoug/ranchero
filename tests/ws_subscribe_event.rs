@@ -113,6 +113,12 @@ async fn ws_subscribe_receives_event_then_unsubscribe_stops_stream() {
         cadence_u_hz:  5000,
         speed_mm_h:    36_000_000,
         world_time_ms: 1_000_000,
+        world:         0,
+        sport:         0,
+        distance:      0,
+        z:             0.0,
+        draft:         0,
+        heartrate:     0,
     }).expect("broadcast send must succeed");
 
     // Receive the resulting event frame.
@@ -147,6 +153,12 @@ async fn ws_subscribe_receives_event_then_unsubscribe_stops_stream() {
         cadence_u_hz:  5200,
         speed_mm_h:    37_000_000,
         world_time_ms: 2_000_000,
+        world:         0,
+        sport:         0,
+        distance:      0,
+        z:             0.0,
+        draft:         0,
+        heartrate:     0,
     }).ok();
 
     let nothing = tokio::time::timeout(

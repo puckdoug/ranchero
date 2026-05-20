@@ -83,6 +83,12 @@ fn player_state(athlete_id: i64) -> GameEvent {
         cadence_u_hz:  5000,
         speed_mm_h:    36_000_000,
         world_time_ms: 1_000_000,
+        world:         0,
+        sport:         0,
+        distance:      0,
+        z:             0.0,
+        draft:         0,
+        heartrate:     0,
     }
 }
 
