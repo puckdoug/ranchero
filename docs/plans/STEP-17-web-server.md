@@ -1228,6 +1228,104 @@ doc-comment naming the upstream call
       The not-running branch reads the config-only
       fields.
 
+### Wiring — relay-to-web data path (review gap)
+
+A review after 17.35 found that every web-server
+component is built and tested in isolation, but
+`run_daemon` builds a bare `WebState::new()` and never
+connects it to the relay. The result: the registry is
+never populated (`route_player_state` has zero
+production callers), `WebState.game_events_tx` is
+`None` (so a WebSocket `subscribe` to `source:"stats"`
+returns `"stats source not available"`), and
+`WebState.rpc` is `None` (so `POST /api/rpc/v1/getVersion`
+returns `"unknown rpc handler"`). Several acceptance
+criteria below cannot pass until this path exists. The
+items here close that gap.
+
+- [x] **17.36-T** `tests/daemon_web_state_wired.rs`
+      — boot the daemon (relay disabled is fine) and
+      assert two things that only hold once the
+      production `WebState` is fully built:
+      `POST /api/rpc/v1/getVersion` returns
+      `{"success":true,"data":"<crate version>"}`, and
+      a WebSocket `subscribe` with `source:"stats"`
+      returns `{"type":"response","success":true,...}`
+      rather than `"stats source not available"`.
+      Marked `#[ignore = "slow: full daemon boot (~1 s)"]`.
+      Two slow tests: `rpc_getversion_returns_success_after_daemon_boot`
+      and `ws_subscribe_stats_returns_success_after_daemon_boot`.
+      Both fail at runtime until 17.36-I; the test file
+      compiles cleanly today.
+- [ ] **17.36-I** In `run_daemon`, construct the
+      production `WebState` instead of `WebState::new()`:
+      register the RPC handlers with
+      `with_rpc(RpcRegistry::default())`, attach a
+      daemon-owned `broadcast::Sender<GameEvent>` via
+      `and_game_events(tx)`, and set `self_athlete_id`.
+      Source `self_athlete_id` from the monitor/self
+      identity; if it is not yet known at boot, record
+      the source and leave an inline TODO rather than
+      silently passing `None`.
+- [x] **17.37-T** `tests/relay_surfaces_player_state.rs`
+      — driving a full `zwift_proto::PlayerState`
+      through the relay's orchestrator surfaces the
+      whole proto to subscribers, not just the five
+      scalar fields the current
+      `GameEvent::PlayerState { athlete_id, power_w,
+      cadence_u_hz, speed_mm_h, world_time_ms }` carries.
+      `route_player_state` needs course/world, sport,
+      distance, altitude, road position, and segment
+      fields, none of which the scalar variant exposes.
+      The test fails to compile (E0026) with the six
+      missing fields listed; the compile error is the
+      failing test. The test file needs no `#[ignore]`
+      because the compile error prevents any test from
+      running until 17.37-I resolves it.
+- [ ] **17.37-I** Surface the full proto from the
+      relay. At `relay.rs` (the `for state in
+      &stc.states` loop) the orchestrator already holds
+      each decoded `PlayerState`; today it discards all
+      but five fields. Either enrich
+      `GameEvent::PlayerState` to carry the full
+      `zwift_proto::PlayerState` or add a dedicated
+      proto stream alongside the scalar event. Confirm
+      no caller depends on the scalar-only shape beyond
+      the stats fanout, and update the existing
+      subscribers (idle-resume check, stats fanout) to
+      the new shape.
+- [x] **17.38-T** `tests/relay_feeds_web_registry.rs`
+      — feeding a `PlayerState` proto through the
+      bridge causes `GET /api/athlete/v1/<id>` to
+      return that athlete's data, and a WebSocket
+      `stats` subscription on the same athlete receives
+      an `event` frame whose `data` reflects the proto.
+      The registry must already reflect the frame
+      before the WebSocket fanout observes the event
+      (no read-before-write race).
+      The test fails to compile (E0425) because
+      `proto_to_stats::bridge_player_state_event` does
+      not yet exist; 17.38-I must add it. Once added,
+      the test is marked `#[ignore = "slow: real socket"]`
+      and verifies both the HTTP endpoint and the WS
+      event ordering. The empty-registry setup means any
+      WS event that arrives must have come from the
+      bridge updating the registry before emitting.
+- [ ] **17.38-I** Spawn the relay-to-web bridge task in
+      `run_daemon` when the relay is enabled: subscribe
+      to the relay's proto stream (from 17.37-I), and
+      for each frame call `route_player_state(&proto,
+      &web_state, now, wall_clock_ms)` (`now` =
+      monotonic seconds, `wall_clock_ms` = Unix-epoch
+      milliseconds). To avoid the read-before-write
+      race, the bridge — not the relay — owns
+      `web_state.game_events_tx`: it updates the
+      registry first, then forwards a
+      `GameEvent::PlayerState` onto that sender so the
+      stats fanout always reads a registry that already
+      reflects the frame. Tie the bridge task into the
+      subsystem shutdown order.
+
 ## Tests-first plan (detail)
 
 ### 17.1 Server binding
@@ -1586,6 +1684,44 @@ Web server:
 The not-running branch reads `bind`, `port`, and
 `https` from `ResolvedConfig` and prints
 `connections` as `daemon not running`.
+
+### 17.36 — 17.38 Relay-to-web data path
+
+17.34 starts the web server but leaves it
+disconnected from the relay. These three items wire
+the live data flow the widget tree depends on.
+
+**17.36 — full `WebState`.** `run_daemon` must stop
+using `WebState::new()` and build the production state:
+the `getVersion` RPC needs `with_rpc(RpcRegistry::
+default())`; the WebSocket `stats` source needs a
+`broadcast::Sender<GameEvent>` via `and_game_events`;
+and `self` resolution in the athlete endpoints needs
+`self_athlete_id`.
+
+**17.37 — surface the proto.** `route_player_state`
+consumes a whole `zwift_proto::PlayerState`, but the
+relay flattens each frame into the five-scalar
+`GameEvent::PlayerState` variant at the
+`for state in &stc.states` loop and discards the rest.
+The full proto must reach the bridge — either by
+widening `GameEvent::PlayerState` to carry it or by
+adding a dedicated proto stream.
+
+**17.38 — the bridge and the ordering rule.** The
+bridge is the single consumer of the relay's proto
+stream. For each frame it calls `route_player_state`
+to update the registry, *then* forwards a
+`GameEvent::PlayerState` onto `web_state.game_events_tx`.
+This ordering matters: the stats fanout
+(`subs::stats_fanout_task`) reads
+`state.registry.get(athlete_id)` when it receives an
+event, so the registry write has to happen before the
+fanout sees the event. Having the bridge own the
+sender — rather than the relay broadcasting straight to
+the fanout — guarantees that order and removes the
+read-before-write race. The bridge task joins the same
+shutdown sequence as the web server and the relay.
 
 ## Decisions
 
