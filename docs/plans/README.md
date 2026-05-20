@@ -24,10 +24,10 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 
 | #   | Status | Step | File |
 |----:|:------:|:-----|:-----|
-|  01 | ☑ | Base CLI (subcommands + options + config-file flag) | [STEP-01-cli-base.md](STEP-01-cli-base.md) |
-|  02 | ☑ | Configuration file + interactive TUI (`ranchero configure`) | [STEP-02-configuration.md](STEP-02-configuration.md) |
-| 02.1 | ☑ | TUI keybindings: vi mode (priority) + emacs mode; `~/.editrc` detection; ratatui 0.30 upgrade | [STEP-02.1-configuration-keybindings.md](STEP-02.1-configuration-keybindings.md) |
-| 02.2 | ☑ | Vi outer navigation: `j/k/h/l`, `i/a`, `:wq`/`:q!`/`ZZ`, vi-aware status bar and help | [STEP-02.2-vi-navigation.md](STEP-02.2-vi-navigation.md) |
+|  01 | ☑ | Base CLI (subcommands + options + config-file flag) | [STEP-01-cli-base.md](done/STEP-01-cli-base.md) |
+|  02 | ☑ | Configuration file + interactive TUI (`ranchero configure`) | [STEP-02-configuration.md](done/STEP-02-configuration.md) |
+| 02.1 | ☑ | TUI keybindings: vi mode (priority) + emacs mode; `~/.editrc` detection; ratatui 0.30 upgrade | [STEP-02.1-configuration-keybindings.md](done/STEP-02.1-configuration-keybindings.md) |
+| 02.2 | ☑ | Vi outer navigation: `j/k/h/l`, `i/a`, `:wq`/`:q!`/`ZZ`, vi-aware status bar and help | [STEP-02.2-vi-navigation.md](done/STEP-02.2-vi-navigation.md) |
 |  03 | ☑ | Daemon lifecycle (`start` / `stop` / `status`, PID file, foreground vs background) | [STEP-03-daemon-lifecycle.md](done/STEP-03-daemon-lifecycle.md) |
 |  04 | ☑ | Structured logging & verbose/debug flags | [STEP-04-logging.md](done/STEP-04-logging.md) |
 |  05 | ☑ | Credential storage in OS keyring | [STEP-05-credentials.md](done/STEP-05-credentials.md) |
@@ -39,20 +39,23 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 |  11 | ☑ | TCP channel with exponential backoff reconnect and watchdog | [STEP-11-tcp-channel.md](done/STEP-11-tcp-channel.md) |
 | 11.5 | ☑ | Wire capture & replay — `ranchero start --capture <path>` + `ranchero replay`; produces the fixtures STEPS 08/18/19 consume | [STEP-11.5-wire-capture.md](done/STEP-11.5-wire-capture.md) |
 | 11.6 | ☑ | Capture & stream-logging consistency review | [STEP-11.6-capture-consistency-review.md](done/STEP-11.6-capture-consistency-review.md) |
-|  12 | ☐ | GameMonitor orchestration — sustainable end-to-end connectivity: auth + relay session + TCP + UDP + 1 Hz heartbeat + `udpConfigVOD` pool routing + idle suspension + watched-athlete switching + capture and tracing log. Internal sub-steps 12.1, 12.3, 12.4, 12.5 within the file. | [STEP-12-game-monitor.md](STEP-12-game-monitor.md) |
-| 12.2 | ☐ | `ranchero follow <file>` command for live capture-file tailing; reads a wire-capture file as it is written and prints each record (optionally decoded) to stdout. Independent of STEP-12 despite the digit overlap; to be implemented after STEP-12 is complete. | [STEP-12.2-follow-command.md](STEP-12.2-follow-command.md) |
-|  13 | ☐ | `zwift-stats` rolling primitives — `RollingAverage`, `RollingPower`, NP, TSS | [STEP-13-rolling-stats.md](STEP-13-rolling-stats.md) |
-|  14 | ☐ | Per-athlete `AthleteData` + `DataBucket`/`DataCollector` + peak periods | [STEP-14-athlete-data.md](STEP-14-athlete-data.md) |
-|  15 | ☐ | Groups / laps / segments / W' balance / zones | [STEP-15-groups-segments.md](STEP-15-groups-segments.md) |
-|  16 | ☐ | SQLite persistence — KV store, athletes DB, segment cache | [STEP-16-persistence.md](STEP-16-persistence.md) |
-|  17 | ☐ | HTTP + WebSocket server compatible with `webserver.mjs` | [STEP-17-web-server.md](STEP-17-web-server.md) |
+|  12 | ☑ | GameMonitor orchestration — sustainable end-to-end connectivity: auth + relay session + TCP + UDP + 1 Hz heartbeat + `udpConfigVOD` pool routing + idle suspension + watched-athlete switching + capture and tracing log. Internal sub-steps 12.1, 12.3, 12.4, 12.5 within the file. Corrective sub-steps 12.5–12.17, 12.20, 12.30 also in `done/`. | [STEP-12-game-monitor.md](done/STEP-12-game-monitor.md) |
+| 12.2 | ☑ | `ranchero follow <file>` command for live capture-file tailing; reads a wire-capture file as it is written and prints each record (optionally decoded) to stdout. Independent of STEP-12 despite the digit overlap; to be implemented after STEP-12 is complete. | [STEP-12.2-follow-command.md](done/STEP-12.2-follow-command.md) |
+|  13 | ☑ | `zwift-stats` rolling primitives — `RollingAverage`, `RollingPower`, NP, TSS | [STEP-13-rolling-stats.md](done/STEP-13-rolling-stats.md) |
+|  14 | ☑ | Per-athlete `AthleteData` + `DataBucket`/`DataCollector` + peak periods | [STEP-14-athlete-data.md](done/STEP-14-athlete-data.md) |
+|  15 | ☑ | Groups / laps / segments / W' balance / zones | [STEP-15-groups-segments.md](done/STEP-15-groups-segments.md) |
+|  16 | ☑ | SQLite persistence — KV store, athletes DB, segment cache | [STEP-16-persistence.md](done/STEP-16-persistence.md) |
+|  17 | ☑ | HTTP + WebSocket server compatible with `webserver.mjs` | [STEP-17-web-server.md](done/STEP-17-web-server.md) |
 |  18 | ☐ | v1/v2 payload formatters (field-for-field parity) | [STEP-18-format-payloads.md](STEP-18-format-payloads.md) |
 |  19 | ☐ | Compatibility test battery (AES vector, header roundtrip, metric parity, widget smoke) | [STEP-19-compatibility-tests.md](STEP-19-compatibility-tests.md) |
 |  20 | — | Additional considerations (parking lot) — deferred items from earlier steps, with a revisit rule for each | [STEP-20-additional-considerations.md](STEP-20-additional-considerations.md) |
 
 Later steps may be renumbered or split as the project progresses. Steps
-01–03 are elaborated in detail; step 04 onward are currently light
-sketches and will be elaborated as those steps are approached.
+01–17 are complete and their files have moved to `done/`. STEP 18 is fully
+elaborated and ready to implement; STEP 19 is a sketch and STEP 20 is the
+parking lot. STEP 12 also has a series of corrective sub-steps
+(12.5–12.17, 12.20, 12.30) in `done/` that are not listed individually in
+the index above.
 
 ## Crate layout (target)
 
