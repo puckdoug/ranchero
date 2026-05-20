@@ -211,7 +211,47 @@ deterministic, as the plan asks.)
   true acceptance signal but needs a live relay; the in-process 17.38-T
   is the automated stand-in.
 
+## As built — where the implementation diverged from the steps above
+
+All of 17.37/17.38 is implemented and the verification in Step D passed.
+The steps above are the original design; four details changed during
+implementation. The main plan's checklist (`STEP-17-web-server.md`) already
+reflects these; they are recorded here so this note matches the code.
+
+1. **Accessor reaches the sender through `self.inner`, not a mirrored field
+   (Step A points 3 and 5).** `player_states_tx` lives only on
+   `RuntimeInner`. The accessor is
+   `pub fn player_states(&self) -> Receiver<…> { self.inner.player_states_tx.subscribe() }`.
+   This leaves the `RelayRuntime` struct and both its constructors
+   untouched — fewer construction sites to thread the sender through than
+   mirroring the field would have needed.
+
+2. **No `.clone()` on publish (Step A point 4).** `zwift_proto::PlayerState`
+   implements `Copy`, so the two emission sites are
+   `inner.player_states_tx.send(state)` (state refresher, owned value) and
+   `inner.player_states_tx.send(*state)` (recv loop, `&PlayerState`). The
+   `state.clone()` shown in Step A would trip `clippy::clone_on_copy`.
+
+3. **The behavioural 17.37 test is a relay unit test, not the integration
+   file (Step B).** `start_with_deps` and `inject_event` are `#[cfg(test)]`
+   and unreachable from `tests/`, so the fidelity test
+   (`player_state_proto_surfaced_on_inbound_with_full_fidelity`) lives in
+   `src/daemon/relay.rs`. The integration file
+   `tests/relay_surfaces_player_state.rs` was instead rewritten as a
+   compile-time check that the public `player_states()` API exists and
+   returns `broadcast::Receiver<zwift_proto::PlayerState>`.
+
+4. **Bridge task uses fully-qualified `RecvError` paths (Step C).** The
+   match arms are `tokio::sync::broadcast::error::RecvError::Closed` /
+   `…::Lagged(_)` since `run_daemon` has no `broadcast` import; otherwise
+   the task is as shown.
+
 ## What is intentionally NOT in scope
+
+These are carried forward in
+[STEP-20-additional-considerations.md](STEP-20-additional-considerations.md)
+item 20.19 (with the event-subgroup cache population deferral) so they are
+not forgotten:
 
 - Reducing `GameEvent::PlayerState` to `{ athlete_id }` (separable cleanup;
   see "Known redundancy").

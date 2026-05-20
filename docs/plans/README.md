@@ -48,6 +48,7 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 |  17 | ☐ | HTTP + WebSocket server compatible with `webserver.mjs` | [STEP-17-web-server.md](STEP-17-web-server.md) |
 |  18 | ☐ | v1/v2 payload formatters (field-for-field parity) | [STEP-18-format-payloads.md](STEP-18-format-payloads.md) |
 |  19 | ☐ | Compatibility test battery (AES vector, header roundtrip, metric parity, widget smoke) | [STEP-19-compatibility-tests.md](STEP-19-compatibility-tests.md) |
+|  20 | — | Additional considerations (parking lot) — deferred items from earlier steps, with a revisit rule for each | [STEP-20-additional-considerations.md](STEP-20-additional-considerations.md) |
 
 Later steps may be renumbered or split as the project progresses. Steps
 01–03 are elaborated in detail; step 04 onward are currently light

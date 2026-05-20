@@ -2181,10 +2181,29 @@ than diff strings.
 
 ## Out of scope for STEP 17
 
-Items below are not done in this step. Each is
-recorded either here or in
-[STEP-20-additional-considerations.md](STEP-20-additional-considerations.md)
-with a rule for when to come back to it.
+Items below are not done in this step. Each is now
+tracked in a concrete later step so it is not
+forgotten:
+
+- The three formatter-dependent items (deep v2
+  resource filtering; the `/streams/v1/:id` route;
+  the `/laps`, `/segments`, `/events` routes) are
+  recorded in
+  [STEP-18-format-payloads.md](STEP-18-format-payloads.md)
+  under "Deferred from STEP 17".
+- The six web-server feature deferrals
+  (compression, mods, window manifests,
+  browser-source/patron/EULA pages, HTTPS cert
+  provisioning, WebSocket auth) are recorded in
+  [STEP-20-additional-considerations.md](STEP-20-additional-considerations.md)
+  item 20.18.
+- The relay-to-web data-path follow-ups are in
+  STEP-20 item 20.19 (see also
+  [STEP-17-relay-web-bridge-design.md](STEP-17-relay-web-bridge-design.md)).
+
+The original descriptions of the six web-server
+deferrals follow; their carry-forward home is
+STEP-20 item 20.18 per the mapping above.
 
 - **Per-message WebSocket compression.** Defer to
   a step that introduces a non-localhost

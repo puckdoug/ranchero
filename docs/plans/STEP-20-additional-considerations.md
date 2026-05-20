@@ -687,6 +687,98 @@ unless the threat model changes"):**
   deployment-context or schema change that invalidates the
   reasoning above.
 
+### 20.18 — Web-server feature deferrals (from STEP 17)
+
+**Where it came from.** STEP 17's "Out of scope for STEP 17" section listed
+six sauce4zwift web-server features that ranchero deliberately does not build
+in the initial web-server step. None pointed to a concrete later step; this
+entry is the parking lot for all six so a future reader finds them without
+re-reading STEP 17. (The formatter-dependent routes and the v2 deep
+resource filter from that same section are *not* here — they have a concrete
+home in STEP 18 and are recorded there.)
+
+1. **Per-message WebSocket compression.** Ranchero encodes the full frame on
+   every emission; sauce's three-buffer no-re-encode write pattern is also
+   skipped. The Rust encoder is fast enough at the expected localhost traffic
+   volume. Revisit when a non-localhost deployment scenario makes wire size or
+   re-encode cost matter.
+2. **Mod web roots and the mod-management surface.** Ranchero has no mod
+   loader; the mod-management RPCs and `/mods/<mod-id>/` static mounts wait
+   for a step that introduces mods.
+3. **Native window manifests (`window-manifests.json`,
+   `getWebWindowManifests`).** Ranchero has no native window manager
+   equivalent to Electron's `BrowserWindow`; the RPC stays unregistered until
+   a native-window concept exists.
+4. **Browser-source assets and the patron / EULA pages.** Vendored into
+   `pages/` because the tree is copied wholesale, but no route or RPC supports
+   them functionally. Revisit if a future step introduces a browser-source
+   workflow.
+5. **HTTPS certificate provisioning (ACME / Let's Encrypt).** Operators bring
+   their own certs today. Automated provisioning is a later step, driven by a
+   deployment that needs it.
+6. **WebSocket authentication.** Sauce serves the WebSocket with no auth
+   (loopback only by default); ranchero matches. This is a deliberate
+   match-sauce decision, not pending work — binding to `0.0.0.0` is the
+   operator's responsibility. Recorded here for completeness.
+
+**Why this might come back.** Items 1–5 each return with the deployment
+scenario named in their text (non-localhost traffic, a mod loader, a native
+window manager, a browser-source workflow, automated cert management). Item 6
+returns only if ranchero's threat model changes to require authenticated
+WebSocket access.
+
+**Decision rule.** Items 1–5: pull into the step that introduces the named
+capability; do not implement speculatively. Item 6: do not implement unless
+the deployment model stops being loopback-by-default.
+
+### 20.19 — Relay-to-web data-path follow-ups (from STEP 17)
+
+**Where it came from.** The relay-to-web bridge (STEP 17 items 17.36–17.38,
+detailed in `STEP-17-relay-web-bridge-design.md`) is functional and tested,
+but four gaps were deliberately left open. Three were listed in the design
+note's "What is intentionally NOT in scope"; one is the event-subgroup cache
+population deferred inside the proto-to-stats section ("out of scope for
+17.31"). Grouped here because they share the bridge / proto-to-stats
+subsystem.
+
+1. **Reduce `GameEvent::PlayerState` to `{ athlete_id }`.** The variant
+   carries eleven scalar fields but only `athlete_id` is read downstream (the
+   stats fanout looks the athlete up in the registry; the full proto travels
+   on the dedicated `player_states` stream). The surplus scalars are
+   vestigial and harmless. Reducing the variant is a mechanical cleanup that
+   would re-touch six test files and two relay tests for no functional gain.
+2. **World-meta altitude adjustment and lat/lng projection.**
+   `route_player_state` and `ProtoView` currently store raw `proto.z / 100`
+   as altitude (no `(z - seaLevel + eleOffset) / 100 * physicsSlopeScale`
+   adjustment) and return `0.0` for `lat`/`lng`. Both need the world-meta
+   tables — a STEP-14-era data file not yet vendored. TODOs mark the spots in
+   `src/web/proto_to_stats.rs` and `src/web/proto_view.rs`.
+3. **`self_athlete_id` sourcing in `WebState`.** `run_daemon` cannot yet
+   determine the logged-in athlete's own id at boot, so `self_athlete_id` is
+   `None` (inline `TODO 17.36-I`). The `self` aliases in the athlete
+   endpoints and the `apply_event_state` self-comparison fall back to `0`
+   until it is sourced from the monitor/self identity.
+4. **Event-subgroup cache population.** `WebState.event_subgroups` exists and
+   `apply_event_state` reads it, but no background fetch fills it (out of
+   scope for 17.31). Every lookup misses, so `apply_event_state` returns
+   `Idle` — matching sauce4zwift's behaviour while its own background fetch is
+   pending. A real population task (fetch event subgroups from the Zwift API
+   and refresh the cache) is the deferred work.
+
+**Why this might come back.** Item 1 is pure cleanup — pick it up if the
+vestigial fields ever cause confusion. Item 2 returns when a widget needs
+true altitude/grade or map position. Item 3 returns as soon as any feature
+must distinguish the logged-in rider (the `self` endpoint aliases are already
+degraded without it). Item 4 returns when event/sub-group widgets need live
+event context rather than always-`Idle`.
+
+**Decision rule.** Item 1: cleanup-only, no trigger required; do it when
+touching the variant for another reason. Item 2: implement with the
+world-meta table vendoring (a data-file step). Item 3: implement the moment a
+feature depends on self-identity — it is the highest-priority of the four.
+Item 4: implement alongside the event-subgroup fetcher when event widgets are
+built.
+
 ---
 
 ## How to use this file
