@@ -1172,7 +1172,7 @@ doc-comment naming the upstream call
       `tokio::spawn(gc_tick_loop(gc_state,
       Duration::from_secs_f64(GC_TICK_INTERVAL_SECS)))`
       (state cloned before the `web::Data` move).
-- [ ] **17.33-T**
+- [x] **17.33-T**
       `tests/gc_interval_documented.rs`. The
       chosen interval matches
       `GC_TICK_INTERVAL_SECS` from
