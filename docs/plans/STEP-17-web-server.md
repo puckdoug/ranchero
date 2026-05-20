@@ -1042,7 +1042,7 @@ doc-comment naming the upstream call
       deferral remains; 17.28-Q provides the
       fields, this item provides the
       context-change handling.
-- [ ] **17.30-T**
+- [x] **17.30-T**
       `tests/player_state_view_for_proto.rs`.
       A private `fn make_state(...) ->
       zwift_proto::PlayerState` builder inside
