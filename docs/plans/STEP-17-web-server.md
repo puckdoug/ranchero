@@ -1212,7 +1212,7 @@ doc-comment naming the upstream call
       `shutdown`; the web server's `start()` watches
       the notify and calls `ServerHandle::stop(true)`
       on receipt.
-- [ ] **17.35-T** `tests/cli_status_includes_web.rs`
+- [x] **17.35-T** `tests/cli_status_includes_web.rs`
       — `ranchero status` reports the web-server
       bind, port, HTTPS state, and active connection
       count under a `Web server` section, even when
