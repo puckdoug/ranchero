@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use crate::{AthleteData, DataSlice, PlayerStateView, start_athlete_lap};
 use crate::athlete::EventSubgroup;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EventBehavior {
     pub auto_reset: bool,
     pub auto_lap: bool,

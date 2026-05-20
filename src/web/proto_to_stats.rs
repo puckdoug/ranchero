@@ -14,9 +14,10 @@
 
 use std::sync::Arc;
 
-use zwift_stats::{start_athlete_lap, ExpWeightedAvg, periods::SMOOTH_GRADE_WINDOW};
+use zwift_stats::{apply_event_state, start_athlete_lap, ExpWeightedAvg, periods::SMOOTH_GRADE_WINDOW};
 
 use crate::web::WebState;
+use crate::web::proto_view::ProtoView;
 
 /// Route a decoded `PlayerState` proto into the athlete registry.
 ///
@@ -42,7 +43,7 @@ pub fn route_player_state(
     proto:         &zwift_proto::PlayerState,
     state:         &Arc<WebState>,
     now:           f64,
-    _wall_clock_ms: u64,
+    wall_clock_ms: u64,
 ) {
     let athlete_id  = proto.id.unwrap_or(0) as u32;
     let course_id   = proto.world.unwrap_or(0) as u32;
@@ -94,4 +95,15 @@ pub fn route_player_state(
     }
     ad.distance = distance;
     ad.altitude = altitude;
+
+    let sg_lookup = state.event_subgroups.read().unwrap();
+    apply_event_state(
+        ad,
+        &ProtoView(proto),
+        state.self_athlete_id.unwrap_or(0),
+        &sg_lookup,
+        state.event_behavior,
+        now,
+        wall_clock_ms,
+    );
 }

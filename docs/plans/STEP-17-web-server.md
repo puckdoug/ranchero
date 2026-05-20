@@ -1103,7 +1103,7 @@ doc-comment naming the upstream call
       `MostRecentState` for tests and as
       the in-memory snapshot) in this
       step's as-built notes.
-- [ ] **17.31-T**
+- [x] **17.31-T**
       `tests/event_behavior_from_config.rs`.
       Two assertions:
       1. Loading a TOML with the `[stats]`
@@ -1122,34 +1122,26 @@ doc-comment naming the upstream call
          true` and `auto_lap_events = false`
          to the TOML produces `EventBehavior
          { auto_reset: true, auto_lap: false }`.
-- [ ] **17.31-I** Add `StatsConfig {
+- [x] **17.31-I** Added `StatsConfig {
       auto_reset_events, auto_lap_events }`
-      to the file schema, both with TOML
-      default `false`. Surface on
-      `ResolvedConfig` as `event_behavior:
-      EventBehavior`. Add
+      to the file schema (both default `false`).
+      Surfaced on `ResolvedConfig` as
+      `event_behavior: EventBehavior`. Added
+      `PartialEq` and `Default` to
+      `EventBehavior`; exported `EventSubgroup`
+      from `zwift_stats`. Added
       `event_subgroups: Arc<RwLock<HashMap<u32,
-      EventSubgroup>>>` to `WebState`
-      (population is a later step — the
-      cache exists empty for now, and the
-      `apply_event_state` call returns
-      `EventStateOutcome::Idle` whenever the
-      lookup misses, which is the
-      sauce4zwift behaviour while the
-      background fetch is pending). Add the
-      first production call site for
-      `apply_event_state` inside
+      EventSubgroup>>>` and
+      `event_behavior: EventBehavior` to
+      `WebState` (cache empty; behaviour matches
+      sauce4zwift while its background fetch is
+      pending). Added the first production call
+      site for `apply_event_state` inside
       `route_player_state`, locking the
-      cache for read and passing
-      `state.config.event_behavior`,
+      `event_subgroups` cache for read and
+      passing `state.event_behavior`,
       `state.self_athlete_id.unwrap_or(0)`,
-      the `now` and `wall_clock_ms` router
-      arguments. The `EventBehavior` type
-      and the `apply_event_state` signature
-      already exist in
-      `crates/zwift-stats/src/events.rs`;
-      this item wires the config value
-      through to the production call site.
+      `now`, and `wall_clock_ms`.
 - [ ] **17.32-T**
       `tests/gc_tick_runs_on_interval.rs`.
       Spawning `gc_tick_loop` (the helper

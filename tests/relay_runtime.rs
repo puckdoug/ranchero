@@ -51,6 +51,7 @@ fn make_config(email: &str, password: &str) -> ResolvedConfig {
         watched_athlete_id:    Some(54321),
         server_pages_root:     std::path::PathBuf::from("pages"),
         server_https_cert_dir: std::path::PathBuf::from("https"),
+        event_behavior:        Default::default(),
     }
 }
 

@@ -37,6 +37,7 @@ fn test_config() -> ResolvedConfig {
         watched_athlete_id:    None,
         server_pages_root:     PathBuf::from("pages"),
         server_https_cert_dir: PathBuf::from("https"),
+        event_behavior:        Default::default(),
     }
 }
 

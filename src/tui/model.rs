@@ -1170,6 +1170,7 @@ impl Model {
             },
             relay: crate::config::RelayConfig::default(),
             keyring: crate::config::KeyringConfig::default(),
+            stats: crate::config::StatsConfig::default(),
         }
     }
 }

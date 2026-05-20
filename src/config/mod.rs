@@ -9,6 +9,7 @@ pub use store::{ConfigStore, FileConfigStore};
 
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use zwift_stats::EventBehavior;
 
 use crate::cli::GlobalOpts;
 
@@ -17,6 +18,14 @@ use crate::cli::GlobalOpts;
 // ---------------------------------------------------------------------------
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct StatsConfig {
+    #[serde(default)]
+    pub auto_reset_events: bool,
+    #[serde(default)]
+    pub auto_lap_events: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConfigFile {
@@ -38,6 +47,8 @@ pub struct ConfigFile {
     pub relay: RelayConfig,
     #[serde(default)]
     pub keyring: KeyringConfig,
+    #[serde(default)]
+    pub stats: StatsConfig,
 }
 
 fn default_schema_version() -> u32 { CURRENT_SCHEMA_VERSION }
@@ -54,6 +65,7 @@ impl Default for ConfigFile {
             zwift: ZwiftConfig::default(),
             relay: RelayConfig::default(),
             keyring: KeyringConfig::default(),
+            stats: StatsConfig::default(),
         }
     }
 }
@@ -384,6 +396,7 @@ pub struct ResolvedConfig {
     pub zwift_endpoints: ZwiftEndpoints,
     pub relay_enabled: bool,
     pub watched_athlete_id: Option<u64>,
+    pub event_behavior: EventBehavior,
 }
 
 /// Resolved Zwift HTTPS endpoint configuration. Built by
@@ -512,6 +525,10 @@ impl ResolvedConfig {
             zwift_endpoints,
             relay_enabled: file.relay.enabled,
             watched_athlete_id: file.zwift.watched_athlete_id,
+            event_behavior: EventBehavior {
+                auto_reset: file.stats.auto_reset_events,
+                auto_lap:   file.stats.auto_lap_events,
+            },
         })
     }
 }

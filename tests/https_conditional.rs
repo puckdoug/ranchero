@@ -43,6 +43,7 @@ fn test_config(cert_dir: &Path, port: u16) -> ResolvedConfig {
         server_https_cert_dir: cert_dir.to_path_buf(),
         relay_enabled:         false,
         watched_athlete_id:    None,
+        event_behavior:        Default::default(),
     }
 }
 
