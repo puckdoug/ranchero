@@ -1270,41 +1270,41 @@ items here close that gap.
       an inline `TODO 17.36-I` rather than silently passing
       `None`; sourcing it from the monitor/self identity is
       deferred.
-- [ ] **17.37-T** `tests/relay_surfaces_player_state.rs`
-      — **must be rewritten; the version on disk tests the
-      wrong contract.** It was written as a compile-time
-      check (E0026) that `GameEvent::PlayerState` carries
-      eleven scalar fields, and now passes. But the bridge
-      needs the *full proto*, not a scalar projection (see
-      the 2026-05-20 decision above), so the scalar check
-      is no longer the contract that matters. Replace it
-      with a runtime test that subscribes to
-      `RelayRuntime::player_states()`, injects an `Inbound`
-      STC whose `PlayerState` sets `aux3`, `road_time`,
-      `f19`, `group_id`, and `time`, and asserts the proto
-      delivered on that stream carries those fields intact
-      (proving full fidelity). See
-      `docs/plans/STEP-17-relay-web-bridge-design.md`
-      Step B.
-- [ ] **17.37-I** Surface the full proto from the
-      relay via a **dedicated proto stream** (the
-      2026-05-20 decision; the alternative of widening
-      `GameEvent::PlayerState` was rejected). Done so far:
-      `GameEvent::PlayerState` was enriched with eleven
-      scalar fields — necessary-looking but **insufficient**,
-      because `route_player_state` → `apply_event_state`
-      → `ProtoView` also reads `aux3`, `road_time`, `f19`,
-      `group_id`, and `time`, which no scalar projection
-      carries. Remaining: add
+- [x] **17.37-T** Done. The integration file
+      `tests/relay_surfaces_player_state.rs` was rewritten:
+      its old compile-time check asserted eleven scalar
+      fields on `GameEvent::PlayerState`, the wrong
+      contract once the bridge needs the *full proto*. It
+      now pins the public API — a compile-time assertion
+      that `RelayRuntime::player_states()` yields
+      `broadcast::Receiver<zwift_proto::PlayerState>`. The
+      behavioural check (recv-loop publishes every field
+      with full fidelity) had to move into a relay unit
+      test, `player_state_proto_surfaced_on_inbound_with_full_fidelity`
+      in `src/daemon/relay.rs`, because the injection
+      helpers (`start_with_deps`, `inject_event`) are
+      `#[cfg(test)]` and unreachable from an integration
+      test. That test injects an STC whose `PlayerState`
+      sets `aux3`, `road_time`, `f19`, `group_id`, and
+      `time` and asserts they survive on the stream.
+- [x] **17.37-I** Done via a **dedicated proto stream**
+      (the 2026-05-20 decision; widening
+      `GameEvent::PlayerState` was rejected). Added
       `player_states_tx: broadcast::Sender<zwift_proto::PlayerState>`
-      to `RuntimeInner`/`RelayRuntime`, emit `state.clone()`
-      at the two sites that build `GameEvent::PlayerState`
-      (recv loop `for state in &stc.states`, and the state
-      refresher), and expose
-      `pub fn player_states(&self) -> Receiver<…>`. The
-      stats fanout reads only `athlete_id` and needs no
-      change; the eleven scalars stay (vestigial, harmless).
-      See design note Step A.
+      to `RuntimeInner` (capacity 4096), published the full
+      proto at the two sites that build
+      `GameEvent::PlayerState` (recv loop
+      `for state in &stc.states`, and the state refresher),
+      and exposed `pub fn player_states(&self) ->
+      Receiver<zwift_proto::PlayerState>` on `RelayRuntime`
+      (reaching the sender through `self.inner`, so the
+      `RelayRuntime` struct and its constructors are
+      untouched). `zwift_proto::PlayerState` is `Copy`, so
+      the publish moves a copy — no `.clone()`. The stats
+      fanout reads only `athlete_id` and was not changed;
+      the eleven scalars on `GameEvent::PlayerState` stay
+      (vestigial, harmless — see "Known redundancy" in the
+      design note).
 - [x] **17.38-T** `tests/relay_feeds_web_registry.rs`
       — feeding a `PlayerState` proto through the
       bridge causes `GET /api/athlete/v1/<id>` to
@@ -1323,29 +1323,25 @@ items here close that gap.
       `run_daemon` *task* from 17.38-I — that wiring has
       no automated test because it needs a live relay; the
       in-process test is the stand-in.
-- [ ] **17.38-I** Spawn the relay-to-web bridge task in
-      `run_daemon` when the relay is enabled. The
-      per-frame function already exists
-      (`proto_to_stats::bridge_player_state_event`:
-      `route_player_state` first, then emit
-      `GameEvent::PlayerState` on `web_state.game_events_tx`),
-      so the registry-before-fanout ordering is in place
-      and the bridge — not the relay — owns the sender.
-      Remaining: a task that subscribes to
-      `RelayRuntime::player_states()` (from 17.37-I) and
-      calls that function once per frame. **Clock
-      correction:** pass `now` as **Unix-epoch seconds**
-      (`SystemTime` → `as_secs_f64()`), not monotonic
-      seconds as earlier drafts said — `gc_tick_loop`
-      derives its `now` from `SystemTime`, and
-      `route_player_state` stamps last-seen times that the
-      GC compares against, so the two must share one clock
-      or the GC mis-drops athletes. `wall_clock_ms` =
-      `SystemTime` → `as_millis()`. Store the task's abort
-      handle and abort it ahead of relay teardown so no
-      frame is processed against a half-torn-down registry.
-      See `docs/plans/STEP-17-relay-web-bridge-design.md`
-      Step C.
+- [x] **17.38-I** Done. `run_daemon` now spawns the
+      relay-to-web bridge task whenever the relay exists:
+      it subscribes to `RelayRuntime::player_states()` and
+      calls `proto_to_stats::bridge_player_state_event`
+      once per proto (registry write, then emit
+      `GameEvent::PlayerState` on `web_state.game_events_tx`
+      — the bridge, not the relay, owns that sender, so the
+      registry-before-fanout ordering holds). `now` is
+      **Unix-epoch seconds** and `wall_clock_ms` Unix-epoch
+      milliseconds, both from one `SystemTime` read — the
+      same clock `gc_tick_loop` uses, so last-seen stamps
+      and GC comparisons share a time base (the stale
+      "monotonic seconds" doc comment on
+      `route_player_state` was corrected). The task's abort
+      handle is stored and aborted ahead of relay teardown
+      so no frame is processed against a half-torn-down
+      registry. The in-process 17.38-T passes against this
+      function; the live-relay path has no automated test
+      (needs a real relay).
 
 ## Tests-first plan (detail)
 

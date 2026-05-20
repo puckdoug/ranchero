@@ -332,6 +332,39 @@ async fn run_daemon(
         None
     };
 
+    // Relay-to-web bridge: when the relay is running, drive the athlete
+    // registry from its full-proto stream. The bridge — not the relay — owns
+    // the emission onto `web_state.game_events_tx` (via
+    // `bridge_player_state_event`), so `route_player_state` always runs before
+    // the stats fanout observes the event (registry-before-fanout ordering).
+    let bridge_abort = runtime.as_ref().map(|rt| {
+        let mut proto_rx = rt.player_states();
+        let bridge_state = Arc::clone(&web_state);
+        tokio::spawn(async move {
+            loop {
+                match proto_rx.recv().await {
+                    Ok(proto) => {
+                        let epoch = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default();
+                        // `now` is Unix-epoch seconds — the same clock
+                        // `gc_tick_loop` uses, so the last-seen stamps written
+                        // by `route_player_state` and the GC's comparisons
+                        // share one time base.
+                        let now           = epoch.as_secs_f64();
+                        let wall_clock_ms = epoch.as_millis() as u64;
+                        crate::web::proto_to_stats::bridge_player_state_event(
+                            &proto, &bridge_state, now, wall_clock_ms,
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                }
+            }
+        })
+        .abort_handle()
+    });
+
     loop {
         tokio::select! {
             biased;
@@ -348,6 +381,12 @@ async fn run_daemon(
                 tokio::spawn(handle_unix_connection(stream, started_at, pid, tx, connections));
             }
         }
+    }
+
+    // Stop the bridge before relay teardown so no proto frame is processed
+    // against a half-torn-down registry.
+    if let Some(handle) = bridge_abort {
+        handle.abort();
     }
 
     // Wait for the web server to release its TCP listener before relay

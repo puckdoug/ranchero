@@ -495,6 +495,14 @@ struct RuntimeInner {
     /// `recompute_udp_selection` can emit `PoolSwap` events without
     /// needing a separate parameter.
     game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    /// Broadcast of the full decoded `PlayerState` proto for the
+    /// relay-to-web bridge. Carries every field — including `aux3`,
+    /// `road_time`, `f19`, `group_id`, and `time` — that
+    /// `route_player_state` reads through `ProtoView` but the scalar
+    /// `GameEvent::PlayerState` variant omits. The recv-loop and the
+    /// state-refresher publish here; the bridge task in `run_daemon`
+    /// subscribes via `RelayRuntime::player_states`.
+    player_states_tx: tokio::sync::broadcast::Sender<zwift_proto::PlayerState>,
     /// First generic (lb_realm=0, lb_course=0) UDP target received from
     /// the relay server over TCP.  Set once by the recv-loop when it
     /// processes the first udp_config_vod push; read by the resume-udp
@@ -609,6 +617,10 @@ async fn run_state_refresher<A: AuthLogin>(
                         draft:         state.draft.unwrap_or(0),
                         heartrate:     state.heartrate.unwrap_or(0),
                     });
+                    // Surface the full proto for the relay-to-web bridge,
+                    // which needs fields the scalar event above omits.
+                    // `PlayerState` is `Copy`, so this passes a copy.
+                    let _ = inner.player_states_tx.send(state);
                 }
 
                 // If the athlete has entered a game and the daemon started
@@ -1663,6 +1675,8 @@ impl RelayRuntime {
         } else {
             (None, None)
         };
+        let (player_states_tx, _) =
+            tokio::sync::broadcast::channel::<zwift_proto::PlayerState>(4096);
         let inner = Arc::new(RuntimeInner {
             pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
             watched_state: std::sync::Mutex::new(initial_watched),
@@ -1671,6 +1685,7 @@ impl RelayRuntime {
             suspended: Arc::new(AtomicBool::new(course_id.is_none())),
             last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
+            player_states_tx,
             initial_udp_addr: std::sync::Mutex::new(None),
             resume_udp_tx: std::sync::Mutex::new(resume_udp_tx_opt),
         });
@@ -2407,6 +2422,8 @@ impl RelayRuntime {
             Some(id) => WatchedAthleteState::for_athlete(id as i64),
             None => WatchedAthleteState::default(),
         };
+        let (player_states_tx, _) =
+            tokio::sync::broadcast::channel::<zwift_proto::PlayerState>(4096);
         let inner = Arc::new(RuntimeInner {
             pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
             watched_state: std::sync::Mutex::new(initial_watched),
@@ -2415,6 +2432,7 @@ impl RelayRuntime {
             suspended: Arc::new(AtomicBool::new(false)),
             last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
             game_events_tx: game_events_tx.clone(),
+            player_states_tx,
             initial_udp_addr: std::sync::Mutex::new(None),
             resume_udp_tx: std::sync::Mutex::new(None),
         });
@@ -2526,6 +2544,17 @@ impl RelayRuntime {
     /// transitions, see `start_with_deps_and_events`.
     pub fn events(&self) -> tokio::sync::broadcast::Receiver<GameEvent> {
         self.game_events_tx.subscribe()
+    }
+
+    /// Subscribe to the stream of full `PlayerState` protos. The
+    /// relay-to-web bridge consumes this to populate the athlete
+    /// registry with fields the scalar `GameEvent::PlayerState` does
+    /// not carry. Like `events`, only protos sent *after* the
+    /// subscribe call are observed.
+    pub fn player_states(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<zwift_proto::PlayerState> {
+        self.inner.player_states_tx.subscribe()
     }
 
     /// Inject a synthetic `TcpChannelEvent` into the orchestrator's
@@ -3282,6 +3311,10 @@ where
                                     draft:         state.draft.unwrap_or(0),
                                     heartrate:     state.heartrate.unwrap_or(0),
                                 });
+                                // Surface the full proto for the relay-to-web
+                                // bridge, which needs fields the scalar event
+                                // above omits. `PlayerState` is `Copy`.
+                                let _ = inner.player_states_tx.send(*state);
                                 // L2: an inbound self-state for the watched
                                 // athlete updates the idle-age clock and resumes
                                 // the daemon if the refresher had suspended it.
@@ -4842,6 +4875,63 @@ mod tests {
             }
             other => panic!("expected GameEvent::PlayerState; got {other:?}"),
         }
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
+
+    /// 17.37-I — the recv-loop surfaces the *full* `PlayerState` proto on
+    /// `player_states()`, not just the scalars `GameEvent::PlayerState`
+    /// carries. The relay-to-web bridge feeds this proto to
+    /// `route_player_state`, which reads `aux3`, `road_time`, `f19`,
+    /// `group_id`, and `time` through `ProtoView`; if any were dropped the
+    /// registry would lose road/group/event-clock fidelity. This test
+    /// proves those fields arrive intact.
+    #[tokio::test]
+    async fn player_state_proto_surfaced_on_inbound_with_full_fidelity() {
+        let counter = CallCounter::new();
+        let cfg = make_config(Some("rider@example.com"), Some("secret"));
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+
+        let mut proto_rx = runtime.player_states();
+
+        // Inject a PlayerState carrying the fields the scalar event omits.
+        let stc = zwift_proto::ServerToClient {
+            seqno: Some(1),
+            world_time: Some(100),
+            states: vec![zwift_proto::PlayerState {
+                id: Some(12345),
+                aux3: Some(0x00AB_CD00),  // road id in bits 8–23
+                road_time: Some(987_654),
+                f19: Some(0b100),         // forward flag set
+                group_id: Some(42),
+                time: Some(7_777),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+
+        let proto = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            proto_rx.recv(),
+        )
+        .await
+        .expect("proto must arrive within timeout")
+        .expect("broadcast must deliver proto");
+
+        assert_eq!(proto.id, Some(12345));
+        assert_eq!(proto.aux3, Some(0x00AB_CD00), "aux3 (road id) must survive");
+        assert_eq!(proto.road_time, Some(987_654), "road_time must survive");
+        assert_eq!(proto.f19, Some(0b100), "f19 (direction) must survive");
+        assert_eq!(proto.group_id, Some(42), "group_id must survive");
+        assert_eq!(proto.time, Some(7_777), "time must survive");
 
         runtime.shutdown();
         let _ = runtime.join().await;

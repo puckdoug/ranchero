@@ -36,7 +36,11 @@ use crate::web::proto_view::ProtoView;
 /// `course_id` is read from `proto.world`; `sport` from `proto.sport`.
 /// Absent proto fields (prost `None`) are treated as `0`.
 ///
-/// `now` is monotonic seconds (used for GC accounting).
+/// `now` is Unix-epoch seconds (used for GC accounting). It must come from
+/// the same clock the GC reads — `gc_tick_loop` derives its `now` from
+/// `SystemTime`, and `route_player_state` stamps last-seen times the GC later
+/// compares against, so a monotonic clock here would make the GC mis-drop
+/// athletes.
 /// `wall_clock_ms` is Unix-epoch milliseconds (used for event-subgroup
 /// time-limit comparisons in later items).
 pub fn route_player_state(
