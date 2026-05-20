@@ -1142,7 +1142,7 @@ doc-comment naming the upstream call
       passing `state.event_behavior`,
       `state.self_athlete_id.unwrap_or(0)`,
       `now`, and `wall_clock_ms`.
-- [ ] **17.32-T**
+- [x] **17.32-T**
       `tests/gc_tick_runs_on_interval.rs`.
       Spawning `gc_tick_loop` (the helper
       added by 17.32-I) inside a paused-time
