@@ -22,12 +22,22 @@ pub enum ControlRequest {
     Shutdown,
 }
 
+/// Live web-server figures the daemon reports over the control protocol.
+/// The bind address, port, and HTTPS state are config-only and read by the
+/// CLI from `ResolvedConfig`; only the active connection count is live.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct WebStatus {
+    pub connections: u64,
+}
+
 /// Response payload for `cmd: status`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub state: String,
     pub uptime_ms: u64,
     pub pid: u32,
+    #[serde(default)]
+    pub web: WebStatus,
 }
 
 /// Response payload for `cmd: shutdown`.
@@ -52,6 +62,35 @@ pub fn format_status_response(resp: &StatusResponse) -> String {
 /// Canonical text for "no daemon running."
 pub fn format_not_running() -> String {
     "not running".to_string()
+}
+
+/// Format the `Web server:` block for `ranchero status`.
+///
+/// `bind`, `port`, and `https` come from the resolved config and are known
+/// whether or not the daemon is running. `connections` is `Some(n)` when the
+/// daemon is up (the live count from the control protocol) and `None` when it
+/// is down, in which case the connection line reads `daemon not running`.
+pub fn format_web_status(
+    bind: &str,
+    port: u16,
+    https: bool,
+    connections: Option<u64>,
+) -> String {
+    let https_line = if https {
+        format!("enabled (port {})", port + 1)
+    } else {
+        "disabled".to_string()
+    };
+    let connections_line = match connections {
+        Some(n) => n.to_string(),
+        None => "daemon not running".to_string(),
+    };
+    let mut lines = vec!["Web server:".to_string()];
+    lines.push(format!("  {:<12} {bind}", "bind"));
+    lines.push(format!("  {:<12} {port}", "port"));
+    lines.push(format!("  {:<12} {https_line}", "https"));
+    lines.push(format!("  {:<12} {connections_line}", "connections"));
+    lines.join("\n")
 }
 
 /// Where the control socket lives relative to the PID file.
@@ -90,6 +129,7 @@ mod tests {
             state: "running".into(),
             uptime_ms: 1234,
             pid: 42,
+            web: WebStatus { connections: 3 },
         });
         let s = serde_json::to_string(&r).unwrap();
         let back: ControlResponse = serde_json::from_str(&s).unwrap();
@@ -102,6 +142,7 @@ mod tests {
             state: "running".into(),
             uptime_ms: 4321,
             pid: 7,
+            web: WebStatus { connections: 0 },
         };
         let line = format_status_response(&resp);
         assert!(line.contains("running"), "got {line}");
@@ -120,5 +161,42 @@ mod tests {
         let pid = Path::new("/tmp/state/ranchero/ranchero.pid");
         let sock = control_socket_path(pid);
         assert_eq!(sock, Path::new("/tmp/state/ranchero/ranchero.sock"));
+    }
+
+    #[test]
+    fn web_status_block_when_daemon_not_running_reports_config_and_absent_count() {
+        let block = format_web_status("127.0.0.1", 1080, false, None);
+        assert!(block.contains("Web server:"), "got {block}");
+        assert!(block.contains("127.0.0.1"), "got {block}");
+        assert!(block.contains("1080"), "got {block}");
+        assert!(block.contains("disabled"), "https off should read disabled, got {block}");
+        assert!(
+            block.contains("daemon not running"),
+            "absent connection count should read 'daemon not running', got {block}",
+        );
+    }
+
+    #[test]
+    fn web_status_block_when_running_reports_live_connection_count() {
+        let block = format_web_status("0.0.0.0", 1080, false, Some(3));
+        assert!(block.contains("0.0.0.0"), "got {block}");
+        assert!(
+            block.contains("connections")
+                && block.lines().any(|l| l.contains("connections") && l.contains('3')),
+            "running block should show the live connection count, got {block}",
+        );
+        assert!(
+            !block.contains("daemon not running"),
+            "running block must not say 'daemon not running', got {block}",
+        );
+    }
+
+    #[test]
+    fn web_status_block_https_enabled_names_the_tls_port() {
+        let block = format_web_status("127.0.0.1", 1080, true, Some(0));
+        assert!(
+            block.contains("enabled (port 1081)"),
+            "https on should name the TLS port (server_port + 1), got {block}",
+        );
     }
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -24,6 +25,10 @@ pub struct WebState {
     /// background fetch is pending.
     pub event_subgroups: Arc<RwLock<HashMap<u32, EventSubgroup>>>,
     pub event_behavior:  EventBehavior,
+    /// Count of live WebSocket client connections. Incremented when a
+    /// client task starts and decremented when it ends; reported by
+    /// `ranchero status` as the web server's connection count.
+    pub active_connections: Arc<AtomicUsize>,
 }
 
 impl WebState {
@@ -37,6 +42,7 @@ impl WebState {
             delegations:     DelegationMap::new(),
             event_subgroups: Arc::new(RwLock::new(HashMap::new())),
             event_behavior:  EventBehavior::default(),
+            active_connections: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -54,6 +60,7 @@ impl WebState {
             delegations:     DelegationMap::new(),
             event_subgroups: Arc::new(RwLock::new(HashMap::new())),
             event_behavior:  EventBehavior::default(),
+            active_connections: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -67,6 +74,7 @@ impl WebState {
             delegations:     DelegationMap::new(),
             event_subgroups: Arc::new(RwLock::new(HashMap::new())),
             event_behavior:  EventBehavior::default(),
+            active_connections: Arc::new(AtomicUsize::new(0)),
         }
     }
 

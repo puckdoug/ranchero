@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::control::{
-    ControlRequest, ControlResponse, ShutdownResponse, StatusResponse,
-    format_not_running, format_status_response,
+    ControlRequest, ControlResponse, ShutdownResponse, StatusResponse, WebStatus,
+    format_not_running, format_status_response, format_web_status,
 };
 use super::pidfile::Pidfile;
 use super::probe::{OsProcessProbe, ProcessProbe};
@@ -152,10 +152,20 @@ pub fn status(cfg: &ResolvedConfig) -> Result<ExitCode, DaemonError> {
     let pidfile = Pidfile::new(paths.pidfile.clone());
     let probe = OsProcessProbe;
 
+    let web_block = |connections: Option<u64>| {
+        format_web_status(
+            &cfg.server_bind,
+            cfg.server_port,
+            cfg.server_https,
+            connections,
+        )
+    };
+
     let pid = match pidfile.read()? {
         None => {
             println!("{}", format_not_running());
             println!("{}", format_persistence_status(&crate::config::data_dir()));
+            println!("{}", web_block(None));
             return Ok(ExitCode::from(1));
         }
         Some(p) => p,
@@ -165,6 +175,7 @@ pub fn status(cfg: &ResolvedConfig) -> Result<ExitCode, DaemonError> {
         let _ = std::fs::remove_file(&paths.socket);
         println!("{}", format_not_running());
         println!("{}", format_persistence_status(&crate::config::data_dir()));
+        println!("{}", web_block(None));
         return Ok(ExitCode::from(1));
     }
 
@@ -175,6 +186,7 @@ pub fn status(cfg: &ResolvedConfig) -> Result<ExitCode, DaemonError> {
 
     println!("{}", format_status_response(&resp));
     println!("{}", format_persistence_status(&crate::config::data_dir()));
+    println!("{}", web_block(Some(resp.web.connections)));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -327,7 +339,8 @@ async fn run_daemon(
                     Err(_) => continue,
                 };
                 let tx = shutdown_tx.clone();
-                tokio::spawn(handle_unix_connection(stream, started_at, pid, tx));
+                let connections = Arc::clone(&web_state.active_connections);
+                tokio::spawn(handle_unix_connection(stream, started_at, pid, tx, connections));
             }
         }
     }
@@ -369,6 +382,7 @@ async fn handle_unix_connection(
     started_at: Instant,
     pid: u32,
     shutdown_tx: tokio::sync::mpsc::Sender<()>,
+    web_connections: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) {
     let req: ControlRequest = match read_request(&mut stream).await {
         Ok(r) => r,
@@ -381,6 +395,10 @@ async fn handle_unix_connection(
                 state: "running".into(),
                 uptime_ms: started_at.elapsed().as_millis() as u64,
                 pid,
+                web: WebStatus {
+                    connections: web_connections
+                        .load(std::sync::atomic::Ordering::Relaxed) as u64,
+                },
             });
             let _ = write_response(&mut stream, &resp).await;
         }

@@ -115,11 +115,30 @@ pub async fn ws_handler(
 // Client task — owns the read loop and per-client subscriptions
 // ---------------------------------------------------------------------------
 
+/// Increments the live-connection count on creation and decrements it on
+/// drop, so the count is corrected on every exit path of the client task —
+/// clean close, read error, or panic unwind.
+struct ConnectionGuard(Arc<std::sync::atomic::AtomicUsize>);
+
+impl ConnectionGuard {
+    fn enter(counter: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        counter.fetch_add(1, Relaxed);
+        Self(counter)
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Relaxed);
+    }
+}
+
 async fn client_task(
     state:   Arc<WebState>,
     mut session: Session,
     stream:  actix_ws::MessageStream,
 ) {
+    let _conn = ConnectionGuard::enter(Arc::clone(&state.active_connections));
     let mut subs: HashMap<i64, JoinHandle<()>> = HashMap::new();
     let mut stream = stream.aggregate_continuations();
 

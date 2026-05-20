@@ -1220,7 +1220,7 @@ doc-comment naming the upstream call
       case, bind and port come from `ResolvedConfig`
       and the connection count reads
       `daemon not running`.
-- [ ] **17.35-I** Extend the status printer (the
+- [x] **17.35-I** Extend the status printer (the
       same one STEP 16 added the `Persistence:` block
       to) with a `Web server:` block. The live
       connection count comes from the control

@@ -361,7 +361,10 @@ fn logfile_is_appended_across_two_runs() {
     h.wait_for_pidfile_gone();
 
     let log = read_log_until(&h.logfile_path, "stopped");
-    let started_count = log.to_lowercase().matches("started").count();
+    // Count the daemon lifecycle marker specifically. The web server logs
+    // its own "web server started" line, so a bare "started" substring count
+    // would double every run.
+    let started_count = log.to_lowercase().matches("ranchero started").count();
     assert_eq!(
         started_count, 2,
         "logfile should preserve both runs' started events (append, not truncate); got: {log}"
