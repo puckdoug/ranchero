@@ -1193,12 +1193,14 @@ doc-comment naming the upstream call
 
 ### Wiring
 
-- [ ] **17.34-T** `tests/daemon_starts_web_server.rs`
+- [x] **17.34-T** `tests/daemon_starts_web_server.rs`
       — daemon boot starts the web server on the
       configured port and `GET /api/` returns 200.
-      Uses `RANCHERO_SERVER_PORT=0` so each test gets
-      a free port; the bound port is read back from
-      the actix `ServerHandle` after listen. Marked
+      A free port is reserved before launch via
+      `TcpListener::bind("127.0.0.1:0")` and written
+      into the TOML `[server] port = N`; test polls
+      `GET /api/` via raw HTTP/1.0 after the pidfile
+      and control socket appear. Marked
       `#[ignore = "slow: full daemon boot"]`.
 - [ ] **17.34-I** In `src/daemon/runtime.rs` (`start`),
       after `Stores::open()` succeeds and before the
