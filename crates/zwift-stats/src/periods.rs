@@ -8,6 +8,8 @@ pub const MIN_WEIGHTED_POWER_PERIOD: f64 = 300.0;
 
 pub const ATHLETE_GC_TTL_SECS: f64 = 3600.0;
 pub const GROUP_GC_TTL_SECS: f64 = 90.0;
+/// GC cadence matching sauce4zwift's `_gcAthleteData`, driven by
+/// `setInterval(..., 62768)` (62 768 ms = 62.768 s).
 pub const GC_TICK_INTERVAL_SECS: f64 = 62.768;
 
 // Group classification

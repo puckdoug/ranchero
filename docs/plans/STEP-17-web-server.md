@@ -1183,19 +1183,13 @@ doc-comment naming the upstream call
       only; the doc-comment that names the
       sauce4zwift source is a code-review
       item, not a runtime assertion.
-- [ ] **17.33-I** Confirm
-      `GC_TICK_INTERVAL_SECS = 62.768`
-      against a fresh read of sauce4zwift's
-      `_gcAthleteData` (search
-      `sauce4zwift/src/stats.mjs` for a
-      `setInterval` call with the value
-      `62768`). If the value matches, keep
-      the constant and add a doc-comment
-      that names the upstream function
-      (`_gcAthleteData`) and quotes the
-      `62768`-millisecond literal. If not,
-      update the constant and update STEP 14's
-      as-built notes.
+- [x] **17.33-I** Confirmed `GC_TICK_INTERVAL_SECS = 62.768`
+      against `sauce4zwift/src/stats.mjs`:
+      `setInterval(this._gcAthleteData.bind(this), 62768)`
+      matches exactly. Added doc-comment to the
+      constant in `crates/zwift-stats/src/periods.rs`
+      naming `_gcAthleteData` and quoting the
+      `62768 ms` literal.
 
 ### Wiring
 
