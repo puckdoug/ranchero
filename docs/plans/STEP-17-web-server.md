@@ -1202,7 +1202,7 @@ doc-comment naming the upstream call
       `GET /api/` via raw HTTP/1.0 after the pidfile
       and control socket appear. Marked
       `#[ignore = "slow: full daemon boot"]`.
-- [ ] **17.34-I** In `src/daemon/runtime.rs` (`start`),
+- [x] **17.34-I** In `src/daemon/runtime.rs` (`start`),
       after `Stores::open()` succeeds and before the
       relay comes up, spawn the web server on the
       same tokio runtime through

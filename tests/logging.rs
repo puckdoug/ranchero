@@ -28,6 +28,11 @@ fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_ranchero")
 }
 
+fn pick_free_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
+
 struct LogHarness {
     _dir: tempfile::TempDir,
     config_path: PathBuf,
@@ -52,10 +57,13 @@ impl LogHarness {
         let pages_dir = dir.path().join("p");
         std::fs::create_dir_all(&pages_dir).unwrap();
 
+        let web_port = pick_free_port();
         let toml = format!(
             "schema_version = 1\n\
              [daemon]\n\
              pidfile = \"{}\"\n\
+             [server]\n\
+             port = {web_port}\n\
              [logging]\n\
              file = \"{}\"\n\
              [relay]\n\

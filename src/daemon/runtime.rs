@@ -283,6 +283,17 @@ async fn run_daemon(
     let mut sigterm = signal(SignalKind::terminate())?;
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
+    let web_shutdown = Arc::new(tokio::sync::Notify::new());
+    let web_state = {
+        let mut s = crate::web::WebState::new();
+        s.event_behavior = cfg.event_behavior;
+        s.watching_id    = cfg.watched_athlete_id.map(|id| id as u32);
+        Arc::new(s)
+    };
+    let web_handle = crate::web::start(&cfg, Arc::clone(&web_state), Arc::clone(&web_shutdown))
+        .await
+        .map_err(io::Error::other)?;
+
     let runtime: Option<super::relay::RelayRuntime> = if cfg.relay_enabled {
         let writer: Option<Arc<CaptureWriter>> = match capture_file {
             Some(file) => Some(Arc::new(CaptureWriter::from_file(file).await?)),
@@ -320,6 +331,10 @@ async fn run_daemon(
             }
         }
     }
+
+    // Wait for the web server to release its TCP listener before relay
+    // teardown so that the port is free by the time the pidfile is removed.
+    web_handle.stop().await;
 
     if let Some(runtime) = runtime {
         runtime.shutdown();

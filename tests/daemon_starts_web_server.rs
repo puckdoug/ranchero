@@ -126,7 +126,11 @@ impl DaemonHarness {
         let deadline = Instant::now() + READY_TIMEOUT;
         while Instant::now() < deadline {
             if let Ok(mut stream) = TcpStream::connect(&addr) {
-                let req = format!("GET /api/ HTTP/1.0\r\nHost: {addr}\r\n\r\n");
+                // HTTP/1.1 with Connection: close so the server closes the
+                // connection after the response and read_to_string terminates.
+                let req = format!(
+                    "GET /api/ HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+                );
                 if stream.write_all(req.as_bytes()).is_ok() {
                     let mut resp = String::new();
                     if stream.read_to_string(&mut resp).is_ok()

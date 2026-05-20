@@ -25,6 +25,12 @@ fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_ranchero")
 }
 
+/// Bind to port 0, let the OS pick a free port, then release it.
+fn pick_free_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
+
 /// Per-test state: temp dir holding a config file and the daemon's PID and
 /// socket. Drop tears down any child still running.
 struct DaemonHarness {
@@ -52,10 +58,13 @@ impl DaemonHarness {
         let pages_dir = dir.path().join("p");
         std::fs::create_dir_all(&pages_dir).unwrap();
 
+        let web_port = pick_free_port();
         let toml = format!(
             "schema_version = 1\n\
              [daemon]\n\
              pidfile = \"{}\"\n\
+             [server]\n\
+             port = {web_port}\n\
              [relay]\n\
              enabled = false\n\
              [keyring]\n\

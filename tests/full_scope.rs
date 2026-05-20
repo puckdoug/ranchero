@@ -74,6 +74,12 @@ fn binary_path() -> &'static str {
     env!("CARGO_BIN_EXE_ranchero")
 }
 
+/// Bind to port 0, let the OS pick a free port, then release it.
+fn pick_free_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.local_addr().unwrap().port()
+}
+
 // ---------------------------------------------------------------------------
 // Library helpers
 // ---------------------------------------------------------------------------
@@ -144,6 +150,7 @@ impl DaemonHarness {
         let pages_dir = dir.path().join("p");
         std::fs::create_dir_all(&pages_dir).unwrap();
 
+        let web_port = pick_free_port();
         let toml = format!(
             "schema_version = 1\n\
              [logging]\n\
@@ -151,6 +158,8 @@ impl DaemonHarness {
              file = \"{}\"\n\
              [daemon]\n\
              pidfile = \"{}\"\n\
+             [server]\n\
+             port = {web_port}\n\
              [keyring]\n\
              service = \"{TEST_KEYRING_SERVICE}\"\n\
              [zwift]\n\
