@@ -1061,9 +1061,16 @@ doc-comment naming the upstream call
       identical between the two runs.
       Compare any float side-effects with
       `1e-9` tolerance.
-- [ ] **17.30-I** Add `impl PlayerStateView
+- [x] **17.30-I** Add `impl PlayerStateView
       for zwift_proto::PlayerState` in
-      `src/web/proto_view.rs`. All absent
+      `src/web/proto_view.rs`.
+      **Deviation:** Rust's orphan rule prevents
+      implementing a foreign trait for a foreign
+      type in a third crate.  The impl uses a
+      newtype `ProtoView<'a>(pub &'a PlayerState)`
+      defined in `src/web/proto_view.rs`.  Call
+      sites wrap the proto: `ProtoView(&proto)`.
+      The test was updated to match. All absent
       proto fields (`None` after the prost
       decode) return the type's zero value
       (`0`, `0.0`, `false`), matching

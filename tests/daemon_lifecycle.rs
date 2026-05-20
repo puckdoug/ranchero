@@ -9,7 +9,7 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
-const READY_TIMEOUT: Duration = Duration::from_secs(5);
+const READY_TIMEOUT: Duration = Duration::from_secs(15);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const RELAY_FAIL_TIMEOUT: Duration = Duration::from_secs(5);
 

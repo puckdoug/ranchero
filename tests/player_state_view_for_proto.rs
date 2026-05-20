@@ -28,8 +28,10 @@
 //!                         SEGMENT_START_WINDOW_METRES/2000=0.075) = 0.075.
 //! road_time = 35000 → rpct = (35000 - 5000) / 1_000_000 = 0.03 (inside window).
 //!
-//! Fails to compile until `impl PlayerStateView for zwift_proto::PlayerState`
-//! is added in `src/web/proto_view.rs` (item 17.30-I).
+//! Fails to compile until `ProtoView` implementing `PlayerStateView` is added
+//! in `src/web/proto_view.rs` (item 17.30-I).  Rust's orphan rule prevents
+//! implementing a foreign trait for a foreign type directly, so a newtype
+//! `ProtoView<'a>(&'a PlayerState)` is used instead.
 //!
 //! See docs/plans/STEP-17-web-server.md, item 17.30-T.
 
@@ -40,6 +42,7 @@ use zwift_stats::{
     AthleteData, MostRecentState, PlayerStateView,
     active_segment_check, Segment, SegmentLookup,
 };
+use ranchero::web::proto_view::ProtoView;
 
 // ---------------------------------------------------------------------------
 // Fixture builder
@@ -137,8 +140,8 @@ fn active_segment_check_proto_and_most_recent_state_produce_identical_result() {
     let mut ad_proto = AthleteData::new(1, 3, 0, 1.0, 1.0);
     let mut ad_mrs   = AthleteData::new(2, 3, 0, 1.0, 1.0);
 
-    active_segment_check(&mut ad_proto, &proto as &dyn PlayerStateView, &env, 1.0);
-    active_segment_check(&mut ad_mrs,   &mrs   as &dyn PlayerStateView, &env, 1.0);
+    active_segment_check(&mut ad_proto, &ProtoView(&proto) as &dyn PlayerStateView, &env, 1.0);
+    active_segment_check(&mut ad_mrs,   &mrs              as &dyn PlayerStateView, &env, 1.0);
 
     let keys_proto: BTreeSet<u32> = ad_proto.active_segments.keys().copied().collect();
     let keys_mrs:   BTreeSet<u32> = ad_mrs.active_segments.keys().copied().collect();
