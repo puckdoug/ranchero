@@ -3,12 +3,15 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use std::time::Duration;
+
 use actix_web::{web, App, HttpServer};
 use tokio::sync::Notify;
 
 use crate::config::ResolvedConfig;
 use super::http::{configure_api, configure_static};
-use super::state::WebState;
+use super::state::{WebState, gc_tick_loop};
+use super::GC_TICK_INTERVAL_SECS;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -130,6 +133,7 @@ pub async fn start(
     let bind_addr  = format!("{}:{}", cfg.server_bind, cfg.server_port);
     let pages_root = cfg.server_pages_root.clone();
 
+    let gc_state   = Arc::clone(&state);
     let state_data = web::Data::new(state);
 
     let builder = HttpServer::new(move || {
@@ -189,6 +193,7 @@ pub async fn start(
     });
 
     tokio::spawn(srv);
+    tokio::spawn(gc_tick_loop(gc_state, Duration::from_secs_f64(GC_TICK_INTERVAL_SECS)));
 
     tracing::info!(bind = %addr, "web server started");
 

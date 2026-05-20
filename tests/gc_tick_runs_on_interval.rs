@@ -29,10 +29,14 @@ async fn gc_tick_loop_fires_and_emits_debug_event() {
 
     tokio::spawn(gc_tick_loop(Arc::clone(&state), interval));
 
-    // Advance past one full interval so the first tick fires.
+    // Let the spawned task start and consume the immediate first tick, leaving
+    // it blocked on the second tick (which fires after one full interval).
+    tokio::task::yield_now().await;
+
+    // Advance past one full interval so the loop's tick fires.
     tokio::time::advance(interval + Duration::from_millis(1)).await;
 
-    // Yield briefly so the spawned task can run to completion for this tick.
+    // Let the task run the GC and emit the debug event.
     tokio::task::yield_now().await;
 
     assert!(

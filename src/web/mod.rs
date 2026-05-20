@@ -10,6 +10,6 @@ pub(crate) mod ws;
 pub(crate) mod subs;
 
 pub use server::{start, WebError, WebServerHandle};
-pub use state::WebState;
+pub use state::{WebState, gc_tick_loop};
 pub use rpc::RpcRegistry;
-pub use zwift_stats::AthleteRegistry;
+pub use zwift_stats::{AthleteRegistry, GC_TICK_INTERVAL_SECS};

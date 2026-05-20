@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use tokio::sync::broadcast;
 use zwift_stats::{AthleteRegistry, EventBehavior, EventSubgroup};
 
@@ -74,5 +75,29 @@ impl WebState {
     pub fn and_game_events(mut self, tx: broadcast::Sender<GameEvent>) -> Self {
         self.game_events_tx = Some(tx);
         self
+    }
+}
+
+/// Periodically run the athlete-registry garbage collector and emit one
+/// `tracing::debug!` event per tick with the drop counts from `GcReport`.
+///
+/// The first tick is skipped so the GC does not run at startup before
+/// any athletes have been seen.  Every subsequent tick fires after
+/// `interval`, matching the cadence sauce4zwift uses for `_gcAthleteData`.
+pub async fn gc_tick_loop(state: Arc<WebState>, interval: Duration) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.tick().await; // skip the immediate first tick
+    loop {
+        ticker.tick().await;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        let report = state.registry.write().unwrap().gc(now);
+        tracing::debug!(
+            athletes_dropped = report.athletes_dropped,
+            groups_dropped   = report.groups_dropped,
+            "gc_tick",
+        );
     }
 }
