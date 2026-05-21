@@ -273,6 +273,70 @@ impl<R: RollingWindow> DataCollector<R> {
     pub fn periodized(&self) -> &[PeriodizedEntry<R>] {
         &self.periodized
     }
+
+    /// Snapshot of the collector in the `getStatsV2` shape.
+    ///
+    /// `ts_offset_ms` is added to each peak's `snap_time` to produce `ts`
+    /// (converting a world-time or session-relative timestamp to a server
+    /// Unix timestamp). Pass `0.0` when no conversion is needed.
+    pub fn stats(&self, ts_offset_ms: f64) -> SignalStats {
+        let avg = self.primary.avg(None);
+        let max = self.max_value;
+
+        let peaks = self.periodized.iter().map(|entry| {
+            entry.peak.as_ref().map(|p| PeakStat {
+                period: p.period,
+                avg:    p.snap_value,
+                time:   p.roll.active(),
+                ts:     p.snap_time + ts_offset_ms,
+            })
+        }).collect();
+
+        let smooth = self.periodized.iter()
+            .filter(|e| e.period <= MAX_SMOOTH_PERIOD)
+            .filter_map(|e| e.roll.avg(None).map(|avg| SmoothStat {
+                period: e.period,
+                avg,
+            }))
+            .collect();
+
+        SignalStats { avg, max, peaks, smooth }
+    }
+}
+
+/// Maximum period (seconds) included in the `smooth` array. Mirrors
+/// `maxSmoothPeriod = 1200` from `stats.mjs:128`.
+const MAX_SMOOTH_PERIOD: f64 = 1200.0;
+
+/// One entry in the `peaks` array of a [`SignalStats`].  Mirrors the
+/// peak objects produced by `getStatsV2` (`stats.mjs:196`).
+#[derive(Debug, Clone)]
+pub struct PeakStat {
+    pub period: f64,
+    pub avg:    f64,
+    /// Active time (seconds) in the rolling window when the peak was set.
+    pub time:   f64,
+    /// Timestamp: `snap_time + ts_offset_ms` passed to `stats()`.
+    pub ts:     f64,
+}
+
+/// One entry in the `smooth` array of a [`SignalStats`].
+#[derive(Debug, Clone)]
+pub struct SmoothStat {
+    pub period: f64,
+    pub avg:    f64,
+}
+
+/// Output of [`DataCollector::stats`].  Mirrors the object returned by
+/// `getStatsV2` (`stats.mjs:196`).
+#[derive(Debug)]
+pub struct SignalStats {
+    /// Overall session average from the unbounded primary roller.
+    /// `None` if no data has been ingested.
+    pub avg:    Option<f64>,
+    pub max:    f64,
+    pub peaks:  Vec<Option<PeakStat>>,
+    pub smooth: Vec<SmoothStat>,
 }
 
 #[derive(Debug)]
@@ -388,5 +452,74 @@ impl PowerDataCollector {
     pub fn max_value(&self) -> f64 {
         self.inner.max_value()
     }
+
+    /// Snapshot of the NP collector in the `getNPStatsV2` shape.
+    ///
+    /// Only periods ≥ 300 s are included, mirroring `_npPeriodizedOfft`
+    /// (`stats.mjs:265`). `ts_offset_ms` is added to each `snap_time`.
+    pub fn np_stats(&self, ts_offset_ms: f64) -> NpStats {
+        let inner_periods = self.inner.periodized();
+
+        let qualified: Vec<(usize, &NpPeriodizedEntry)> = self.np_periodized
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.period >= MIN_NP_PERIOD)
+            .collect();
+
+        let peaks = qualified.iter().map(|(_, entry)| {
+            entry.peak.as_ref().map(|p| NpPeakStat {
+                period: p.period,
+                avg:    p.snap_value,
+                max:    p.snap_value,
+                time:   p.roll.active(),
+                ts:     p.snap_time + ts_offset_ms,
+            })
+        }).collect();
+
+        let smooth = qualified.iter()
+            .filter(|(_, e)| e.period <= MAX_SMOOTH_PERIOD)
+            .filter_map(|(i, e)| {
+                inner_periods[*i].roll.np(false).map(|avg| NpSmoothStat {
+                    period: e.period,
+                    avg,
+                })
+            })
+            .collect();
+
+        NpStats { peaks, smooth }
+    }
+}
+
+/// Minimum period (seconds) included in NP stats. Mirrors
+/// `_npPeriodizedOfft` / `minWeightedPowerPeriod = 300`
+/// from `stats.mjs:265`.
+const MIN_NP_PERIOD: f64 = 300.0;
+
+/// One entry in the `peaks` array of an [`NpStats`].
+#[derive(Debug, Clone)]
+pub struct NpPeakStat {
+    pub period: f64,
+    /// Normalized Power at peak time.
+    pub avg:    f64,
+    /// Maximum NP seen for this period across the session.
+    pub max:    f64,
+    /// Active time (seconds) in the window when the peak was set.
+    pub time:   f64,
+    /// Timestamp: `snap_time + ts_offset_ms` passed to `np_stats()`.
+    pub ts:     f64,
+}
+
+/// One entry in the `smooth` array of an [`NpStats`].
+#[derive(Debug, Clone)]
+pub struct NpSmoothStat {
+    pub period: f64,
+    pub avg:    f64,
+}
+
+/// Output of [`PowerDataCollector::np_stats`].
+#[derive(Debug)]
+pub struct NpStats {
+    pub peaks:  Vec<Option<NpPeakStat>>,
+    pub smooth: Vec<NpSmoothStat>,
 }
 

@@ -75,6 +75,22 @@ impl WorldTimer {
     pub fn offset_ms(&self) -> i64 {
         self.inner.lock().expect("WorldTimer mutex poisoned").offset_ms
     }
+
+    /// Convert a world-time value (ms since Zwift epoch) to a Unix
+    /// timestamp in milliseconds. Mirrors `zwift.mjs:104
+    /// toServerTime(wt) { return wt + ZWIFT_EPOCH_MS; }`.
+    /// The local clock offset does not affect server time.
+    pub fn to_server_time(&self, wt: i64) -> i64 {
+        wt + ZWIFT_EPOCH_MS
+    }
+
+    /// Convert a world-time value (ms since Zwift epoch) to the
+    /// offset-corrected local Unix timestamp in milliseconds. Mirrors
+    /// `zwift.mjs:107
+    /// toLocalTime(wt) { return wt + ZWIFT_EPOCH_MS - this._offset; }`.
+    pub fn to_local_time(&self, wt: i64) -> i64 {
+        wt + ZWIFT_EPOCH_MS - self.offset_ms()
+    }
 }
 
 impl Default for WorldTimer {

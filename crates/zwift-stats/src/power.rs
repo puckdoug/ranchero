@@ -165,6 +165,11 @@ impl RollingPower {
         self.rolling.active()
     }
 
+    /// Delegates to the inner `RollingAverage::joules`.
+    pub fn joules(&self) -> f64 {
+        self.rolling.joules()
+    }
+
     pub fn elapsed(&self) -> f64 {
         self.rolling.elapsed()
     }

@@ -194,6 +194,13 @@ impl RollingAverage {
         self.active_acc
     }
 
+    /// Cumulative value·time accumulator — the integral of the signal over
+    /// active time (joules when the signal is watts). Mirrors
+    /// `sauce/power.mjs:290 joules() { return this._valuesAcc; }`.
+    pub fn joules(&self) -> f64 {
+        self.values_acc
+    }
+
     pub fn avg(&self, active: Option<bool>) -> Option<f64> {
         let use_active = active.unwrap_or(self.active);
         let denominator = if use_active {

@@ -37,7 +37,12 @@ pub use rolling::{RollingAverage, RollingAverageOptions};
 pub use power::{RollingPower, calc_tss};
 pub use helpers::{recommended_time_gaps, corrected_rolling_average, corrected_rolling_power, peak_average, peak_np, ExpWeightedAvg, exp_weighted_avg};
 pub use bucket::OneSecondBucket;
-pub use collector::{DataCollector, PowerDataCollector, PeakSnapshot, NpPeakSnapshot, DataCollectorOptions, RollingWindow};
+pub use collector::{
+    DataCollector, PowerDataCollector, PeakSnapshot, NpPeakSnapshot,
+    DataCollectorOptions, RollingWindow,
+    SignalStats, PeakStat, SmoothStat,
+    NpStats, NpPeakStat, NpSmoothStat,
+};
 pub use data_bucket::DataBucket;
 pub use athlete::{AthleteData, MostRecentState, AthleteRegistry, GroupMeta, GcReport, PlayerStateView, EventSubgroup};
 pub use groups::{NearbyEntry, Group, compute_groups};
