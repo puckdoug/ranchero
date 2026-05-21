@@ -99,16 +99,20 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 3 — v1 athlete formatter (full)
 
-- [ ] **18.6-T** Extend `tests/http_athlete_v1.rs` and add a golden so
+- [x] **18.6-T** Extend `tests/http_athlete_v1.rs` and add a golden so
       `/api/athlete/v1/{id}` returns every `_formatAthleteData` field with
       correct names/shapes for a deterministic athlete.
+      (Implemented as `tests/format_v1_athlete.rs` — direct formatter call
+      rather than HTTP so `age` is deterministic; golden at
+      `tests/fixtures/format/v1_athlete.json`.)
 - [ ] **18.6-I** Replace the stub `format_athlete` with a verbatim port of
       `_formatAthleteData` (`stats.mjs:4388`), including `format_state`
       (`_formatState`, `stats.mjs:4231`) and `event_or_route_info`
       (`_getEventOrRouteInfo`, `stats.mjs:4291`).
-- [ ] **18.7-T** Fields whose source data is absent serialise exactly as
+- [x] **18.7-T** Fields whose source data is absent serialise exactly as
       the JS does: `self`/`watching`/`isGapEst` omitted when falsy,
       `lastLap` `null` with one lap, `state` `null` with no state.
+      (Five tests in `tests/format_v1_athlete.rs`.)
 - [ ] **18.7-I** Use named `#[derive(Serialize)]` structs with
       `#[serde(skip_serializing_if)]` on the optional fields so the
       omit/null behaviour is fixed at compile time.
