@@ -16,6 +16,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{json, Value};
 use zwift_stats::AthleteData;
 
+use crate::web::format::{format_athlete, format_athlete_v2};
 use crate::web::state::WebState;
 use crate::web::ws;
 
@@ -68,64 +69,6 @@ fn api_directory() -> serde_json::Value {
         "rpc/v2/<name>[/<base64url_arg1>][.../<base64url_argN>]": "[GET] Make an RPC to the backend.\n    URL components following the name should be Base64[URL] encoded JSON representing each\n    RPC argument.",
         "mods/v1": "[GET] List available mods (i.e. plugins)"
     }])
-}
-
-// ---------------------------------------------------------------------------
-// Formatters
-// ---------------------------------------------------------------------------
-
-pub(crate) fn format_athlete(
-    athlete: &AthleteData,
-    watching_id: Option<u32>,
-    self_athlete_id: Option<u32>,
-) -> serde_json::Value {
-    let mut obj = json!({
-        "athleteId": athlete.athlete_id,
-        "courseId":  athlete.course_id,
-        "lapCount":  athlete.lap_slices.len() as u32,
-        "stats":     {},
-        "lap":       {},
-    });
-    if watching_id == Some(athlete.athlete_id) {
-        obj["watching"] = json!(true);
-    }
-    if self_athlete_id == Some(athlete.athlete_id) {
-        obj["self"] = json!(true);
-    }
-    obj
-}
-
-fn format_athlete_v2(
-    athlete: &AthleteData,
-    resources: &[String],
-    watching_id: Option<u32>,
-    self_athlete_id: Option<u32>,
-) -> serde_json::Value {
-    if resources.is_empty() {
-        // No filter: v1 shape with version: 2 added.
-        let mut obj = format_athlete(athlete, watching_id, self_athlete_id);
-        obj["version"] = json!(2);
-        obj
-    } else {
-        // Return only the requested resource fields.
-        let mut obj = serde_json::Map::new();
-        for resource in resources {
-            let value = match resource.as_str() {
-                "stats"            => json!({}),
-                "lap"              => json!({}),
-                "lastLap"          => json!(null),
-                "laps"             => json!([]),
-                "segments"         => json!([]),
-                "events"           => json!([]),
-                "state"            => json!(null),
-                "athlete"          => json!(null),
-                "timeInPowerZones" => json!(null),
-                _                  => continue,
-            };
-            obj.insert(resource.clone(), value);
-        }
-        serde_json::Value::Object(obj)
-    }
 }
 
 // ---------------------------------------------------------------------------

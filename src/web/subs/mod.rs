@@ -9,7 +9,7 @@ use tokio::sync::{broadcast, mpsc, Notify};
 use tokio::task::AbortHandle;
 
 use crate::daemon::relay::GameEvent;
-use crate::web::http::format_athlete;
+use crate::web::format::format_athlete;
 use crate::web::state::WebState;
 
 // ---------------------------------------------------------------------------

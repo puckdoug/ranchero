@@ -46,15 +46,15 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 0 — Parity harness and deterministic builder
 
-- [ ] **18.0-T** A reusable test-support module builds a deterministic
+- [x] **18.0-T** A reusable test-support module builds a deterministic
       `AthleteData` from a fixed sample script, and a comparison helper
       asserts two `serde_json::Value`s are equal with float tolerance and
       with an exact key-set check at every nesting level.
-- [ ] **18.0-I** Add `tests/support/mod.rs` (deterministic builder +
+- [x] **18.0-I** Add `tests/support/mod.rs` (deterministic builder +
       `assert_json_parity`) and a `tests/fixtures/format/` directory for
       authored golden JSON. No JavaScript is executed — see
       "Parity strategy" below.
-- [ ] **18.0b-I** Create `src/web/format.rs` and move the existing
+- [x] **18.0b-I** Create `src/web/format.rs` and move the existing
       `format_athlete`/`format_athlete_v2` (and their helpers) out of
       `src/web/http/mod.rs` into it; update the `use` in `src/web/subs/mod.rs`
       (currently `crate::web::http::format_athlete`) and re-export from
