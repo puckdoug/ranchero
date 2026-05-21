@@ -188,6 +188,8 @@ pub struct AthleteData {
     pub disabled_by_event: bool,
     pub event_start_pending: bool,
     pub auto_lap_mark: Option<f64>,
+    pub event_position: Option<u32>,
+    pub event_participants: Option<u32>,
 }
 
 impl AthleteData {
@@ -227,6 +229,8 @@ impl AthleteData {
             disabled_by_event: false,
             event_start_pending: false,
             auto_lap_mark: None,
+            event_position: None,
+            event_participants: None,
         };
 
         // Push initial lap slice

@@ -207,8 +207,6 @@
   "lastLap": null,
   "lapCount": 1,
   "state": null,
-  "gap": null,
-  "gapDistance": null,
   "wBal": null,
   "timeInPowerZones": []
 }

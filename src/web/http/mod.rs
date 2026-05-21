@@ -16,9 +16,17 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{json, Value};
 use zwift_stats::AthleteData;
 
-use crate::web::format::{format_athlete, format_athlete_v2};
+use zwift_relay::ZWIFT_EPOCH_MS;
+use crate::web::format::{format_athlete_data_v1, format_athlete_v2};
 use crate::web::state::WebState;
 use crate::web::ws;
+
+fn local_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
 
 // ---------------------------------------------------------------------------
 // Preflight middleware
@@ -110,8 +118,13 @@ async fn athlete_v1_handler(
     };
     let registry = state.registry.read().unwrap();
     match registry.get(athlete_id) {
-        Some(athlete) => HttpResponse::Ok()
-            .json(format_athlete(athlete, state.watching_id, state.self_athlete_id)),
+        Some(athlete) => {
+            let now   = local_now();
+            let ts_ms = athlete.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
+            HttpResponse::Ok()
+                .json(format_athlete_data_v1(athlete, state.watching_id, state.self_athlete_id,
+                                             None, now, ts_ms))
+        }
         None => HttpResponse::NotFound().finish(),
     }
 }
@@ -135,10 +148,14 @@ async fn athlete_v2_handler(
 }
 
 async fn nearby_v1_handler(state: web::Data<Arc<WebState>>) -> HttpResponse {
+    let now = local_now();
     let registry = state.registry.read().unwrap();
     let body: Vec<serde_json::Value> = registry
         .iter()
-        .map(|(_, a)| format_athlete(a, state.watching_id, state.self_athlete_id))
+        .map(|(_, a)| {
+            let ts_ms = a.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
+            format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms)
+        })
         .collect();
     HttpResponse::Ok().json(body)
 }
@@ -157,9 +174,11 @@ async fn nearby_v2_handler(
 }
 
 async fn groups_v1_handler(state: web::Data<Arc<WebState>>) -> HttpResponse {
+    let now = local_now();
     let registry = state.registry.read().unwrap();
     let body = group_athletes(&registry, |a| {
-        format_athlete(a, state.watching_id, state.self_athlete_id)
+        let ts_ms = a.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
+        format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms)
     });
     HttpResponse::Ok().json(body)
 }

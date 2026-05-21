@@ -50,7 +50,7 @@ fn make_script() -> Vec<SampleRow> {
 #[test]
 fn v1_stats_block_matches_golden() {
     let ad     = build_athlete(&make_script());
-    let actual = format_bucket_stats_v1(&ad.bucket, &ad, None, 0.0);
+    let actual = format_bucket_stats_v1(&ad.bucket, &ad, None, 0.0, true);
 
     let golden_str = std::fs::read_to_string("tests/fixtures/format/v1_stats.json")
         .expect("golden file missing — run 18.5-I to create tests/fixtures/format/v1_stats.json");

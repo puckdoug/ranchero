@@ -105,17 +105,22 @@ builds on the last; within a phase the tests are independent.
       (Implemented as `tests/format_v1_athlete.rs` — direct formatter call
       rather than HTTP so `age` is deterministic; golden at
       `tests/fixtures/format/v1_athlete.json`.)
-- [ ] **18.6-I** Replace the stub `format_athlete` with a verbatim port of
+- [x] **18.6-I** Replace the stub `format_athlete` with a verbatim port of
       `_formatAthleteData` (`stats.mjs:4388`), including `format_state`
       (`_formatState`, `stats.mjs:4231`) and `event_or_route_info`
       (`_getEventOrRouteInfo`, `stats.mjs:4291`).
+      (Implemented as `format_athlete_data_v1` in `src/web/format.rs`; the
+      `_getEventOrRouteInfo` spread fields are included as
+      `skip_serializing_if = "Option::is_none"` stubs pending route/event
+      metadata wiring.)
 - [x] **18.7-T** Fields whose source data is absent serialise exactly as
       the JS does: `self`/`watching`/`isGapEst` omitted when falsy,
       `lastLap` `null` with one lap, `state` `null` with no state.
       (Five tests in `tests/format_v1_athlete.rs`.)
-- [ ] **18.7-I** Use named `#[derive(Serialize)]` structs with
+- [x] **18.7-I** Use named `#[derive(Serialize)]` structs with
       `#[serde(skip_serializing_if)]` on the optional fields so the
       omit/null behaviour is fixed at compile time.
+      (`AthleteDataV1` struct in `src/web/format.rs`.)
 
 ### Phase 4 — v2 bucket-stats and v2 athlete formatter
 

@@ -9,7 +9,8 @@ use tokio::sync::{broadcast, mpsc, Notify};
 use tokio::task::AbortHandle;
 
 use crate::daemon::relay::GameEvent;
-use crate::web::format::format_athlete;
+use zwift_relay::ZWIFT_EPOCH_MS;
+use crate::web::format::format_athlete_data_v1;
 use crate::web::state::WebState;
 
 // ---------------------------------------------------------------------------
@@ -170,7 +171,12 @@ async fn stats_fanout_task(
                 let data = {
                     let registry = state.registry.read().unwrap();
                     registry.get(athlete_id_u32).map(|a| {
-                        format_athlete(a, state.watching_id, state.self_athlete_id)
+                        let now   = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs_f64())
+                            .unwrap_or(0.0);
+                        let ts_ms = a.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
+                        format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms)
                     })
                 };
                 if let Some(data) = data {
