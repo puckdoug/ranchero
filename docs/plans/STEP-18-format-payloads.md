@@ -124,20 +124,30 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 4 — v2 bucket-stats and v2 athlete formatter
 
-- [ ] **18.8-T** A golden test asserts the v2 stats block uses **arrays**
+- [x] **18.8-T** A golden test asserts the v2 stats block uses **arrays**
       for `peaks`/`smooth` (each element `{ period, avg }`), includes
       `max` on the `np` sub-block, and omits the deprecated fields, per
       `tests/fixtures/format/v2_stats.json`.
+      (`tests/format_v2_stats.rs`; golden at
+      `tests/fixtures/format/v2_stats.json`. Fails to compile — no
+      `format_bucket_stats_v2` yet.)
 - [ ] **18.8-I** Implement `format_bucket_stats_v2` as a verbatim port of
       `_getBucketStatsV2` (`stats.mjs:2714`).
-- [ ] **18.9-T** `/api/athlete/v2/{id}` with no query returns the base v2
+- [x] **18.9-T** `/api/athlete/v2/{id}` with no query returns the base v2
       object; with `?resource=...` returns only the requested resources;
       `?stats=true` includes the extended stats; the resource whitelist is
       exactly
       `stats|state|athlete|lap|lastLap|laps|segments|events|timeInPowerZones`.
-- [ ] **18.9b-T** `?resource=lastLap` populates a `lastLap` key (not
+      (Six new tests in `tests/http_athlete_v2.rs`: `v2_no_query_returns_base_object_not_v1_shape`,
+      `v2_resource_response_includes_base_object_fields`,
+      `v2_stats_resource_peaks_are_arrays`,
+      `v2_unknown_resource_is_ignored_base_still_present`.)
+- [x] **18.9b-T** `?resource=lastLap` populates a `lastLap` key (not
       `lap`); requesting both `lap` and `lastLap` returns two distinct,
       independent values. This is the fix for the JS bug (decision D1).
+      (Two new tests in `tests/http_athlete_v2.rs`:
+      `v2_last_lap_resource_populates_last_lap_key`,
+      `v2_lap_and_last_lap_resources_produce_independent_keys`.)
 - [ ] **18.9-I** Replace the stub `format_athlete_v2` with a port of
       `_formatAthleteDataV2` (`stats.mjs:4325`); fix the `lastLap`
       assignment so it writes to `data.lastLap` (decision D1).
