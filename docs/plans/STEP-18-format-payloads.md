@@ -89,7 +89,7 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 2 — v1 bucket-stats formatter
 
-- [ ] **18.5-T** A golden test asserts the v1 stats block for a
+- [x] **18.5-T** A golden test asserts the v1 stats block for a
       deterministic bucket matches `tests/fixtures/format/v1_stats.json`,
       including the period-keyed `peaks`/`smooth` objects, the deprecated
       `wBal`/`timeInPowerZones` fields, `kj`, `np`, `tss`, and the `np`

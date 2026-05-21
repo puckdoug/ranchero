@@ -3,7 +3,7 @@
 mod server;
 pub mod state;
 pub mod http;
-pub(crate) mod format;
+pub mod format;
 pub mod rpc;
 pub mod proto_to_stats;
 pub mod proto_view;
