@@ -65,6 +65,88 @@ fn signal_stats_v1(stats: &SignalStats, periods: &[f64]) -> Value {
     })
 }
 
+// ---------------------------------------------------------------------------
+// v2 stat-shape helpers (array-based, mirrors getStatsV2 / getNPStatsV2)
+// ---------------------------------------------------------------------------
+
+fn signal_stats_v2(stats: &SignalStats, periods: &[f64]) -> Value {
+    let peaks: Vec<Value> = periods.iter().enumerate()
+        .map(|(i, &period)| {
+            match stats.peaks.get(i).and_then(|opt| opt.as_ref()) {
+                Some(p) => json!({
+                    "period": p.period,
+                    "avg":    p.avg,
+                    "time":   p.time,
+                    "ts":     p.ts
+                }),
+                None => json!({"period": period, "avg": null, "time": null, "ts": null}),
+            }
+        })
+        .collect();
+
+    let smooth: Vec<Value> = periods.iter()
+        .filter(|&&period| period <= MAX_SMOOTH_PERIOD)
+        .map(|&period| {
+            let avg = stats.smooth.iter()
+                .find(|s| s.period == period)
+                .map(|s| json!(s.avg))
+                .unwrap_or(Value::Null);
+            json!({"period": period, "avg": avg})
+        })
+        .collect();
+
+    json!({
+        "avg":    stats.avg,
+        "max":    stats.max,
+        "peaks":  peaks,
+        "smooth": smooth
+    })
+}
+
+/// NP stats in v2 array shape.
+///
+/// `np_max` comes from `power.stats().max` — the JS `getNPStatsV2` exposes
+/// `this._maxValue` which is the max raw-power value on the same
+/// `PowerDataCollector` instance (`stats.mjs:304`).
+fn np_stats_v2(
+    np_avg:     Option<f64>,
+    np_max:     f64,
+    stats:      &NpStats,
+    np_periods: &[f64],
+) -> Value {
+    let peaks: Vec<Value> = np_periods.iter().enumerate()
+        .map(|(i, &period)| {
+            match stats.peaks.get(i).and_then(|opt| opt.as_ref()) {
+                Some(p) => json!({
+                    "period": p.period,
+                    "avg":    p.avg,
+                    "time":   p.time,
+                    "ts":     p.ts
+                }),
+                None => json!({"period": period, "avg": null, "time": null, "ts": null}),
+            }
+        })
+        .collect();
+
+    let smooth: Vec<Value> = np_periods.iter()
+        .filter(|&&period| period <= MAX_SMOOTH_PERIOD)
+        .map(|&period| {
+            let avg = stats.smooth.iter()
+                .find(|s| s.period == period)
+                .map(|s| json!(s.avg))
+                .unwrap_or(Value::Null);
+            json!({"period": period, "avg": avg})
+        })
+        .collect();
+
+    json!({
+        "avg":    np_avg,
+        "max":    np_max,
+        "peaks":  peaks,
+        "smooth": smooth
+    })
+}
+
 fn np_stats_v1(avg: Option<f64>, stats: &NpStats, np_periods: &[f64]) -> Value {
     let mut peaks_map = serde_json::Map::new();
     let mut smooth_map = serde_json::Map::new();
@@ -210,6 +292,82 @@ pub fn format_bucket_stats_v1(
     }
 
     result
+}
+
+/// Format a `DataBucket` in the v2 stats shape (`_getBucketStatsV2`,
+/// `stats.mjs:2714`).
+///
+/// Differences from the v1 shape:
+/// - `peaks` and `smooth` are arrays (not period-keyed objects).
+/// - Each `smooth` element is `{period, avg}`.
+/// - The `np` sub-block includes `max` (the max raw-power value).
+/// - Deprecated fields (`wBal`, `timeInPowerZones`, `power.wBal`,
+///   `power.timeInZones`) are absent.
+pub fn format_bucket_stats_v2(
+    bucket:        &DataBucket,
+    _athlete:      &AthleteData,
+    ftp:           Option<f64>,
+    ts_offset_ms:  f64,
+) -> Value {
+    let power         = bucket.power();
+    let power_primary = power.primary();
+
+    let last_ts      = power_primary.last_time().unwrap_or(bucket.start());
+    let elapsed_time = last_ts - bucket.start();
+    let active_time  = power_primary.active();
+    let np           = power_primary.np(true);
+
+    let tss      = np.zip(ftp).and_then(|(n, f)| calc_tss(n, active_time, f));
+    let power_kj = power_primary.joules() / 1000.0;
+    let draft_kj = bucket.draft().primary().joules() / 1000.0;
+
+    let power_periods: Vec<f64> = power.periodized().iter().map(|e| e.period).collect();
+    let power_stats   = power.stats(ts_offset_ms);
+    let np_max        = power_stats.max;
+    let mut power_json = signal_stats_v2(&power_stats, &power_periods);
+    let power_map = power_json.as_object_mut().unwrap();
+    power_map.insert("np".to_string(),  json!(np));
+    power_map.insert("tss".to_string(), json!(tss));
+    power_map.insert("kj".to_string(),  json!(power_kj));
+
+    let np_periods: Vec<f64> = power.periodized().iter()
+        .filter(|e| e.period >= MIN_NP_PERIOD)
+        .map(|e| e.period)
+        .collect();
+    let np_avg   = power_primary.np(false);
+    let np_stats = power.np_stats(ts_offset_ms);
+    let np_json  = np_stats_v2(np_avg, np_max, &np_stats, &np_periods);
+
+    let speed_periods: Vec<f64> = bucket.speed().periodized().iter().map(|e| e.period).collect();
+    let speed_json    = signal_stats_v2(&bucket.speed().stats(ts_offset_ms), &speed_periods);
+
+    let hr_periods: Vec<f64> = bucket.hr().periodized().iter().map(|e| e.period).collect();
+    let hr_json       = signal_stats_v2(&bucket.hr().stats(ts_offset_ms), &hr_periods);
+
+    let cadence_periods: Vec<f64> = bucket.cadence().periodized().iter().map(|e| e.period).collect();
+    let cadence_json  = signal_stats_v2(&bucket.cadence().stats(ts_offset_ms), &cadence_periods);
+
+    let draft_periods: Vec<f64> = bucket.draft().periodized().iter().map(|e| e.period).collect();
+    let mut draft_json = signal_stats_v2(&bucket.draft().stats(ts_offset_ms), &draft_periods);
+    draft_json.as_object_mut().unwrap().insert("kj".to_string(), json!(draft_kj));
+
+    json!({
+        "elapsedTime":  elapsed_time,
+        "activeTime":   active_time,
+        "coffeeTime":   (bucket.coffee_time() / 1000.0).round() as i64,
+        "workTime":     (bucket.work_time()   / 1000.0).round() as i64,
+        "followTime":   (bucket.follow_time() / 1000.0).round() as i64,
+        "soloTime":     (bucket.solo_time()   / 1000.0).round() as i64,
+        "workKj":       bucket.work_kj(),
+        "followKj":     bucket.follow_kj(),
+        "soloKj":       bucket.solo_kj(),
+        "power":        power_json,
+        "np":           np_json,
+        "speed":        speed_json,
+        "hr":           hr_json,
+        "cadence":      cadence_json,
+        "draft":        draft_json
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -393,39 +551,172 @@ pub fn format_athlete_data_v1(
 // v2 athlete record
 // ---------------------------------------------------------------------------
 
-/// Format an athlete record in the v2 shape (`_formatAthleteDataV2`).
+/// Base object always present in every v2 response, regardless of `resources`.
 ///
-/// When `resources` is empty the full v1 shape is returned with `version: 2`
-/// added. When resources are specified only the named fields are included.
+/// Mirrors the `data` object constructed at the top of `_formatAthleteDataV2`
+/// (`stats.mjs:4334`).  Resource fields (`stats`, `lap`, `lastLap`, `state`,
+/// `athlete`, `timeInPowerZones`, `laps`, `segments`, `events`) are NOT
+/// included here; they are inserted into the serialised map below.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AthleteDataV2Base {
+    version:             u32,
+    created_server_time: i64,
+    created:             f64,
+    updated:             f64,
+    age:                 f64,
+    #[serde(rename = "self", skip_serializing_if = "Option::is_none")]
+    self_:               Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    watching:            Option<bool>,
+    course_id:           u32,
+    athlete_id:          u32,
+    lap_count:           usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_subgroup_id:   Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_position:      Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_participants:  Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    game_state:          Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gap:                 Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gap_distance:        Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_gap_est:          Option<bool>,
+    // Privacy-gated: None = hidden (omit); Some(_) = present (may be null value)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    w_bal:               Option<Value>,
+    // Spread from _getEventOrRouteInfo; absent when no event/route metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_leader:        Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_sweeper:       Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remaining:           Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remaining_metric:    Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remaining_type:      Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remaining_end:       Option<f64>,
+}
+
+/// Format an athlete record in the v2 shape (`_formatAthleteDataV2`,
+/// `stats.mjs:4327`).
+///
+/// The base object is always returned.  When `resources` is non-empty the
+/// named resource fields are added on top.
+///
+/// Decision D1: the JS bug at `stats.mjs:4376` writes the `lastLap` resource
+/// value into `data.lap`, overwriting the lap key.  Ranchero deviates:
+/// `lastLap` writes to `data.lastLap`.
 pub(crate) fn format_athlete_v2(
-    athlete:          &AthleteData,
-    resources:        &[String],
-    watching_id:      Option<u32>,
-    self_athlete_id:  Option<u32>,
+    athlete:         &AthleteData,
+    resources:       &[String],
+    watching_id:     Option<u32>,
+    self_athlete_id: Option<u32>,
 ) -> Value {
-    if resources.is_empty() {
-        let now    = local_now();
-        let ts_ms  = athlete.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
-        let mut obj = format_athlete_data_v1(athlete, watching_id, self_athlete_id, None, now, ts_ms);
-        obj["version"] = json!(2);
-        obj
+    let now   = local_now();
+    let id    = athlete.athlete_id;
+    let ts_ms = athlete.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
+
+    let w_bal = if athlete.event_privacy.hide_w_bal {
+        None
     } else {
-        let mut obj = serde_json::Map::new();
+        Some(json!(athlete.w_bal.value()))
+    };
+
+    let base = AthleteDataV2Base {
+        version:            2,
+        created_server_time: athlete.wt_offset as i64 + ZWIFT_EPOCH_MS,
+        created:            athlete.created,
+        updated:            athlete.updated,
+        age:                now - athlete.internal_updated,
+        self_:              (self_athlete_id == Some(id)).then_some(true),
+        watching:           (watching_id     == Some(id)).then_some(true),
+        course_id:          athlete.course_id,
+        athlete_id:         id,
+        lap_count:          athlete.lap_slices.len(),
+        event_subgroup_id:  athlete.event_subgroup.as_ref().map(|sg| sg.id),
+        event_position:     athlete.event_position,
+        event_participants: athlete.event_participants,
+        game_state:         None,
+        gap:                athlete.gap,
+        gap_distance:       athlete.gap_distance,
+        is_gap_est:         athlete.is_gap_est.then_some(true),
+        w_bal,
+        event_leader:       None,
+        event_sweeper:      None,
+        remaining:          None,
+        remaining_metric:   None,
+        remaining_type:     None,
+        remaining_end:      None,
+    };
+
+    let mut obj = match serde_json::to_value(base)
+        .expect("AthleteDataV2Base is always serializable")
+    {
+        Value::Object(m) => m,
+        _ => unreachable!(),
+    };
+
+    if !resources.is_empty() {
+        let lap_count = athlete.lap_slices.len();
         for resource in resources {
-            let value = match resource.as_str() {
-                "stats"            => json!({}),
-                "lap"              => json!({}),
-                "lastLap"          => json!(null),
-                "laps"             => json!([]),
-                "segments"         => json!([]),
-                "events"           => json!([]),
-                "state"            => json!(null),
-                "athlete"          => json!(null),
-                "timeInPowerZones" => json!(null),
-                _                  => continue,
-            };
-            obj.insert(resource.clone(), value);
+            match resource.as_str() {
+                "athlete" => {
+                    obj.insert("athlete".into(), Value::Null);
+                }
+                "state" => {
+                    let state_json = athlete.most_recent_state.as_ref().map(|s| format_state(s));
+                    obj.insert("state".into(), state_json.unwrap_or(Value::Null));
+                }
+                "timeInPowerZones" => {
+                    if !athlete.event_privacy.hide_ftp {
+                        let zones: Vec<Value> = athlete.time_in_power_zones.value().iter()
+                            .map(|z| json!({"label": z.label, "time": z.time}))
+                            .collect();
+                        obj.insert("timeInPowerZones".into(), json!(zones));
+                    }
+                }
+                "stats" => {
+                    obj.insert("stats".into(),
+                        format_bucket_stats_v2(&athlete.bucket, athlete, None, ts_ms));
+                }
+                "lap" => {
+                    let lap = athlete.lap_slices.last()
+                        .map(|s| format_bucket_stats_v2(&s.bucket, athlete, None, ts_ms))
+                        .unwrap_or_else(|| format_bucket_stats_v2(&athlete.bucket, athlete, None, ts_ms));
+                    obj.insert("lap".into(), lap);
+                }
+                "lastLap" => {
+                    // D1: JS writes to data.lap (stats.mjs:4376); ranchero writes to data.lastLap.
+                    let last_lap = if lap_count > 1 {
+                        athlete.lap_slices.get(lap_count - 2)
+                            .map(|s| format_bucket_stats_v2(&s.bucket, athlete, None, ts_ms))
+                            .unwrap_or(Value::Null)
+                    } else {
+                        Value::Null
+                    };
+                    obj.insert("lastLap".into(), last_lap);
+                }
+                "laps" => {
+                    // Slice formatting implemented in Phase 5 (18.10-I)
+                    obj.insert("laps".into(), json!([]));
+                }
+                "segments" => {
+                    obj.insert("segments".into(), json!([]));
+                }
+                "events" => {
+                    obj.insert("events".into(), json!([]));
+                }
+                _ => {}  // unknown resource names ignored
+            }
         }
-        Value::Object(obj)
     }
+
+    Value::Object(obj)
 }

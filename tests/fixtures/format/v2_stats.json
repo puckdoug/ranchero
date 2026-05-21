@@ -32,7 +32,7 @@
   },
   "np": {
     "avg": null,
-    "max": 0.0,
+    "max": 200.0,
     "peaks": [
       {"period": 300.0,  "avg": null, "time": null, "ts": null},
       {"period": 1200.0, "avg": null, "time": null, "ts": null},

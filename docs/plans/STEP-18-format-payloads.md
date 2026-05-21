@@ -131,8 +131,11 @@ builds on the last; within a phase the tests are independent.
       (`tests/format_v2_stats.rs`; golden at
       `tests/fixtures/format/v2_stats.json`. Fails to compile — no
       `format_bucket_stats_v2` yet.)
-- [ ] **18.8-I** Implement `format_bucket_stats_v2` as a verbatim port of
+- [x] **18.8-I** Implement `format_bucket_stats_v2` as a verbatim port of
       `_getBucketStatsV2` (`stats.mjs:2714`).
+      (`signal_stats_v2`/`np_stats_v2` helpers + `format_bucket_stats_v2`
+      in `src/web/format.rs`.  `np.max` sourced from `power.stats().max`
+      = `_maxValue` on the JS `PowerDataCollector`.)
 - [x] **18.9-T** `/api/athlete/v2/{id}` with no query returns the base v2
       object; with `?resource=...` returns only the requested resources;
       `?stats=true` includes the extended stats; the resource whitelist is
@@ -148,9 +151,12 @@ builds on the last; within a phase the tests are independent.
       (Two new tests in `tests/http_athlete_v2.rs`:
       `v2_last_lap_resource_populates_last_lap_key`,
       `v2_lap_and_last_lap_resources_produce_independent_keys`.)
-- [ ] **18.9-I** Replace the stub `format_athlete_v2` with a port of
+- [x] **18.9-I** Replace the stub `format_athlete_v2` with a port of
       `_formatAthleteDataV2` (`stats.mjs:4325`); fix the `lastLap`
       assignment so it writes to `data.lastLap` (decision D1).
+      (`AthleteDataV2Base` struct + rewritten `format_athlete_v2` in
+      `src/web/format.rs`; updated two 17.10-T tests in
+      `tests/http_athlete_v2.rs` that described the old stub behaviour.)
 
 ### Phase 5 — Slice formatters and laps/segments/events routes
 
