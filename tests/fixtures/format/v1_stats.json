@@ -1,0 +1,101 @@
+{
+  "elapsedTime": 69.0,
+  "activeTime": 69.0,
+  "coffeeTime": 0,
+  "workTime": 0,
+  "followTime": 0,
+  "soloTime": 0,
+  "workKj": 0.0,
+  "followKj": 0.0,
+  "soloKj": 0.0,
+  "wBal": null,
+  "timeInPowerZones": [],
+  "power": {
+    "avg": 200.0,
+    "max": 200.0,
+    "peaks": {
+      "5":    {"period": 5.0,    "avg": 200.0, "time": 69.0, "ts": 69000.0},
+      "15":   {"period": 15.0,   "avg": 200.0, "time": 69.0, "ts": 69000.0},
+      "60":   {"period": 60.0,   "avg": 200.0, "time": 69.0, "ts": 69000.0},
+      "300":  {"period": 300.0,  "avg": null,  "time": null,  "ts": null},
+      "1200": {"period": 1200.0, "avg": null,  "time": null,  "ts": null},
+      "3600": {"period": 3600.0, "avg": null,  "time": null,  "ts": null}
+    },
+    "smooth": {
+      "5":    200.0,
+      "15":   200.0,
+      "60":   200.0,
+      "300":  200.0,
+      "1200": 200.0
+    },
+    "np": 200.0,
+    "tss": null,
+    "kj": 13.8,
+    "wBal": null,
+    "timeInZones": []
+  },
+  "np": {
+    "avg": null,
+    "peaks": {
+      "300":  {"period": 300.0,  "avg": null, "time": null, "ts": null},
+      "1200": {"period": 1200.0, "avg": null, "time": null, "ts": null},
+      "3600": {"period": 3600.0, "avg": null, "time": null, "ts": null}
+    },
+    "smooth": {
+      "300":  null,
+      "1200": null
+    }
+  },
+  "speed": {
+    "avg": 30.0,
+    "max": 30.0,
+    "peaks": {
+      "60":   {"period": 60.0,   "avg": 30.0, "time": 69.0, "ts": 69000.0},
+      "300":  {"period": 300.0,  "avg": null, "time": null,  "ts": null},
+      "1200": {"period": 1200.0, "avg": null, "time": null,  "ts": null},
+      "3600": {"period": 3600.0, "avg": null, "time": null,  "ts": null}
+    },
+    "smooth": {
+      "60":   30.0,
+      "300":  30.0,
+      "1200": 30.0
+    }
+  },
+  "hr": {
+    "avg": 140.0,
+    "max": 140.0,
+    "peaks": {
+      "60":   {"period": 60.0,   "avg": 140.0, "time": 69.0, "ts": 69000.0},
+      "300":  {"period": 300.0,  "avg": null,  "time": null,  "ts": null},
+      "1200": {"period": 1200.0, "avg": null,  "time": null,  "ts": null},
+      "3600": {"period": 3600.0, "avg": null,  "time": null,  "ts": null}
+    },
+    "smooth": {
+      "60":   140.0,
+      "300":  140.0,
+      "1200": 140.0
+    }
+  },
+  "cadence": {
+    "avg": 90.0,
+    "max": 90.0,
+    "peaks": {},
+    "smooth": {}
+  },
+  "draft": {
+    "avg": 0.0,
+    "max": 0.0,
+    "peaks": {
+      "60":   {"period": 60.0,   "avg": 0.0, "time": 69.0, "ts": 69000.0},
+      "300":  {"period": 300.0,  "avg": null, "time": null, "ts": null},
+      "1200": {"period": 1200.0, "avg": null, "time": null, "ts": null},
+      "3600": {"period": 3600.0, "avg": null, "time": null, "ts": null}
+    },
+    "smooth": {
+      "60":   0.0,
+      "300":  0.0,
+      "1200": 0.0
+    },
+    "kj": 0.0
+  }
+}

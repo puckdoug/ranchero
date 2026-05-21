@@ -94,7 +94,7 @@ builds on the last; within a phase the tests are independent.
       including the period-keyed `peaks`/`smooth` objects, the deprecated
       `wBal`/`timeInPowerZones` fields, `kj`, `np`, `tss`, and the `np`
       sub-block with no `max`.
-- [ ] **18.5-I** Implement `format_bucket_stats_v1(bucket, ad, ctx)` as a
+- [x] **18.5-I** Implement `format_bucket_stats_v1(bucket, ad, ctx)` as a
       verbatim port of `_getBucketStats` (`stats.mjs:2664`).
 
 ### Phase 3 — v1 athlete formatter (full)

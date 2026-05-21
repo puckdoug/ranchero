@@ -24,11 +24,11 @@ pub struct SampleRow {
 /// Build a deterministic `AthleteData` (athlete 1001, course 5) from a
 /// sample script and flush internal buffers so values are immediately readable.
 ///
-/// The `now` timestamp used for bucket creation is 1 000 000 seconds.
-/// The world-time offset is set to 0 so `wt_offset` is predictable.
+/// Both `now` (bucket start) and `world_time` offset are set to 0.0 so
+/// elapsed-time arithmetic in formatters is straightforward: elapsed = last_ts.
 #[allow(dead_code)]
 pub fn build_athlete(script: &[SampleRow]) -> AthleteData {
-    let now = 1_000_000.0_f64;
+    let now = 0.0_f64;
     let mut ad = AthleteData::new(1001, 5, 0, 0.0, now);
     for row in script {
         ad.bucket.ingest_power(row.ts, row.power);

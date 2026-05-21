@@ -287,8 +287,8 @@ impl<R: RollingWindow> DataCollector<R> {
             entry.peak.as_ref().map(|p| PeakStat {
                 period: p.period,
                 avg:    p.snap_value,
-                time:   p.roll.active(),
-                ts:     p.snap_time + ts_offset_ms,
+                time:   p.snap_time,
+                ts:     ts_offset_ms + p.snap_time * 1000.0,
             })
         }).collect();
 
@@ -309,14 +309,14 @@ impl<R: RollingWindow> DataCollector<R> {
 const MAX_SMOOTH_PERIOD: f64 = 1200.0;
 
 /// One entry in the `peaks` array of a [`SignalStats`].  Mirrors the
-/// peak objects produced by `getStatsV2` (`stats.mjs:196`).
+/// peak objects produced by `getStatsSlow` / `getStatsV2` (`stats.mjs:196`).
 #[derive(Debug, Clone)]
 pub struct PeakStat {
     pub period: f64,
     pub avg:    f64,
-    /// Active time (seconds) in the rolling window when the peak was set.
+    /// World-time (seconds) at which the peak was captured (`snap_time`).
     pub time:   f64,
-    /// Timestamp: `snap_time + ts_offset_ms` passed to `stats()`.
+    /// `ts_offset_ms + time * 1000`: local-time ms of the peak.
     pub ts:     f64,
 }
 
@@ -453,6 +453,17 @@ impl PowerDataCollector {
         self.inner.max_value()
     }
 
+    /// Direct access to the unbounded primary `RollingPower`.
+    pub fn primary(&self) -> &crate::RollingPower {
+        self.inner.primary()
+    }
+
+    /// Signal stats (avg, max, peaks, smooth) for the raw power values,
+    /// in the same shape as `DataCollector::stats`.
+    pub fn stats(&self, ts_offset_ms: f64) -> SignalStats {
+        self.inner.stats(ts_offset_ms)
+    }
+
     /// Snapshot of the NP collector in the `getNPStatsV2` shape.
     ///
     /// Only periods ≥ 300 s are included, mirroring `_npPeriodizedOfft`
@@ -471,8 +482,8 @@ impl PowerDataCollector {
                 period: p.period,
                 avg:    p.snap_value,
                 max:    p.snap_value,
-                time:   p.roll.active(),
-                ts:     p.snap_time + ts_offset_ms,
+                time:   p.snap_time,
+                ts:     ts_offset_ms + p.snap_time * 1000.0,
             })
         }).collect();
 
@@ -503,9 +514,9 @@ pub struct NpPeakStat {
     pub avg:    f64,
     /// Maximum NP seen for this period across the session.
     pub max:    f64,
-    /// Active time (seconds) in the window when the peak was set.
+    /// World-time (seconds) at which the NP peak was captured.
     pub time:   f64,
-    /// Timestamp: `snap_time + ts_offset_ms` passed to `np_stats()`.
+    /// `ts_offset_ms + time * 1000`: local-time ms of the peak.
     pub ts:     f64,
 }
 
