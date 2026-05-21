@@ -64,16 +64,16 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 1 — Stat-shape primitives in `zwift-stats` and `zwift-relay`
 
-- [ ] **18.1-T** `RollingAverage::joules` and `RollingPower::joules`
+- [x] **18.1-T** `RollingAverage::joules` and `RollingPower::joules`
       return the cumulative value·time accumulator.
 - [ ] **18.1-I** Add `joules()` to `RollingAverage` (returns the existing
       `values_acc`) and expose it on `RollingPower` through its inner roll.
-- [ ] **18.2-T** `WorldTimer::to_server_time(wt)` and
+- [x] **18.2-T** `WorldTimer::to_server_time(wt)` and
       `to_local_time(wt)` match the JS arithmetic (`zwift.mjs:104-114`).
 - [ ] **18.2-I** Add both methods to
       `crates/zwift-relay/src/world_timer.rs` and reconcile the
       world-time unit (gap G5).
-- [ ] **18.3-T** `DataCollector::stats(ts_offset_ms)` returns a
+- [x] **18.3-T** `DataCollector::stats(ts_offset_ms)` returns a
       `SignalStats { avg, max, peaks, smooth }` POD whose `peaks` carry
       `{ period, avg, time, ts }` for every periodised window and whose
       `smooth` carries `{ period, avg }` for windows with period ≤ 1200 s.
@@ -81,7 +81,7 @@ builds on the last; within a phase the tests are independent.
       `stats()` method to `DataCollector` (mirrors `getStatsV2`,
       `stats.mjs:196`). The v1/v2 JSON container difference is the
       formatter's job, not this method's.
-- [ ] **18.4-T** `PowerDataCollector::np_stats(ts_offset_ms)` returns an
+- [x] **18.4-T** `PowerDataCollector::np_stats(ts_offset_ms)` returns an
       `NpStats` POD restricted to windows with period ≥ 300 s.
 - [ ] **18.4-I** Add `np_stats()` honouring the ≥ 300 s offset
       (`_npPeriodizedOfft`, `stats.mjs:265`) and the smooth bound
