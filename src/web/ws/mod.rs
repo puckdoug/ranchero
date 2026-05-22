@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
 
-use crate::web::subs::DelegationHandle;
+use crate::web::subs::{AthleteV2Query, DelegationHandle};
 use crate::web::state::WebState;
 
 // ---------------------------------------------------------------------------
@@ -239,7 +239,22 @@ fn handle_subscribe(
         None     => return err_frame(uid, "subscribe arg.subId is required"),
     };
 
-    let sub = match state.delegations.subscribe(&source, &event, state) {
+    let query = {
+        let q = arg.get("query");
+        let resources: Vec<String> = q
+            .and_then(|q| q.get("resources"))
+            .and_then(|r| r.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect())
+            .unwrap_or_default();
+        let stats = q
+            .and_then(|q| q.get("stats"))
+            .and_then(|s| s.as_bool())
+            .unwrap_or(false);
+        AthleteV2Query { resources, stats }
+    };
+    let sub = match state.delegations.subscribe(&source, &event, &query, state) {
         Ok(h)  => h,
         Err(e) => return err_frame(uid, e),
     };

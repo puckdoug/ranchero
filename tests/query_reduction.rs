@@ -23,7 +23,7 @@
 
 use std::collections::HashSet;
 use ranchero::web::subs::{
-    AthleteV2Query, QueryListener, QueryBatch, FilterGroup,
+    AthleteV2Query, QueryListener, QueryBatch,
     compute_query_cost, create_query_strategies, create_filter_groups,
 };
 

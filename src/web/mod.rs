@@ -8,7 +8,7 @@ pub mod rpc;
 pub mod proto_to_stats;
 pub mod proto_view;
 pub(crate) mod ws;
-pub(crate) mod subs;
+pub mod subs;
 
 pub use server::{start, WebError, WebServerHandle};
 pub use state::{WebState, gc_tick_loop};

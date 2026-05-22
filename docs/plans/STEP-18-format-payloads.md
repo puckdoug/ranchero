@@ -245,8 +245,14 @@ builds on the last; within a phase the tests are independent.
       `different_v2_queries_have_distinct_delegations`. Both fail to compile —
       `AthleteV2Query` absent from `ranchero::web::subs` and `DelegationMap::subscribe`
       does not accept a query parameter.)
-- [ ] **18.15-I** Extend the delegation key to include the v2 query and
+- [x] **18.15-I** Extend the delegation key to include the v2 query and
       format once per delegation in the fanout task.
+      (`AthleteV2Query` type added to `src/web/subs/mod.rs`; `DelegationMap::subscribe`
+      gains a `query: &AthleteV2Query` parameter; key becomes
+      `{source}/{event}/{canonical_query}`; `src/web/ws/mod.rs` parses the query
+      from the subscribe arg and passes it through; `subs` module changed from
+      `pub(crate)` to `pub` so integration tests can reach it.  Both
+      subs_v2_query_dedup tests green.)
 - [x] **18.16-T** Subscribers with overlapping-but-unequal queries share
       one upstream computation and each receive only their requested
       fields; the chosen merge matches the cost model.
@@ -259,8 +265,11 @@ builds on the last; within a phase the tests are independent.
       All fail to compile — `QueryListener`, `QueryBatch`, `FilterGroup`,
       `compute_query_cost`, `create_query_strategies`, `create_filter_groups`
       absent from `ranchero::web::subs`.)
-- [ ] **18.16-I** Port `createQueryStrategies`/`computeQueryCost`/
+- [x] **18.16-I** Port `createQueryStrategies`/`computeQueryCost`/
       `createFilterGroups` (`stats.mjs:750-841`) in full (decision D2).
+      (`QueryListener`, `QueryBatch`, `FilterGroup` structs; `compute_query_cost`,
+      `create_query_strategies`, `create_filter_groups` functions; all added to
+      `src/web/subs/mod.rs`.  All 6 query_reduction tests green.)
 
 ### Phase 9 — Parity ledger and deferral log
 

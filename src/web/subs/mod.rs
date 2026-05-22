@@ -21,6 +21,172 @@ use crate::web::state::WebState;
 const MAX_BUFFERED_BYTES: usize = 8_388_608; // 8 MB
 
 // ---------------------------------------------------------------------------
+// v2 query types
+// ---------------------------------------------------------------------------
+
+/// The query parameters from a v2 WebSocket subscription or HTTP request.
+#[derive(Clone, Default)]
+pub struct AthleteV2Query {
+    pub resources: Vec<String>,
+    pub stats:     bool,
+}
+
+impl AthleteV2Query {
+    /// A stable string suitable for use as a `HashMap` key.
+    fn canonical_key(&self) -> String {
+        let mut res = self.resources.clone();
+        res.sort();
+        res.dedup();
+        format!("{}/{}", self.stats, res.join(","))
+    }
+}
+
+/// A single subscriber with its associated query.
+#[derive(Clone)]
+pub struct QueryListener {
+    pub query: AthleteV2Query,
+}
+
+/// One batch within a query strategy: a merged query covering a set of
+/// listeners whose individual queries are all subsets of it.
+pub struct QueryBatch {
+    pub query:     AthleteV2Query,
+    pub listeners: Vec<QueryListener>,
+}
+
+/// A group of listeners that all require the same filtering pass after a
+/// shared formatting call.  `mask` names the resources present in the batch
+/// but absent from every listener in this group (to be stripped).
+/// `stats_mask` names the slice resources (laps/segments/events) that must
+/// have their per-slice `stats` field set to null because the batch computed
+/// stats but the listeners in this group did not request them.
+pub struct FilterGroup {
+    pub listeners:  Vec<QueryListener>,
+    pub mask:       Vec<String>,
+    pub stats_mask: Option<Vec<String>>,
+}
+
+// ---------------------------------------------------------------------------
+// Query-reduction functions
+// ---------------------------------------------------------------------------
+
+/// Returns the estimated serialisation cost of a single `AthleteV2Query`.
+/// Mirrors `computeQueryCost` in `stats.mjs:795`.
+pub fn compute_query_cost(query: &AthleteV2Query) -> f64 {
+    let stats_f = if query.stats { 5.0_f64 } else { 1.0_f64 };
+    query.resources.iter().map(|r| match r.as_str() {
+        "state"            => 0.5,
+        "timeInPowerZones" => 0.4,
+        "athlete"          => 1.5,
+        "stats"            => 1.0 * stats_f,
+        "lap"              => 1.0 * stats_f,
+        "lastLap"          => 1.0 * stats_f,
+        "laps"             => 2.0 * stats_f,
+        "segments"         => 4.0 * stats_f,
+        "events"           => 1.5 * stats_f,
+        _                  => 1.0,
+    }).sum()
+}
+
+/// Returns the candidate strategies for batching a set of listeners.
+/// Each strategy is a `Vec<QueryBatch>`; the caller picks the cheapest.
+/// Mirrors `createQueryStrategies` in `stats.mjs:750`.
+///
+/// - If all listeners have `stats: false`, one combined strategy is returned.
+/// - If both stats and non-stats listeners are present, two strategies are
+///   returned: a split strategy (two batches at different fidelity) and a
+///   combined strategy (one stats=true batch covering everyone).
+pub fn create_query_strategies(listeners: &[QueryListener]) -> Vec<Vec<QueryBatch>> {
+    use std::collections::HashSet;
+
+    let non_stats_resources: HashSet<String> = listeners.iter()
+        .filter(|l| !l.query.stats)
+        .flat_map(|l| l.query.resources.iter().cloned())
+        .collect();
+    let stats_resources: HashSet<String> = listeners.iter()
+        .filter(|l| l.query.stats)
+        .flat_map(|l| l.query.resources.iter().cloned())
+        .collect();
+
+    let mut strategies: Vec<Vec<QueryBatch>> = Vec::new();
+
+    if !non_stats_resources.is_empty() && !stats_resources.is_empty() {
+        let mut ns_res: Vec<String> = non_stats_resources.iter().cloned().collect();
+        ns_res.sort();
+        let mut s_res: Vec<String> = stats_resources.iter().cloned().collect();
+        s_res.sort();
+        strategies.push(vec![
+            QueryBatch {
+                query: AthleteV2Query { stats: false, resources: ns_res },
+                listeners: listeners.iter().filter(|l| !l.query.stats).cloned().collect(),
+            },
+            QueryBatch {
+                query: AthleteV2Query { stats: true, resources: s_res },
+                listeners: listeners.iter().filter(|l| l.query.stats).cloned().collect(),
+            },
+        ]);
+    }
+
+    let has_stats = !stats_resources.is_empty();
+    let mut all_res: Vec<String> = non_stats_resources.into_iter()
+        .chain(stats_resources)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    all_res.sort();
+    strategies.push(vec![QueryBatch {
+        query: AthleteV2Query { stats: has_stats, resources: all_res },
+        listeners: listeners.to_vec(),
+    }]);
+
+    strategies
+}
+
+/// Groups the listeners within a batch by the filter operation each needs
+/// applied to the batch's formatted output.  Listeners with the same
+/// (mask, stats_mask) signature share one group.
+/// Mirrors `createFilterGroups` in `stats.mjs:809`.
+pub fn create_filter_groups(batch: &QueryBatch) -> Vec<FilterGroup> {
+    let batch_set: std::collections::HashSet<&str> =
+        batch.query.resources.iter().map(String::as_str).collect();
+
+    let mut sig_to_idx: HashMap<String, usize> = HashMap::new();
+    let mut groups: Vec<FilterGroup> = Vec::new();
+
+    for listener in &batch.listeners {
+        let listener_set: std::collections::HashSet<&str> =
+            listener.query.resources.iter().map(String::as_str).collect();
+
+        let mut mask: Vec<String> = batch_set.difference(&listener_set)
+            .map(|s| s.to_string())
+            .collect();
+        mask.sort();
+
+        let stats_mask: Option<Vec<String>> = if !listener.query.stats && batch.query.stats {
+            let mut sm: Vec<String> = listener.query.resources.iter()
+                .filter(|r| matches!(r.as_str(), "laps" | "segments" | "events"))
+                .cloned()
+                .collect();
+            sm.sort();
+            Some(sm)
+        } else {
+            None
+        };
+
+        let sig = format!("{:?}|{:?}", mask, stats_mask);
+        match sig_to_idx.get(&sig).copied() {
+            Some(idx) => groups[idx].listeners.push(listener.clone()),
+            None => {
+                sig_to_idx.insert(sig, groups.len());
+                groups.push(FilterGroup { listeners: vec![listener.clone()], mask, stats_mask });
+            }
+        }
+    }
+
+    groups
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -88,15 +254,16 @@ impl DelegationMap {
     }
 
     /// Returns a `SubscriptionHandle` whose sink receives formatted event values.
-    /// Reuses a live delegation when one exists for the same (source, event) pair;
-    /// creates a fresh one otherwise.
+    /// Reuses a live delegation when one exists for the same (source, event, query)
+    /// triple; creates a fresh one otherwise.
     pub fn subscribe(
         &self,
         source: &str,
         event:  &str,
+        query:  &AthleteV2Query,
         state:  &Arc<WebState>,
     ) -> Result<SubscriptionHandle, String> {
-        let key = format!("{source}/{event}");
+        let key = format!("{source}/{event}/{}", query.canonical_key());
         let mut map = self.inner.lock().unwrap();
 
         // Reuse a live delegation.
