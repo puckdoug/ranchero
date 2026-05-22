@@ -238,14 +238,27 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 8 — v2 query-reduction memoisation
 
-- [ ] **18.15-T** Two subscribers with identical `(source, event, query)`
+- [x] **18.15-T** Two subscribers with identical `(source, event, query)`
       cause exactly one formatter call per emission (counting test
       double); two subscribers with different queries cause two.
+      (`tests/subs_v2_query_dedup.rs`: `identical_v2_queries_share_one_delegation`,
+      `different_v2_queries_have_distinct_delegations`. Both fail to compile —
+      `AthleteV2Query` absent from `ranchero::web::subs` and `DelegationMap::subscribe`
+      does not accept a query parameter.)
 - [ ] **18.15-I** Extend the delegation key to include the v2 query and
       format once per delegation in the fanout task.
-- [ ] **18.16-T** Subscribers with overlapping-but-unequal queries share
+- [x] **18.16-T** Subscribers with overlapping-but-unequal queries share
       one upstream computation and each receive only their requested
       fields; the chosen merge matches the cost model.
+      (`tests/query_reduction.rs`: `compute_query_cost_pins_cost_table`,
+      `create_query_strategies_all_non_stats_yields_one_strategy`,
+      `create_query_strategies_mixed_stats_yields_split_and_combined`,
+      `create_filter_groups_separates_by_stats_mask`,
+      `create_filter_groups_merges_identical_mask_signatures`,
+      `create_filter_groups_mask_is_batch_minus_listener_resources`.
+      All fail to compile — `QueryListener`, `QueryBatch`, `FilterGroup`,
+      `compute_query_cost`, `create_query_strategies`, `create_filter_groups`
+      absent from `ranchero::web::subs`.)
 - [ ] **18.16-I** Port `createQueryStrategies`/`computeQueryCost`/
       `createFilterGroups` (`stats.mjs:750-841`) in full (decision D2).
 
