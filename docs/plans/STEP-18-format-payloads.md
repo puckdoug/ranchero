@@ -169,16 +169,27 @@ builds on the last; within a phase the tests are independent.
       `tests/fixtures/format/event_slice.json`.  Fails to compile — no
       `format_data_slice`/`format_segment_slice`/`format_event_slice`/
       `filter_slices` in `src/web/format.rs` yet.)
-- [ ] **18.10-I** Implement the three slice formatters and the filter as
+- [x] **18.10-I** Implement the three slice formatters and the filter as
       ports of `stats.mjs:1699-1762`.
+      (`format_data_slice`, `format_segment_slice`, `format_event_slice`,
+      `filter_slices` added to `src/web/format.rs`; `DataSlice` added to
+      imports.  All 6 golden tests green.)
 - [x] **18.11-T** `/api/athlete/laps/v1/{id}`,
       `/api/athlete/segments/v1/{id}`, `/api/athlete/events/v1/{id}`
       return the filtered, formatted slice arrays; 404 for an unknown id;
       `self`/`watching` aliases resolve.
       (`tests/http_laps_v1.rs`; 7 failing tests — routes not registered
       in `configure_api`, default service returns API directory instead.)
-- [ ] **18.11-I** Register the three routes with `{active: true}`
+- [x] **18.11-I** Register the three routes with `{active: true}`
       filtering, matching `webserver.mjs:323-336,399-401`.
+      (`laps_v1_handler`, `segments_v1_handler`, `events_v1_handler`
+      added to `src/web/http/mod.rs`; routes registered in
+      `configure_api`.  All 7 HTTP tests green.)
+      Also corrected two 17.11-T stub-era assertions in
+      `tests/http_nearby_v2.rs` and `tests/http_groups_v2.rs` that
+      asserted `athleteId` absent when resources are requested — the
+      correct v2 behavior (per 18.9-I) includes `athleteId` in the base
+      object regardless of resource filter.
 
 ### Phase 6 — Stream formatter and streams route
 

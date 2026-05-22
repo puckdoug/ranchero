@@ -9,7 +9,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use zwift_relay::ZWIFT_EPOCH_MS;
-use zwift_stats::{AthleteData, DataBucket, SignalStats, NpStats, calc_tss};
+use zwift_stats::{AthleteData, DataBucket, DataSlice, SignalStats, NpStats, calc_tss};
 use zwift_stats::athlete::MostRecentState;
 
 const MAX_SMOOTH_PERIOD: f64 = 1200.0;
@@ -719,4 +719,101 @@ pub(crate) fn format_athlete_v2(
     }
 
     Value::Object(obj)
+}
+
+// ---------------------------------------------------------------------------
+// Slice formatters (`_formatDataSlice` / `_formatSegmentDataSlice` /
+// `_formatEventDataSlice`, `stats.mjs:1699-1762`)
+// ---------------------------------------------------------------------------
+
+/// Format a data slice in the v1 shape (`_formatDataSlice`, `stats.mjs:1741`).
+///
+/// `stats` uses the v1 bucket-stats shape without deprecated fields, matching
+/// `_getBucketStats` called with no version option from the laps/segments/events
+/// route handlers.
+///
+/// `startIndex` and `endIndex` are the first and last indices in the primary
+/// power roll.  For the unbounded primary roll, the offset is always 0, so
+/// `startIndex = 0` and `endIndex = size - 1` (both 0 when the slice is empty).
+pub fn format_data_slice(slice: &DataSlice, ad: &AthleteData) -> Value {
+    let power      = slice.bucket.power().primary();
+    let start_index: usize = 0;
+    let end_index = power.size().saturating_sub(1);
+    let ts_ms = ad.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
+
+    json!({
+        "id":              slice.id,
+        "stats":           format_bucket_stats_v1(&slice.bucket, ad, None, ts_ms, false),
+        "active":          slice.end.is_none(),
+        "startIndex":      start_index,
+        "endIndex":        end_index,
+        "startServerTime": ad.wt_offset as i64 + ZWIFT_EPOCH_MS
+                           + (slice.start - ad.internal_created) as i64,
+        "start":           power.time_at(0),
+        "end":             power.time_at(end_index as i32),
+        "sport":           slice.sport,
+        "courseId":        slice.course_id,
+    })
+}
+
+/// Format a segment slice (`_formatSegmentDataSlice`, `stats.mjs:1699`).
+///
+/// Extends the base data-slice shape with `segmentId`, `eventSubgroupId`,
+/// `startEventDistance`, `endEventDistance`, and `incomplete`.
+pub fn format_segment_slice(slice: &DataSlice, ad: &AthleteData) -> Value {
+    let mut obj = format_data_slice(slice, ad);
+    let map = obj.as_object_mut().expect("format_data_slice always returns an object");
+    map.insert("segmentId".into(),         json!(slice.segment_id));
+    map.insert("eventSubgroupId".into(),   json!(slice.event_subgroup_id));
+    map.insert("startEventDistance".into(), json!(slice.start_event_distance));
+    map.insert("endEventDistance".into(),  json!(slice.end_event_distance));
+    map.insert("incomplete".into(),        json!(slice.incomplete));
+    obj
+}
+
+/// Format an event slice (`_formatEventDataSlice`, `stats.mjs:1719`).
+///
+/// Extends the base data-slice shape with `eventSubgroupId`.
+pub fn format_event_slice(slice: &DataSlice, ad: &AthleteData) -> Value {
+    let mut obj = format_data_slice(slice, ad);
+    obj.as_object_mut()
+        .expect("format_data_slice always returns an object")
+        .insert("eventSubgroupId".into(), json!(slice.event_subgroup_id));
+    obj
+}
+
+/// Filter a slice list (`_filterAthleteDataSlices`, `stats.mjs:1726`).
+///
+/// - `start_time`: keep only slices whose first power-roll time ≥ `start_time`.
+/// - `end_time`: keep only slices that are open, or whose last power-roll time
+///   > `end_time`.
+/// - `active = true`: return all slices (open and closed).
+/// - `active = false`: return only closed slices (those where `end` is `Some`).
+pub fn filter_slices<'a>(
+    slices:     &'a [DataSlice],
+    start_time: Option<f64>,
+    end_time:   Option<f64>,
+    active:     bool,
+) -> Vec<&'a DataSlice> {
+    slices.iter()
+        .filter(|s| {
+            if let Some(st) = start_time {
+                if s.bucket.power().primary().time_at(0).unwrap_or(0.0) < st {
+                    return false;
+                }
+            }
+            if let Some(et) = end_time {
+                if s.end.is_some() {
+                    let last = s.bucket.power().primary().last_time().unwrap_or(0.0);
+                    if last <= et {
+                        return false;
+                    }
+                }
+            }
+            if !active && s.end.is_none() {
+                return false;
+            }
+            true
+        })
+        .collect()
 }

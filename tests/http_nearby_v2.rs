@@ -67,7 +67,11 @@ async fn nearby_v2_resource_filter_applied_per_entry() {
             .expect("each nearby/v2 entry must be a JSON object");
         assert!(obj.contains_key("stats"),
             "requested resource 'stats' must be present; got {entry}");
-        assert!(!obj.contains_key("athleteId"),
-            "athleteId must be absent when resource filter is active; got {entry}");
+        // athleteId is part of the v2 base object and is always present,
+        // even when resources are requested (18.9-I corrected v2 behavior).
+        assert!(obj.contains_key("athleteId"),
+            "athleteId must be present as part of the v2 base object; got {entry}");
+        assert_eq!(entry["version"], 2,
+            "version: 2 must be present in the v2 base object; got {entry}");
     }
 }
