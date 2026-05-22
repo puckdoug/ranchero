@@ -1,0 +1,108 @@
+{
+  "id": 4299262263296,
+  "stats": {
+    "elapsedTime": 0.0,
+    "activeTime": 0.0,
+    "coffeeTime": 0,
+    "workTime": 0,
+    "followTime": 0,
+    "soloTime": 0,
+    "workKj": 0.0,
+    "followKj": 0.0,
+    "soloKj": 0.0,
+    "power": {
+      "avg": null,
+      "max": 0.0,
+      "peaks": {
+        "5":    {"period": 5.0,    "avg": null, "time": null, "ts": null},
+        "15":   {"period": 15.0,   "avg": null, "time": null, "ts": null},
+        "60":   {"period": 60.0,   "avg": null, "time": null, "ts": null},
+        "300":  {"period": 300.0,  "avg": null, "time": null, "ts": null},
+        "1200": {"period": 1200.0, "avg": null, "time": null, "ts": null},
+        "3600": {"period": 3600.0, "avg": null, "time": null, "ts": null}
+      },
+      "smooth": {
+        "5":    null,
+        "15":   null,
+        "60":   null,
+        "300":  null,
+        "1200": null
+      },
+      "np": null,
+      "tss": null,
+      "kj": 0.0
+    },
+    "np": {
+      "avg": null,
+      "peaks": {
+        "300":  {"period": 300.0,  "avg": null, "time": null, "ts": null},
+        "1200": {"period": 1200.0, "avg": null, "time": null, "ts": null},
+        "3600": {"period": 3600.0, "avg": null, "time": null, "ts": null}
+      },
+      "smooth": {
+        "300":  null,
+        "1200": null
+      }
+    },
+    "speed": {
+      "avg": null,
+      "max": 0.0,
+      "peaks": {
+        "60":   {"period": 60.0,   "avg": null, "time": null, "ts": null},
+        "300":  {"period": 300.0,  "avg": null, "time": null, "ts": null},
+        "1200": {"period": 1200.0, "avg": null, "time": null, "ts": null},
+        "3600": {"period": 3600.0, "avg": null, "time": null, "ts": null}
+      },
+      "smooth": {
+        "60":   null,
+        "300":  null,
+        "1200": null
+      }
+    },
+    "hr": {
+      "avg": null,
+      "max": 0.0,
+      "peaks": {
+        "60":   {"period": 60.0,   "avg": null, "time": null, "ts": null},
+        "300":  {"period": 300.0,  "avg": null, "time": null, "ts": null},
+        "1200": {"period": 1200.0, "avg": null, "time": null, "ts": null},
+        "3600": {"period": 3600.0, "avg": null, "time": null, "ts": null}
+      },
+      "smooth": {
+        "60":   null,
+        "300":  null,
+        "1200": null
+      }
+    },
+    "cadence": {
+      "avg": null,
+      "max": 0.0,
+      "peaks": {},
+      "smooth": {}
+    },
+    "draft": {
+      "avg": null,
+      "max": 0.0,
+      "peaks": {
+        "60":   {"period": 60.0,   "avg": null, "time": null, "ts": null},
+        "300":  {"period": 300.0,  "avg": null, "time": null, "ts": null},
+        "1200": {"period": 1200.0, "avg": null, "time": null, "ts": null},
+        "3600": {"period": 3600.0, "avg": null, "time": null, "ts": null}
+      },
+      "smooth": {
+        "60":   null,
+        "300":  null,
+        "1200": null
+      },
+      "kj": 0.0
+    }
+  },
+  "active": true,
+  "startIndex": 0,
+  "endIndex": 0,
+  "startServerTime": 1414016074400,
+  "start": null,
+  "end": null,
+  "sport": 0,
+  "courseId": 5
+}

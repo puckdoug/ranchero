@@ -160,15 +160,23 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 5 — Slice formatters and laps/segments/events routes
 
-- [ ] **18.10-T** Golden tests for `_formatDataSlice`,
+- [x] **18.10-T** Golden tests for `_formatDataSlice`,
       `_formatSegmentDataSlice`, `_formatEventDataSlice`, and
       `_filterAthleteDataSlices` (v1 shape).
+      (`tests/format_slices.rs`; goldens at
+      `tests/fixtures/format/data_slice.json`,
+      `tests/fixtures/format/segment_slice.json`,
+      `tests/fixtures/format/event_slice.json`.  Fails to compile — no
+      `format_data_slice`/`format_segment_slice`/`format_event_slice`/
+      `filter_slices` in `src/web/format.rs` yet.)
 - [ ] **18.10-I** Implement the three slice formatters and the filter as
       ports of `stats.mjs:1699-1762`.
-- [ ] **18.11-T** `/api/athlete/laps/v1/{id}`,
+- [x] **18.11-T** `/api/athlete/laps/v1/{id}`,
       `/api/athlete/segments/v1/{id}`, `/api/athlete/events/v1/{id}`
       return the filtered, formatted slice arrays; 404 for an unknown id;
       `self`/`watching` aliases resolve.
+      (`tests/http_laps_v1.rs`; 7 failing tests — routes not registered
+      in `configure_api`, default service returns API directory instead.)
 - [ ] **18.11-I** Register the three routes with `{active: true}`
       filtering, matching `webserver.mjs:323-336,399-401`.
 
