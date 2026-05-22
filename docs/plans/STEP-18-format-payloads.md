@@ -245,7 +245,7 @@ builds on the last; within a phase the tests are independent.
       `different_v2_queries_have_distinct_delegations`. Both fail to compile —
       `AthleteV2Query` absent from `ranchero::web::subs` and `DelegationMap::subscribe`
       does not accept a query parameter.)
-- [x] **18.15-I** Extend the delegation key to include the v2 query and
+- [~] **18.15-I** Extend the delegation key to include the v2 query and
       format once per delegation in the fanout task.
       (`AthleteV2Query` type added to `src/web/subs/mod.rs`; `DelegationMap::subscribe`
       gains a `query: &AthleteV2Query` parameter; key becomes
@@ -253,6 +253,9 @@ builds on the last; within a phase the tests are independent.
       from the subscribe arg and passes it through; `subs` module changed from
       `pub(crate)` to `pub` so integration tests can reach it.  Both
       subs_v2_query_dedup tests green.)
+      **Partial — see M1:** the key extension is done, but the fanout still
+      formats with `format_athlete_data_v1` and ignores the query; v2
+      formatting in the fanout is not wired.
 - [x] **18.16-T** Subscribers with overlapping-but-unequal queries share
       one upstream computation and each receive only their requested
       fields; the chosen merge matches the cost model.
@@ -265,11 +268,17 @@ builds on the last; within a phase the tests are independent.
       All fail to compile — `QueryListener`, `QueryBatch`, `FilterGroup`,
       `compute_query_cost`, `create_query_strategies`, `create_filter_groups`
       absent from `ranchero::web::subs`.)
-- [x] **18.16-I** Port `createQueryStrategies`/`computeQueryCost`/
+- [~] **18.16-I** Port `createQueryStrategies`/`computeQueryCost`/
       `createFilterGroups` (`stats.mjs:750-841`) in full (decision D2).
       (`QueryListener`, `QueryBatch`, `FilterGroup` structs; `compute_query_cost`,
       `create_query_strategies`, `create_filter_groups` functions; all added to
       `src/web/subs/mod.rs`.  All 6 query_reduction tests green.)
+      **Partial — see M1:** the three functions are ported and unit-tested
+      but have no production caller; the emitter orchestration that selects a
+      strategy, formats once per batch, and applies the filter groups before
+      fan-out (`QueryReductionEmitter.emit`, `stats.mjs:652-748`) is not
+      built. Filter-group masks are also descriptors only — nothing applies
+      them yet.
 
 ### Phase 9 — Parity ledger and deferral log
 
@@ -712,3 +721,169 @@ above:
   → Phase 5 (routes 18.11) on top of the slice formatters (18.10). The
   STEP 17 note's shorthand (`/api/athlete/laps`) was imprecise; the real
   routes carry the `/v1/:id` suffix, as the API directory already lists.
+
+---
+
+## Work missed and remaining to complete
+
+This section is the honest disposition after Phases 0–9 were marked done.
+Phases 0–7 and 9 are complete and fully tested. Phase 8 has a real
+integration gap (M1) — the **only** work that blocks STEP 18. The deferred
+gaps (M2/M3) are out of scope for this step, parity-correct as documented
+null/absent fields, and are now tracked in STEP 19 / STEP 20; they are
+**not** completion blockers. The checklist under M1 is the authoritative
+list of what remains to mark the entire step complete.
+
+### M1 — Phase 8 query reduction is built but not wired into the live emit path
+
+**Status: incomplete.** The building blocks exist and are unit-tested, but
+nothing in the running daemon uses them. Specifically:
+
+- `compute_query_cost`, `create_query_strategies`, and `create_filter_groups`
+  (`src/web/subs/mod.rs`) are called only from `tests/query_reduction.rs`.
+  A repository search confirms zero production callers. They are correct in
+  isolation but dead code in the live path.
+- The WebSocket fanout (`stats_fanout_task`, `src/web/subs/mod.rs`) still
+  formats every emission with `format_athlete_data_v1` and ignores the
+  query entirely. `create_delegation` is not even passed the query, so a
+  fanout task cannot know which resources or `stats` flag it serves.
+- `format_athlete_v2` is called only from the three HTTP handlers
+  (`src/web/http/mod.rs`), never from the fanout.
+
+What this means in practice: a WebSocket client that subscribes with a v2
+query (`{resources, stats}`) currently receives a **v1** payload. The query
+changes only the delegation key (so identical queries still share one
+delegation and differing queries split — 18.15's narrow dedup goal holds),
+but it does not change the bytes emitted. The cross-query merging that is
+the entire point of 18.16 (overlapping-but-unequal queries → one merged
+super-format, then per-listener masking) does not happen.
+
+This diverges from the Phase 8 detail, which states the fanout should
+"format once with the v2 formatter and clone the `Value` to each sink"
+(18.15) and that "the emitter then chooses the lowest-cost strategy per
+emission, formats once per batch, and applies each group's filter before
+fan-out" (18.16). The reference is `QueryReductionEmitter.emit` /
+`_compileEventContext` (`stats.mjs:652-748`), wired to the
+`athlete/{id}/v2`, `athlete/watching/v2`, and `athlete/self/v2` events
+(`stats.mjs:3504-3521`, `4166-4177`).
+
+The architectural mismatch to resolve: ranchero's `DelegationMap` keys one
+fanout task per `(source, event, query)`, which gives identical-query dedup
+for free but has no layer that compiles a *strategy across distinct
+queries* on the same event. To use the ported functions, the fanout for the
+`/v2` events needs an emitter-style layer that, per event:
+
+1. collects the live listeners' queries,
+2. calls `create_query_strategies` and `compute_query_cost` to pick the
+   cheapest strategy,
+3. formats once per batch via `format_athlete_v2` using the batch's merged
+   query,
+4. applies each `create_filter_groups` mask (drop `mask` keys; null the
+   `stats` field of `stats_mask` slice resources) before fan-out.
+
+#### Remaining checklist to mark STEP 18 complete
+
+Done test-first, these items close M1 and complete the step.
+
+**Both event families are required — this is not a choice.** sauce4zwift
+serves bare `athlete/{id}` / `athlete/watching` / `athlete/self` events (v1
+shape) *and* the `/v2`-suffixed `athlete/{id}/v2` / `athlete/watching/v2` /
+`athlete/self/v2` events (v2 shape, query-filtered) — `stats.mjs:3504-3521`.
+A subscriber may ask for either, so ranchero must serve both: accept both
+subscription forms, and send each its exact shape. The bare events keep
+`format_athlete_data_v1` (pinned by `tests/subs_event_payload.rs`, which
+must stay green); the `/v2` events use `format_athlete_v2` with the
+subscription query. The only open question is internal structure — whether
+to grow `DelegationMap` or add a separate emitter type — which is an
+optimization with no effect on what is accepted or sent, and is settled
+inside 18.20-I, not as a gating decision.
+
+Note: 18.15-T currently subscribes to a bare `athlete/1001` event while
+passing a query, which only checks delegation keying. Once the `/v2` routing
+exists, update that test to use a `/v2` event name so the query belongs to a
+v2 subscription, matching how a real client subscribes.
+
+- [ ] **18.18-T — v2 fanout payload test.** A WebSocket subscription to a
+  `/v2` event carrying a query (`{resources, stats}`) receives a v2-shaped
+  payload that honours the query (`data.version == 2`, only requested
+  resources present, `stats=true` controls per-slice stats). A bare v1
+  subscription still receives the v1 shape (existing tests stay green).
+- [ ] **18.18-I — Thread the query into the fanout; serve both families.**
+  Pass the `AthleteV2Query` through `create_delegation` into the fanout
+  task; route `/v2` events to `format_athlete_v2(athlete, &query.resources,
+  …, query.stats)` and keep bare events on `format_athlete_data_v1`.
+- [ ] **18.19-T — Filter-group application test.** Given a formatted v2
+  super-payload and a `FilterGroup`, the masked result drops every `mask`
+  key and sets the per-slice `stats` field to null for each `stats_mask`
+  slice resource (`laps`/`segments`/`events`).
+- [ ] **18.19-I — `apply_filter_group(value, &FilterGroup) -> Value`.** The
+  Rust equivalent of the JS `filterData` closure built inside
+  `createFilterGroups`. Today `create_filter_groups` returns the
+  `mask`/`stats_mask` descriptors but nothing applies them.
+- [ ] **18.20-T — Cross-query reduction end-to-end test (counting double).**
+  Two subscribers with overlapping-but-unequal v2 queries on the same
+  `/v2` event cause exactly one `format_athlete_v2` call per emission
+  (counting formatter double — the plan's 18.15/18.16 acceptance) and each
+  receives only its requested fields. Replaces 18.15-T's structural-only
+  proxy (`Arc::ptr_eq` + `receiver_count`) with a direct format-call count.
+- [ ] **18.20-I — Emitter orchestration.** Add the per-`/v2`-event layer
+  that compiles the cheapest strategy (`create_query_strategies` +
+  `compute_query_cost`), formats once per batch via `format_athlete_v2`,
+  and applies each `create_filter_groups` mask via `apply_filter_group`
+  before fan-out — the Rust analogue of `QueryReductionEmitter.emit` /
+  `_compileEventContext` (`stats.mjs:652-748`). This gives the three
+  query-reduction functions their first production callers; 18.15's
+  identical-query memoisation becomes the degenerate single-query case.
+  This item also settles the internal-structure question (grow
+  `DelegationMap` vs. a separate emitter type); either is acceptable so
+  long as both event families behave per 18.18.
+- [ ] **18.21 — Verify and finalise.** `cargo test -- --include-ignored`
+  green (the `tests/https_conditional.rs` flake is pre-existing and tracked
+  in `docs/planning/flaky-https-conditional.md`); flip 18.15-I and 18.16-I
+  from `[~]` to `[x]`; update this section's status line.
+
+**Definition of done for STEP 18.** The checklist above is complete; the
+acceptance criteria hold (including "two WebSocket subscribers with
+identical v2 queries cause one serialization per emission", proven by a
+counting double rather than a structural proxy); and the only outstanding
+matters are the M2/M3 deferrals, which are tracked in STEP 19 / STEP 20 and
+are not part of this step.
+
+### M2 — Deferred gaps (G1–G4) — now homed in STEP 20
+
+The parity ledger (`docs/planning/STEP-18-parity-ledger.md`) records gaps
+G1–G4 as deferred. Each now has an explicit home so it is not forgotten:
+
+- **G1 / G2 — athlete-profile read cache (and FTP/TSS).** The v1/v2
+  `athlete` field is always `null` and `tss` is always `null` because the
+  formatter has no athlete-profile cache to read. STEP 20 §20.17 item 1
+  covers the *write* side (persisting `AthleteData` into `athletes.sqlite`),
+  which is a different concern from the *read* cache the formatter needs
+  (name, FTP, weight → `athlete` field and TSS). → **STEP 20 §20.20 item 1.**
+- **G3 — state world-coordinate fields.** `state.latlng`,
+  `state.roadCompletion`, `state.progress`, `state.x`/`state.y` are absent,
+  and ranchero emits separate `lat`/`lng` scalars where sauce4zwift emits a
+  single `latlng: [lat, lng]` array. → **STEP 20 §20.19 item 2** (extended
+  with the dependent `_formatState` fields and the deviation).
+- **G4 — event/route spread, `gameState`, `userDefined`.** The
+  `eventLeader`/`eventSweeper`/`remaining*` spread → **STEP 20 §20.19 item 4**
+  (extended). `gameState` and the `...userDefined` spread →
+  **STEP 20 §20.20 items 2 and 3.**
+
+### M3 — `latlng` deviation — now homed in STEP 19
+
+STEP 19's acceptance item 5 is "point ranchero's vendored widget pages at
+the Rust daemon; widgets render correctly." A widget that reads
+`state.latlng` (the sauce4zwift shape) will not find it, because
+`format_state` emits separate `lat`/`lng` scalars (parity-ledger note under
+`_formatState`). → **STEP 19 "Known parity gaps to verify (from STEP 18)"
+item 1**, alongside item 2 there which records that v2 WebSocket
+subscriptions still return v1 payloads until M1 is closed.
+
+### Test status at the time of writing
+
+- `cargo test` (fast set): 251 + integration tests pass, 0 failures.
+- `cargo test -- --include-ignored`: all pass **except** one flaky failure
+  in `tests/https_conditional.rs` under parallel load. It passes 2/2 in
+  isolation; the cause is a derived-HTTPS-port race unrelated to STEP 18,
+  documented in `docs/planning/flaky-https-conditional.md`.

@@ -753,6 +753,19 @@ subsystem.
    adjustment) and return `0.0` for `lat`/`lng`. Both need the world-meta
    tables — a STEP-14-era data file not yet vendored. TODOs mark the spots in
    `src/web/proto_to_stats.rs` and `src/web/proto_view.rs`.
+
+   **STEP 18 dependency (gap G3).** The `_formatState` formatter
+   (`src/web/format.rs::format_state`) inherits this gap. STEP 18 leaves the
+   following state fields absent because they all need the world-meta
+   projection: `state.latlng` (sauce4zwift's `[lat, lng]` pair),
+   `state.x`/`state.y` (Web-Mercator projection), `state.roadCompletion`,
+   and `state.progress`. There is also a named **deviation**: where
+   sauce4zwift emits a single `latlng: [lat, lng]` array, ranchero emits
+   separate `lat`/`lng` scalar fields. When the world-meta tables are
+   vendored, decide whether to repack `lat`/`lng` into a `latlng` array in
+   `format_state` (full parity) or keep the scalars as a documented API
+   extension. See `docs/planning/STEP-18-parity-ledger.md` (`_formatState`
+   table) and STEP 19's widget-compatibility note.
 3. **`self_athlete_id` sourcing in `WebState`.** `run_daemon` cannot yet
    determine the logged-in athlete's own id at boot, so `self_athlete_id` is
    `None` (inline `TODO 17.36-I`). The `self` aliases in the athlete
@@ -764,6 +777,15 @@ subsystem.
    `Idle` — matching sauce4zwift's behaviour while its own background fetch is
    pending. A real population task (fetch event subgroups from the Zwift API
    and refresh the cache) is the deferred work.
+
+   **STEP 18 dependency (gap G4, part).** The `_getEventOrRouteInfo` spread
+   in both `format_athlete_data_v1` and `format_athlete_v2`
+   (`src/web/format.rs`) depends on this cache. Until it is populated, the
+   spread fields `eventLeader`, `eventSweeper`, `remaining`,
+   `remainingMetric`, `remainingType`, and `remainingEnd` are absent —
+   parity-correct, because sauce4zwift omits them too when its own cache
+   misses. They become available when this population task lands. See
+   `docs/planning/STEP-18-parity-ledger.md`.
 
 **Why this might come back.** Item 1 is pure cleanup — pick it up if the
 vestigial fields ever cause confusion. Item 2 returns when a widget needs
@@ -778,6 +800,56 @@ world-meta table vendoring (a data-file step). Item 3: implement the moment a
 feature depends on self-identity — it is the highest-priority of the four.
 Item 4: implement alongside the event-subgroup fetcher when event widgets are
 built.
+
+### 20.20 — Formatter data-source deferrals (from STEP 18)
+
+**Where it came from.** STEP 18 ported every v1/v2 payload formatter to
+field-for-field parity, but several formatter fields read data ranchero does
+not yet compute. The formatters emit `null` or omit those fields, which is
+parity-correct because sauce4zwift does the same when its own source is
+absent (see the gap discussion in `STEP-18-format-payloads.md` and the
+field-by-field status in `docs/planning/STEP-18-parity-ledger.md`). Two of
+the STEP 18 gaps (G3 state world-coordinates, and the event/route spread
+half of G4) already have a home in 20.19 items 2 and 4 and are cross-referenced
+there. The remaining STEP 18 data-source gaps have no other home and are
+collected here so they are not forgotten.
+
+1. **Athlete-profile read cache — `athlete` field and FTP/TSS (gaps G1, G2).**
+   `_formatAthleteData`/`_formatAthleteDataV2` read `this._athletesCache`
+   to populate the `athlete` field (name, FTP, weight, privacy) and to
+   compute `tss` from FTP. Ranchero's formatters
+   (`format_athlete_data_v1`, `format_athlete_v2` in `src/web/format.rs`)
+   have no profile cache in `WebState`, so they pass `athlete: null` and
+   `ftp: None` — which makes `tss` null everywhere. This is the **read**
+   cache the formatters consume, distinct from the **write**-side
+   persistence in 20.17 item 1 (`AthleteData` → `athletes.sqlite`). The
+   work is to populate an in-memory profile cache in `WebState` (sourced
+   from the Zwift API profile fetch and/or `athletes.sqlite`) and have the
+   formatters read it. Closing this also closes G2 automatically, since
+   `tss` only needs the FTP that the profile carries.
+2. **`gameState` (gap G4, part).** `_formatAthleteData`/`_formatAthleteDataV2`
+   include `gameState: self ? this._gameState : undefined` — emitted only
+   for the logged-in rider, sourced from the game-connection state.
+   Ranchero has no game-connection state object yet, so the formatters emit
+   `game_state: None` (omitted). Returns when a game-connection state
+   producer exists (related to, but separate from, the `gameConnection`
+   subscription source stubbed in `src/web/subs/mod.rs`).
+3. **`...userDefined` spread (gap G4, part).** Both formatters spread
+   `...ad.userDefined` as their last step — arbitrary caller-supplied
+   key/value pairs merged into the payload. Ranchero's `AthleteData` has no
+   `userDefined` map and no producer for one, so nothing is spread. Returns
+   when a feature needs to attach user-defined fields to the athlete payload.
+
+**Why this might come back.** Item 1 returns the moment any widget needs the
+athlete's name/FTP or a real TSS — it is the highest-impact of the three,
+because two visible fields are null without it. Item 2 returns when a
+game-state widget (or the `gameConnection` source) is built. Item 3 returns
+only if a feature introduces user-defined athlete fields.
+
+**Decision rule.** Item 1: implement with (or immediately after) the profile
+cache wiring into `WebState`; pull 20.17 item 1 alongside it if persistence
+is the chosen source. Items 2 and 3: pull into the step that introduces the
+named producer; do not implement speculatively.
 
 ---
 

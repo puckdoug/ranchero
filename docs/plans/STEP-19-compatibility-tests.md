@@ -31,6 +31,34 @@ Pull the whole pipeline together and verify spec §7.11:
 
 To be fully elaborated when work on this step begins.
 
+## Known parity gaps to verify (from STEP 18)
+
+STEP 18 reached field-for-field formatter parity but left two issues that
+directly affect goal item 5 (WebSocket / widget parity). Both must be
+checked here rather than assumed closed. Sources:
+`docs/plans/STEP-18-format-payloads.md` ("Work missed and remaining to
+complete") and `docs/planning/STEP-18-parity-ledger.md`.
+
+1. **`state.latlng` deviation.** `format_state` (`src/web/format.rs`) emits
+   separate `lat`/`lng` scalar fields where sauce4zwift emits a single
+   `latlng: [lat, lng]` array. Any vendored widget that reads
+   `state.latlng` (map/position widgets) will find nothing and may render
+   incorrectly. The widget-parity check must exercise a position-dependent
+   widget and confirm whether this deviation is acceptable; if not, the fix
+   is to repack `lat`/`lng` into a `latlng` array in `format_state`. (The
+   underlying world-coordinate computation is tracked in STEP 20 §20.19
+   item 2 and §20.20.)
+2. **v2 WebSocket query payloads not yet wired (STEP 18 M1).** The v2
+   query-reduction engine is ported but not connected to the live fanout:
+   a WebSocket client that subscribes with a v2 query
+   (`{resources, stats}`) currently receives a **v1** payload, because
+   `stats_fanout_task` still formats with `format_athlete_data_v1` and
+   ignores the query (`src/web/subs/mod.rs`). Any widget that subscribes
+   to `athlete/{id}/v2`-style events over the WebSocket will not receive
+   the v2 shape until STEP 18 items 18.18/18.19 land. The widget-parity
+   battery must either run after that work completes or explicitly scope
+   out v2-subscribing widgets and record which ones are skipped and why.
+
 ## Inputs deferred from STEP 14
 
 STEP 14 made two implementation choices in the `DataCollector`
