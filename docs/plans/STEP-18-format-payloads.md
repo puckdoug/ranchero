@@ -193,13 +193,19 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 6 — Stream formatter and streams route
 
-- [ ] **18.12-T** A golden test asserts the stream object keys
+- [x] **18.12-T** A golden test asserts the stream object keys
       (`time, power, speed, hr, cadence, draft, active, distance,
       altitude, latlng, wbal`) and the `active` predicate.
+      (`tests/format_streams.rs`; golden at
+      `tests/fixtures/format/streams.json`.  Fails to compile — no
+      `format_athlete_streams` in `src/web/format.rs` yet.)
 - [ ] **18.12-I** Implement `format_athlete_streams` as a port of
       `_getAthleteStreams` (`stats.mjs:1782`).
-- [ ] **18.13-T** `/api/athlete/streams/v1/{id}` returns the stream
+- [x] **18.13-T** `/api/athlete/streams/v1/{id}` returns the stream
       object; 404 for an unknown id.
+      (`tests/http_streams_v1.rs`; 3 failing tests — route not registered
+      in `configure_api`, default service returns API-directory array
+      instead of a streams object.)
 - [ ] **18.13-I** Register the route (`webserver.mjs:402`).
 
 ### Phase 7 — Resource-filter parity (corrects the STEP 17 deferral)
