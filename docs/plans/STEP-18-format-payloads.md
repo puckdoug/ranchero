@@ -273,9 +273,14 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 9 — Parity ledger and deferral log
 
-- [ ] **18.17** Write `docs/planning/STEP-18-parity-ledger.md`: every JS
+- [x] **18.17** Write `docs/planning/STEP-18-parity-ledger.md`: every JS
       formatter field with status (implemented / null-or-absent-and-why /
       deferred-to-step-NN), so no gap is silently dismissed.
+      (`docs/planning/STEP-18-parity-ledger.md` created; covers
+      `_formatAthleteData`, `_formatAthleteDataV2`, `_getBucketStats`,
+      `_getBucketStatsV2`, `_formatState`, `_formatDataSlice`,
+      `_formatSegmentDataSlice`, `_formatEventDataSlice`, v2 slice shapes,
+      `_getAthleteStreams`; deferred-gap table; decisions D1–D3.)
 
 ---
 
