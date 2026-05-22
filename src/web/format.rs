@@ -618,6 +618,7 @@ pub(crate) fn format_athlete_v2(
     resources:       &[String],
     watching_id:     Option<u32>,
     self_athlete_id: Option<u32>,
+    stats:           bool,
 ) -> Value {
     let now   = local_now();
     let id    = athlete.athlete_id;
@@ -704,14 +705,22 @@ pub(crate) fn format_athlete_v2(
                     obj.insert("lastLap".into(), last_lap);
                 }
                 "laps" => {
-                    // Slice formatting implemented in Phase 5 (18.10-I)
-                    obj.insert("laps".into(), json!([]));
+                    let laps: Vec<Value> = athlete.lap_slices.iter()
+                        .map(|s| format_data_slice_v2(s, athlete, stats, ts_ms))
+                        .collect();
+                    obj.insert("laps".into(), json!(laps));
                 }
                 "segments" => {
-                    obj.insert("segments".into(), json!([]));
+                    let segs: Vec<Value> = athlete.segment_slices.iter()
+                        .map(|s| format_segment_slice_v2(s, athlete, stats, ts_ms))
+                        .collect();
+                    obj.insert("segments".into(), json!(segs));
                 }
                 "events" => {
-                    obj.insert("events".into(), json!([]));
+                    let evts: Vec<Value> = athlete.event_slices.iter()
+                        .map(|s| format_event_slice_v2(s, athlete, stats, ts_ms))
+                        .collect();
+                    obj.insert("events".into(), json!(evts));
                 }
                 _ => {}  // unknown resource names ignored
             }
@@ -719,6 +728,63 @@ pub(crate) fn format_athlete_v2(
     }
 
     Value::Object(obj)
+}
+
+// ---------------------------------------------------------------------------
+// v2 slice formatters — used only by `format_athlete_v2` for the
+// `laps`/`segments`/`events` resources (`_formatDataSlice` with
+// `{version: 2}`, `stats.mjs:1743-1765`).
+// ---------------------------------------------------------------------------
+
+/// Format a data slice in the v2 shape.
+///
+/// When `stats_flag` is true the `stats` field carries the full v2 bucket-stats
+/// object; when false it is `null` — matching `_formatDataSlice` called with
+/// `{version: 2, stats: false/true}` from `_formatAthleteDataV2`
+/// (`stats.mjs:1750-1752`).
+fn format_data_slice_v2(slice: &DataSlice, ad: &AthleteData, stats_flag: bool, ts_ms: f64) -> Value {
+    let power       = slice.bucket.power().primary();
+    let start_index: usize = 0;
+    let end_index   = power.size().saturating_sub(1);
+
+    let stats_json = if stats_flag {
+        format_bucket_stats_v2(&slice.bucket, ad, None, ts_ms)
+    } else {
+        Value::Null
+    };
+
+    json!({
+        "id":              slice.id,
+        "stats":           stats_json,
+        "active":          slice.end.is_none(),
+        "startIndex":      start_index,
+        "endIndex":        end_index,
+        "startServerTime": ad.wt_offset as i64 + ZWIFT_EPOCH_MS
+                           + (slice.start - ad.internal_created) as i64,
+        "start":           power.time_at(0),
+        "end":             power.time_at(end_index as i32),
+        "sport":           slice.sport,
+        "courseId":        slice.course_id,
+    })
+}
+
+fn format_segment_slice_v2(slice: &DataSlice, ad: &AthleteData, stats_flag: bool, ts_ms: f64) -> Value {
+    let mut obj = format_data_slice_v2(slice, ad, stats_flag, ts_ms);
+    let map = obj.as_object_mut().expect("format_data_slice_v2 always returns an object");
+    map.insert("segmentId".into(),          json!(slice.segment_id));
+    map.insert("eventSubgroupId".into(),    json!(slice.event_subgroup_id));
+    map.insert("startEventDistance".into(), json!(slice.start_event_distance));
+    map.insert("endEventDistance".into(),   json!(slice.end_event_distance));
+    map.insert("incomplete".into(),         json!(slice.incomplete));
+    obj
+}
+
+fn format_event_slice_v2(slice: &DataSlice, ad: &AthleteData, stats_flag: bool, ts_ms: f64) -> Value {
+    let mut obj = format_data_slice_v2(slice, ad, stats_flag, ts_ms);
+    obj.as_object_mut()
+        .expect("format_data_slice_v2 always returns an object")
+        .insert("eventSubgroupId".into(), json!(slice.event_subgroup_id));
+    obj
 }
 
 // ---------------------------------------------------------------------------

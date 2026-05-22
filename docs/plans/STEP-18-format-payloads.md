@@ -226,9 +226,15 @@ builds on the last; within a phase the tests are independent.
       All three fail at runtime — `format_athlete_v2` returns the stub
       `laps: []` rather than the seeded athlete's one open lap slice, and
       the `stats` query parameter is not parsed.)
-- [ ] **18.14-I** Make the v2 resource filter operate on the assembled
+- [x] **18.14-I** Make the v2 resource filter operate on the assembled
       formatter output (top-level resource names only — there is no
       nested-path filtering in the reference; see correction C1).
+      (`format_athlete_v2` gains `stats: bool` parameter; `laps`/
+      `segments`/`events` stubs replaced with per-slice calls to private
+      `format_data_slice_v2`/`format_segment_slice_v2`/
+      `format_event_slice_v2` helpers that respect the `stats` flag.
+      `parse_stats(query)` added to `src/web/http/mod.rs`; all three v2
+      handlers updated to parse and pass `stats`.  All 13 v2 tests green.)
 
 ### Phase 8 — v2 query-reduction memoisation
 

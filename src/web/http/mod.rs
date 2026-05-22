@@ -96,6 +96,20 @@ fn parse_resources(query: &str) -> Vec<String> {
         .collect()
 }
 
+/// Parse the `stats` query parameter, mirroring `parseAthleteDataV2Query`
+/// (`webserver.mjs:280`): numeric values are truthy when non-zero; string
+/// values are truthy only when they equal `"true"` (case-insensitive).
+fn parse_stats(query: &str) -> bool {
+    serde_urlencoded::from_str::<Vec<(String, String)>>(query)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|(k, _)| k == "stats")
+        .map(|(_, v)| {
+            if let Ok(n) = v.parse::<f64>() { n != 0.0 } else { v.to_lowercase() == "true" }
+        })
+        .unwrap_or(false)
+}
+
 fn resolve_athlete_id(id_str: &str, state: &WebState) -> Option<u32> {
     match id_str {
         "watching" => state.watching_id,
@@ -143,10 +157,11 @@ async fn athlete_v2_handler(
         None     => return HttpResponse::NotFound().finish(),
     };
     let resources = parse_resources(req.query_string());
-    let registry = state.registry.read().unwrap();
+    let stats     = parse_stats(req.query_string());
+    let registry  = state.registry.read().unwrap();
     match registry.get(athlete_id) {
         Some(athlete) => HttpResponse::Ok()
-            .json(format_athlete_v2(athlete, &resources, state.watching_id, state.self_athlete_id)),
+            .json(format_athlete_v2(athlete, &resources, state.watching_id, state.self_athlete_id, stats)),
         None => HttpResponse::NotFound().finish(),
     }
 }
@@ -247,10 +262,11 @@ async fn nearby_v2_handler(
     req:   HttpRequest,
 ) -> HttpResponse {
     let resources = parse_resources(req.query_string());
-    let registry = state.registry.read().unwrap();
+    let stats     = parse_stats(req.query_string());
+    let registry  = state.registry.read().unwrap();
     let body: Vec<serde_json::Value> = registry
         .iter()
-        .map(|(_, a)| format_athlete_v2(a, &resources, state.watching_id, state.self_athlete_id))
+        .map(|(_, a)| format_athlete_v2(a, &resources, state.watching_id, state.self_athlete_id, stats))
         .collect();
     HttpResponse::Ok().json(body)
 }
@@ -270,9 +286,10 @@ async fn groups_v2_handler(
     req:   HttpRequest,
 ) -> HttpResponse {
     let resources = parse_resources(req.query_string());
-    let registry = state.registry.read().unwrap();
+    let stats     = parse_stats(req.query_string());
+    let registry  = state.registry.read().unwrap();
     let body = group_athletes(&registry, |a| {
-        format_athlete_v2(a, &resources, state.watching_id, state.self_athlete_id)
+        format_athlete_v2(a, &resources, state.watching_id, state.self_athlete_id, stats)
     });
     HttpResponse::Ok().json(body)
 }
