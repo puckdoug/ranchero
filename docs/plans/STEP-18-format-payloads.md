@@ -216,9 +216,16 @@ builds on the last; within a phase the tests are independent.
 
 ### Phase 7 — Resource-filter parity (corrects the STEP 17 deferral)
 
-- [ ] **18.14-T** A v2 filter test pins the exact whitelist and proves
+- [x] **18.14-T** A v2 filter test pins the exact whitelist and proves
       unknown resource names are ignored (not errors), matching
       `parseAthleteDataV2Query` (`webserver.mjs:278`).
+      (Three new tests appended to `tests/http_athlete_v2.rs`:
+      `v2_laps_resource_returns_slice_array`,
+      `v2_laps_resource_slice_stats_null_without_stats_param`,
+      `v2_laps_resource_slice_has_v2_stats_with_stats_param`.
+      All three fail at runtime — `format_athlete_v2` returns the stub
+      `laps: []` rather than the seeded athlete's one open lap slice, and
+      the `stats` query parameter is not parsed.)
 - [ ] **18.14-I** Make the v2 resource filter operate on the assembled
       formatter output (top-level resource names only — there is no
       nested-path filtering in the reference; see correction C1).

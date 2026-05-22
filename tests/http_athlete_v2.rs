@@ -284,3 +284,96 @@ async fn v2_lap_and_last_lap_resources_produce_independent_keys() {
     assert_eq!(body["version"], 2);
     assert_eq!(body["athleteId"], 1001);
 }
+
+// ---------------------------------------------------------------------------
+// 18.14-T — Phase 7: laps/segments/events resource parity
+//
+// The reference `_formatAthleteDataV2` (stats.mjs:4378-4384) maps
+// `laps`/`segments`/`events` resources to per-slice-formatter arrays, not
+// the empty stubs ranchero currently emits.  The `stats=true` query parameter
+// (parsed by `parseAthleteDataV2Query`, webserver.mjs:278) controls whether
+// each slice's `stats` field is a v2 stats object (true) or null (absent/false).
+//
+// The seeded athlete has one initial open lap slice and no segments or events.
+//
+// All three tests below fail at runtime until 18.14-I wires the slice
+// formatters into `format_athlete_v2` and parses the `stats` query param.
+// ---------------------------------------------------------------------------
+
+/// `?resource=laps` must return an array of formatted slice objects, one entry
+/// per lap slice.  The seeded athlete has one initial open slice; the current
+/// stub returns `laps: []` so the length assertion fails.
+#[actix_web::test]
+async fn v2_laps_resource_returns_slice_array() {
+    let state = seeded_state();
+    let app = test::init_service(
+        App::new().app_data(state).configure(configure_api)
+    ).await;
+
+    let req = test::TestRequest::get()
+        .uri("/api/athlete/v2/1001?resource=laps")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let laps = body["laps"].as_array()
+        .expect("laps resource must produce a JSON array");
+
+    assert_eq!(laps.len(), 1,
+        "seeded athlete has one initial lap slice; stub returns [] so this fails");
+    assert_eq!(laps[0]["active"], true,   "initial lap slice is open");
+    assert!(laps[0]["courseId"].is_number(), "slice must carry courseId");
+}
+
+/// Without `?stats=true`, each slice in the `laps` array must carry `stats: null`
+/// (matching `_formatDataSlice` with `version:2, stats:false`, stats.mjs:1750).
+/// Fails now because the stub returns `laps: []` — no elements to inspect.
+#[actix_web::test]
+async fn v2_laps_resource_slice_stats_null_without_stats_param() {
+    let state = seeded_state();
+    let app = test::init_service(
+        App::new().app_data(state).configure(configure_api)
+    ).await;
+
+    let req = test::TestRequest::get()
+        .uri("/api/athlete/v2/1001?resource=laps")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let laps = body["laps"].as_array()
+        .expect("laps resource must produce a JSON array");
+
+    assert_eq!(laps.len(), 1, "seeded athlete has one lap slice");
+    assert!(laps[0]["stats"].is_null(),
+        "slice stats must be null when ?stats=true is not set (v2 slice shape)");
+}
+
+/// With `?stats=true`, each slice in the `laps` array must carry a v2-shaped
+/// stats object (peaks are arrays).  Fails now because the stub returns `laps: []`
+/// and the `stats` query parameter is not parsed.
+#[actix_web::test]
+async fn v2_laps_resource_slice_has_v2_stats_with_stats_param() {
+    let state = seeded_state();
+    let app = test::init_service(
+        App::new().app_data(state).configure(configure_api)
+    ).await;
+
+    let req = test::TestRequest::get()
+        .uri("/api/athlete/v2/1001?resource=laps&stats=true")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let laps = body["laps"].as_array()
+        .expect("laps resource must produce a JSON array");
+
+    assert_eq!(laps.len(), 1, "seeded athlete has one lap slice");
+    assert!(laps[0]["stats"].is_object(),
+        "slice stats must be a v2 stats object when ?stats=true is set");
+    assert!(laps[0]["stats"]["power"]["peaks"].is_array(),
+        "v2 slice stats power.peaks must be an array");
+}
