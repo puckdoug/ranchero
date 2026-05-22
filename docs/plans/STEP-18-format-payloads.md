@@ -803,7 +803,7 @@ passing a query, which only checks delegation keying. Once the `/v2` routing
 exists, update that test to use a `/v2` event name so the query belongs to a
 v2 subscription, matching how a real client subscribes.
 
-- [ ] **18.18-T — v2 fanout payload test.** A WebSocket subscription to a
+- [x] **18.18-T — v2 fanout payload test.** A WebSocket subscription to a
   `/v2` event carrying a query (`{resources, stats}`) receives a v2-shaped
   payload that honours the query (`data.version == 2`, only requested
   resources present, `stats=true` controls per-slice stats). A bare v1
@@ -812,7 +812,7 @@ v2 subscription, matching how a real client subscribes.
   Pass the `AthleteV2Query` through `create_delegation` into the fanout
   task; route `/v2` events to `format_athlete_v2(athlete, &query.resources,
   …, query.stats)` and keep bare events on `format_athlete_data_v1`.
-- [ ] **18.19-T — Filter-group application test.** Given a formatted v2
+- [x] **18.19-T — Filter-group application test.** Given a formatted v2
   super-payload and a `FilterGroup`, the masked result drops every `mask`
   key and sets the per-slice `stats` field to null for each `stats_mask`
   slice resource (`laps`/`segments`/`events`).
