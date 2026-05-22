@@ -9,7 +9,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use zwift_relay::ZWIFT_EPOCH_MS;
-use zwift_stats::{AthleteData, DataBucket, DataSlice, SignalStats, NpStats, calc_tss};
+use zwift_stats::{AthleteData, DataBucket, DataSlice, Sample, SignalStats, NpStats, calc_tss};
 use zwift_stats::athlete::MostRecentState;
 
 const MAX_SMOOTH_PERIOD: f64 = 1200.0;
@@ -816,4 +816,56 @@ pub fn filter_slices<'a>(
             true
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Stream formatter (`_getAthleteStreams`, `stats.mjs:1782`)
+// ---------------------------------------------------------------------------
+
+/// Format the rolling time-series streams for an athlete.
+///
+/// Mirrors `_getAthleteStreams` (`stats.mjs:1782`): the primary power roll
+/// supplies `time`, `power`, and the `active` boolean array; the other signal
+/// rolls supply `speed`, `hr`, `cadence`, `draft`; and the per-state
+/// `ad.streams` vectors supply `distance`, `altitude`, `latlng`, `wbal`.
+///
+/// The `active` predicate ports `!!+x || !(x instanceof Sauce.data.Pad)`:
+/// `Value` → always true; `Pad(0)` → false; `Pad(v≠0)` → true; `Break` → false.
+pub fn format_athlete_streams(ad: &AthleteData) -> Value {
+    let power_roll   = ad.bucket.power().primary();
+    let speed_roll   = ad.bucket.speed().primary();
+    let hr_roll      = ad.bucket.hr().primary();
+    let cadence_roll = ad.bucket.cadence().primary();
+    let draft_roll   = ad.bucket.draft().primary();
+
+    let times:   Vec<f64> = power_roll.times().to_vec();
+    let power:   Vec<f64> = power_roll.values().iter().copied().map(|s| s.as_f64()).collect();
+    let speed:   Vec<f64> = speed_roll.values().iter().copied().map(|s| s.as_f64()).collect();
+    let hr:      Vec<f64> = hr_roll.values().iter().copied().map(|s| s.as_f64()).collect();
+    let cadence: Vec<f64> = cadence_roll.values().iter().copied().map(|s| s.as_f64()).collect();
+    let draft:   Vec<f64> = draft_roll.values().iter().copied().map(|s| s.as_f64()).collect();
+
+    let active: Vec<bool> = power_roll.values().iter().copied().map(|s| match s {
+        Sample::Value(_)     => true,
+        Sample::Pad(v)       => v != 0.0,
+        Sample::Break { .. } => false,
+    }).collect();
+
+    let latlng: Vec<[f64; 2]> = ad.streams.latlng.iter()
+        .map(|ll| [ll.lat, ll.lng])
+        .collect();
+
+    json!({
+        "time":     times,
+        "power":    power,
+        "speed":    speed,
+        "hr":       hr,
+        "cadence":  cadence,
+        "draft":    draft,
+        "active":   active,
+        "distance": ad.streams.distance,
+        "altitude": ad.streams.altitude,
+        "latlng":   latlng,
+        "wbal":     ad.streams.wbal,
+    })
 }

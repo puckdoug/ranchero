@@ -199,14 +199,20 @@ builds on the last; within a phase the tests are independent.
       (`tests/format_streams.rs`; golden at
       `tests/fixtures/format/streams.json`.  Fails to compile — no
       `format_athlete_streams` in `src/web/format.rs` yet.)
-- [ ] **18.12-I** Implement `format_athlete_streams` as a port of
+- [x] **18.12-I** Implement `format_athlete_streams` as a port of
       `_getAthleteStreams` (`stats.mjs:1782`).
+      (`format_athlete_streams` added to `src/web/format.rs`; `Sample`
+      added to imports. Active predicate: `Value → true`, `Pad(0) → false`,
+      `Pad(v≠0) → true`, `Break → false`. `latlng` serialised as `[lat,lng]`
+      pairs.  Golden test green.)
 - [x] **18.13-T** `/api/athlete/streams/v1/{id}` returns the stream
       object; 404 for an unknown id.
       (`tests/http_streams_v1.rs`; 3 failing tests — route not registered
       in `configure_api`, default service returns API-directory array
       instead of a streams object.)
-- [ ] **18.13-I** Register the route (`webserver.mjs:402`).
+- [x] **18.13-I** Register the route (`webserver.mjs:402`).
+      (`streams_v1_handler` added to `src/web/http/mod.rs`; route
+      registered in `configure_api`.  All 3 HTTP tests green.)
 
 ### Phase 7 — Resource-filter parity (corrects the STEP 17 deferral)
 

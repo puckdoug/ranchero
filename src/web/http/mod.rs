@@ -20,6 +20,7 @@ use zwift_relay::ZWIFT_EPOCH_MS;
 use crate::web::format::{
     format_athlete_data_v1, format_athlete_v2,
     format_data_slice, format_segment_slice, format_event_slice, filter_slices,
+    format_athlete_streams,
 };
 use crate::web::state::WebState;
 use crate::web::ws;
@@ -210,6 +211,21 @@ async fn events_v1_handler(
             HttpResponse::Ok().json(slices)
         }
         None => HttpResponse::NotFound().finish(),
+    }
+}
+
+async fn streams_v1_handler(
+    state: web::Data<Arc<WebState>>,
+    path:  web::Path<String>,
+) -> HttpResponse {
+    let athlete_id = match resolve_athlete_id(&path.into_inner(), &state) {
+        Some(id) => id,
+        None     => return HttpResponse::NotFound().finish(),
+    };
+    let registry = state.registry.read().unwrap();
+    match registry.get(athlete_id) {
+        Some(athlete) => HttpResponse::Ok().json(format_athlete_streams(athlete)),
+        None          => HttpResponse::NotFound().finish(),
     }
 }
 
@@ -414,6 +430,7 @@ pub fn configure_api(cfg: &mut web::ServiceConfig) {
             .route("/athlete/laps/v1/{id}",     web::get().to(laps_v1_handler))
             .route("/athlete/segments/v1/{id}", web::get().to(segments_v1_handler))
             .route("/athlete/events/v1/{id}",   web::get().to(events_v1_handler))
+            .route("/athlete/streams/v1/{id}", web::get().to(streams_v1_handler))
             .route("/nearby/v1",       web::get().to(nearby_v1_handler))
             .route("/nearby/v2",       web::get().to(nearby_v2_handler))
             .route("/groups/v1",       web::get().to(groups_v1_handler))
