@@ -430,14 +430,17 @@ unit-tested (`tests/subs_emit_v2.rs`, `tests/subs_ws_v2_payload.rs`,
 
 Checklist:
 
-- [ ] **19.8-T** — Open a WebSocket, subscribe to `athlete/watching/v2` with a
-  `{resources, stats}` query, push a `PlayerState`, and assert the frame has
-  the v2 shape (`version: 2`, requested resources present, unrequested
-  absent) — not the v1 shape.
-- [ ] **19.8-I** — No production code expected; any gap found is a STEP 18 M1
-  regression and is fixed, not deferred.
-- [ ] Update this file and the ledger to record gap #2 confirmed closed
-  end-to-end.
+- [x] **19.8-T** — `tests/compat_v2_fanout.rs::watching_v2_delivers_requested_resources_only`
+  subscribes to `athlete/watching/v2` with `{resources:["stats"],stats:true}`,
+  pushes a `PlayerState`, and asserts `version:2`, `stats` present, `state`
+  and `lap` absent.  Test confirmed: no production-code change needed.
+  Note: `lapCount` and other base-object fields (`athleteId`, `courseId`,
+  `wBal`, timing fields) are always present in v2 regardless of query — this is
+  correct per the JS spec and the STEP 18 parity ledger.
+- [x] **19.8-I** — No production code changes.  STEP 18 M1 confirmed intact.
+- [x] Gap #2 confirmed closed end-to-end: `stats_fanout_task_v2` correctly
+  routes `athlete/watching/v2` through `format_athlete_v2` and applies
+  query-reduction filtering.
 
 ## 19.9 — Peak-snapshot memory footprint (STEP 14 deferred input)
 

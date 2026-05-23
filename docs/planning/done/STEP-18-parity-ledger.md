@@ -322,3 +322,4 @@ Rust: `format_athlete_streams` in `src/web/format.rs`.
 | D1 | `lastLap` resource writes to `data.lastLap`, not `data.lap` | JS bug at `stats.mjs:4376` overwrites the `lap` key; ranchero fixes this |
 | D2 | Query-reduction engine ported (`computeQueryCost`, `createQueryStrategies`, `createFilterGroups`) | Full parity with `ADV2QueryReductionEmitter`; enables cost-based strategy selection |
 | D3 | Formatters live in `src/web/format.rs`, not `src/web/http/mod.rs` | Shared by HTTP routes, WebSocket fanout, and query-reduction engine |
+| D4 | Gap #2 (v2 WebSocket fanout) confirmed closed in 19.8 | `stats_fanout_task_v2` routes `athlete/watching/v2` correctly; resource filtering verified end-to-end |
