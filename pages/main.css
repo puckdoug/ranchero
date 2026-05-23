@@ -1,2 +1,62 @@
-/* Ranchero styles */
-body { margin: 0; font-family: sans-serif; }
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Ranchero shared styles */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+    --bg:       #11111b;
+    --surface:  #1e1e2e;
+    --text:     #cdd6f4;
+    --muted:    #6c7086;
+    --accent:   #00c8ff;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+header {
+    padding: 0.75rem 1.5rem;
+    background: var(--surface);
+    border-bottom: 1px solid #333;
+    font-size: 1.1em;
+}
+header a { color: var(--accent); text-decoration: none; }
+
+main { padding: 1.5rem; }
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+th, td {
+    padding: 0.4rem 0.8rem;
+    text-align: right;
+    border-bottom: 1px solid #333;
+}
+th:first-child, td:first-child { text-align: left; }
+thead th { color: var(--muted); font-weight: 600; font-size: 0.85em; }
+
+/* Stat card grid used by watching.html */
+#stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+.stat {
+    background: var(--surface);
+    border-radius: 6px;
+    padding: 1rem 1.5rem;
+    min-width: 100px;
+    text-align: center;
+}
+.stat .val { display: block; font-size: 2.5em; font-weight: 700; }
+.stat .lbl { display: block; font-size: 0.8em; color: var(--muted); margin-top: 0.25em; }
+
+section h2 { font-size: 1em; color: var(--muted); margin: 1.5rem 0 0.5rem; }

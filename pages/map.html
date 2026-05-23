@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ranchero — Map</title>
+<link rel="stylesheet" href="/pages/main.css">
+<style>
+  canvas { display: block; background: #1a1a2e; border-radius: 4px; }
+  #coords { font-size: 0.8em; color: #888; margin-top: 4px; }
+</style>
+</head>
+<body>
+<header><a href="/">Ranchero</a> — <strong>Map</strong></header>
+<main>
+  <canvas id="map" width="600" height="400"></canvas>
+  <p id="coords">waiting for position data…</p>
+</main>
+<script type="module" src="/pages/map.mjs"></script>
+</body>
+</html>

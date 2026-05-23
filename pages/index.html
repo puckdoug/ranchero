@@ -1,9 +1,46 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Ranchero</title>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ranchero</title>
 <link rel="stylesheet" href="/pages/main.css">
+<style>
+  .widgets { display: flex; flex-wrap: wrap; gap: 1rem; padding: 1rem 0; }
+  .widget-link {
+    display: flex; flex-direction: column; gap: 0.25rem;
+    padding: 1rem 1.5rem; background: #1e1e2e; border-radius: 6px;
+    text-decoration: none; color: inherit;
+    border: 1px solid #333;
+  }
+  .widget-link:hover { border-color: #00c8ff; }
+  .widget-link strong { font-size: 1.1em; }
+  .widget-link span { font-size: 0.85em; color: #888; }
+</style>
 </head>
-<body><div id="app"></div>
+<body>
+<header>Ranchero</header>
+<main>
+  <p>Live Zwift telemetry widgets.</p>
+  <nav class="widgets">
+    <a class="widget-link" href="/pages/watching.html">
+      <strong>Watching</strong>
+      <span>Power, HR, speed, NP, TSS, W′bal</span>
+    </a>
+    <a class="widget-link" href="/pages/nearby.html">
+      <strong>Nearby</strong>
+      <span>All riders in range</span>
+    </a>
+    <a class="widget-link" href="/pages/groups.html">
+      <strong>Groups</strong>
+      <span>Riders by group</span>
+    </a>
+    <a class="widget-link" href="/pages/map.html">
+      <strong>Map</strong>
+      <span>Position trail</span>
+    </a>
+  </nav>
+</main>
 <script type="module" src="/pages/app.mjs"></script>
 </body>
 </html>

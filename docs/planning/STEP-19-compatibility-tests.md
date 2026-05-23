@@ -257,13 +257,13 @@ Checklist:
   the correct MIME type (extend the existing `tests/http_static_pages.rs` /
   `tests/http_mime_types.rs` patterns), and that each page's module loads
   without error.
-- [ ] **19.1-I** — Write the page HTML + ES modules and the shared WebSocket
+- [x] **19.1-I** — Write the page HTML + ES modules and the shared WebSocket
   client. Replace the placeholder `index.html`/`app.mjs`/`main.css` with a
   real entry page that links the widgets.
-- [ ] **19.1 (no copied assets)** — Confirm nothing is copied from
+- [x] **19.1 (no copied assets)** — Confirm nothing is copied from
   sauce4zwift; the pages are ranchero originals (D2).
-- [ ] Confirm the static-serving routes in `src/web/http/mod.rs` serve the
-  new files (and `pages/shared/` via the existing `/shared/*` route).
+- [x] Confirm the static-serving routes in `src/web/http/mod.rs` serve the
+  new files (and `pages/shared/` via the existing `/pages/shared/*` route).
 
 ## 19.2 — AES-GCM interop, pinned at the top level
 
