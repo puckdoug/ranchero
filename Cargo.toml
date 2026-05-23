@@ -68,3 +68,4 @@ tracing-test = { version = "0.2", features = ["no-env-filter"] }
 wiremock = "0.6"
 tokio-tungstenite = "0.26"
 rcgen             = "0.13"
+chromiumoxide     = { version = "0.7", features = ["tokio-runtime"], default-features = false }

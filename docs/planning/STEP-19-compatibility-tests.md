@@ -375,18 +375,21 @@ Depends on 19.1's real pages. Two layers.
 
 Checklist:
 
-- [ ] **19.6-T (contract)** — Add `tests/compat_widget_parity.rs` with
+- [x] **19.6-T (contract)** — Add `tests/compat_widget_parity.rs` with
   WebSocket subscriptions and golden payload-shape assertions, plus the
-  position/`state` assertion tied to 19.7.
-- [ ] **19.6-T (render)** — Headless render of each generated page against a
-  known payload, compared to a committed golden snapshot. Mark
-  `#[ignore = "slow: headless browser render"]`.
-- [ ] **19.6-I** — Golden JSON + snapshot fixtures and any test-only server
-  bootstrap. No production code beyond what 19.1/19.7 already add.
-- [ ] **19.6 (record coverage)** — In `compat/README.md`, list which widgets
-  are covered and which fields are still null/absent because of deferred
-  gaps (G1 athlete profile, G4 event/route metadata), so the snapshots'
-  limits are explicit. Note v2 widgets are no longer blocked (see 19.8).
+  position/`state` assertion tied to 19.7.  4 tests: `watching_v2`,
+  `nearby_v2`, `groups_v2`, `state_position_is_separate_lat_lng_not_latlng_array`.
+- [x] **19.6-T (render)** — Headless render of all four widget pages in one
+  sequential Chrome instance (`all_widget_pages_render_correctly`), using
+  `chromiumoxide`.  Golden snapshots committed to
+  `compat/expected/golden_render/`.  Marked `#[ignore = "slow: headless
+  browser render"]`.
+- [x] **19.6-I** — `chromiumoxide` added to dev-dependencies.  Golden JSON
+  files committed to `compat/expected/golden_render/`.  No production code
+  changes.
+- [x] **19.6 (record coverage)** — In `compat/README.md`, payload-contract
+  and render-snapshot coverage tables added; deferred gaps (G1–G4, speed unit
+  mismatch) listed explicitly.  v2 widgets confirmed unblocked.
 
 ## 19.7 — Resolve the `state.latlng` deviation (gap #1)
 

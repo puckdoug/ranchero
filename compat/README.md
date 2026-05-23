@@ -100,6 +100,75 @@ for the regeneration recipe.
 
 ---
 
+## Metric parity oracles (spec §7.11 goal item 4)
+
+Synthetic `*.source.json` fixtures are converted to `.bin` files and `*.metrics.json`
+oracles by `cargo run --bin generate_compat_fixtures`.
+
+| Fixture | Oracle | Kind | Derivable? |
+|---|---|---|---|
+| `constant_power.bin` | `constant_power.metrics.json` | parity oracle | Yes — 300 ticks × 250 W; `stats.power.avg = 250.0` |
+| `ramp.bin` | `ramp.metrics.json` | parity oracle | Yes — 5 × 60 ticks stepping 100→300 W; `stats.power.max = 300.0` |
+| `recorded_ride.bin` | `recorded_ride.golden.json` | regression golden | No — monitor-only capture; no PlayerState frames; output is `{}` |
+
+The parity test (`tests/compat_metric_parity.rs`) exercises the full pipeline:
+raw bytes → `CaptureReader` → `ServerToClient::decode` → `route_player_state`
+→ `flush_all` → `format_athlete_data_v1`.  Tolerance: ≤ 1e-6 absolute for
+floats, exact for integers.
+
+The recorded-ride regression guard is marked `#[ignore = "slow: ..."]`.
+
+---
+
+## WebSocket widget parity (spec §7.11 goal item 5)
+
+`tests/compat_widget_parity.rs` covers two layers:
+
+### Payload contract (fast, `#[ignore = "slow: real socket"]`)
+
+| Test | Event subscribed | Query | What is verified |
+|---|---|---|---|
+| `watching_v2_payload_has_stats_and_state` | `athlete/watching/v2` | `resources:["stats","state"], stats:true` | `version:2`, `stats` object, `state` object |
+| `nearby_v2_payload_has_athlete_id_and_state` | `nearby/v2` | `resources:["state"]` | `version:2`, `athleteId`, `state` object |
+| `groups_v2_payload_has_state_with_group_id` | `groups/v2` | `resources:["state"]` | `version:2`, `state.groupId` |
+| `state_position_is_separate_lat_lng_not_latlng_array` | `athlete/watching/v2` | `resources:["state"]` | `state.lat`, `state.lng` are scalars (gap vs sauce4zwift's `latlng: [lat,lng]`) |
+
+**Gap #1 (`state.latlng`) is exposed but not resolved here.**  The test
+asserts the current behaviour (separate `lat`/`lng`) and notes that
+sauce4zwift emits `latlng: [lat, lng]`.  Resolution is 19.7.
+
+### Rendered snapshot (slow, `#[ignore = "slow: headless browser render"]`)
+
+Test: `all_widget_pages_render_correctly`
+
+All four widget pages are rendered sequentially in one Chrome headless
+instance.  Golden snapshots are in `compat/expected/golden_render/`.
+
+| Page | Golden | Key selector checked | Current value |
+|---|---|---|---|
+| `watching.html` | `golden_render/watching.json` | `#power .val`, `#hr .val`, `#speed .val` | `"200"`, `"120"`, `"0.0"` |
+| `nearby.html` | `golden_render/nearby.json` | first power cell | `"200"` |
+| `groups.html` | `golden_render/groups.json` | first group heading | `"Group (none)"` |
+| `map.html` | `golden_render/map.json` | canvas count | `1` |
+
+**Note on speed:** `watching.html` shows `"0.0"` for speed because
+`format_state` emits `state.speed` in m/s while the page's `speedKmh()`
+helper expects mm/h.  This unit mismatch is a known gap deferred beyond 19.7.
+
+**Fields absent due to deferred gaps:**
+
+| Field | Gap | Reason |
+|---|---|---|
+| `athlete` profile | G1 | Athlete profile cache not wired; `null` for all athletes. |
+| FTP-dependent stats (TSS, kJ) | G2 | FTP not cached; `null` until athlete profile is available. |
+| `state.latlng` | G3 | World-coordinate → lat/lng projection deferred to STEP 20. |
+| Event/route metadata | G4 | Event and route lookup not yet implemented. |
+| `state.speed` (correct unit) | — | `format_state` emits m/s; widgets expect mm/h. |
+
+v2 widgets are confirmed unblocked (STEP 18 M1 complete; see 19.8).
+
+---
+
 ## Licence note
 
 The proto schema vendored under `crates/zwift-proto/proto/` is from
