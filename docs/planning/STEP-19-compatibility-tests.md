@@ -452,15 +452,20 @@ Acceptance is "measured, decided, recorded", not "fixed".
 
 Checklist:
 
-- [ ] **19.9 (measure)** — Drive a multi-rider trace and measure actual
-  peak-snapshot resident memory (a counting allocator, a heap snapshot, or
-  instrumenting `PeakSnapshot`/`NpPeakSnapshot` construction). Mark
-  `#[ignore = "slow: memory measurement under multi-rider trace"]`.
-- [ ] **19.9 (decide)** — (a) keep the full clone (matches JS), (b) downgrade
-  to `(snap_value, snap_time)`-only, or (c) keep the clone behind a feature
-  flag for future analysis tooling.
-- [ ] **19.9 (record)** — Decision + measured number in the as-built notes.
-  If (b)/(c), the change is mechanically small in `zwift-stats::collector`.
+- [x] **19.9 (measure)** — `crates/zwift-stats/tests/peak_memory.rs::peak_snapshot_memory_footprint`
+  feeds 3 601 ticks (1 Hz, all five signals) into a single `DataBucket` and
+  computes snapshot memory analytically from `roll.size()` and
+  `std::mem::size_of`.  Results (debug build, 2026-05-23):
+  - `size_of::<Sample>() = 16 bytes`
+  - Per-athlete lower bound: 865 992 bytes (845.7 KB)
+  - Extrapolated to 100 athletes (lower bound): 86 599 200 bytes (82.6 MB)
+  - Actual worst-case with Vec capacity overallocation (≤ 2×): ~165 MB
+- [x] **19.9 (decide)** — Decision (a): keep the full clone.  The measured
+  footprint is well under 200 MB at 100 athletes; typical deployments run
+  1–10 athletes.  The full clone matches the JS reference and is needed to
+  reproduce the peak histogram on demand.  No structural change required.
+- [x] **19.9 (record)** — Measured number and decision recorded above and in
+  the test file's module doc.  The STEP 14 deferral is now closed.
 
 ## 19.10 — Fold the STEP 14 fixture into the compat tree
 
