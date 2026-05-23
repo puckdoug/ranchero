@@ -526,7 +526,7 @@ STEP 19 is complete when:
 - [x] 19.9 measured (845.7 KB per athlete, ~82.6 MB at 100 athletes lower
   bound), decided (a — keep full clone), and recorded; CPU-cost item
   recorded as dismissed.
-- [ ] `cargo test -- --include-ignored` is green across the workspace (fast
+- [x] `cargo test -- --include-ignored` is green across the workspace (fast
   `cargo test` stays fast; new slow tests carry `slow:`-prefixed reasons).
 - [x] `compat/README.md` records every fixture's provenance, the oracle
   derivation (parity vs regression), the AGPL licence note, and the
