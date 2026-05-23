@@ -1,4 +1,4 @@
-# Flaky test: stop_clears_pid_file_and_status_reports_shutdown
+# Flaky test: stop_clears_pid_file_and_status_reports_shutdown — RESOLVED
 
 `tests/daemon_lifecycle.rs::stop_clears_pid_file_and_status_reports_shutdown`
 intermittently fails when `cargo test` runs the full suite in parallel.
@@ -31,3 +31,12 @@ Alternatively, serialize the four "start/stop a real daemon" tests using the
 `serial_test` crate so they don't compete for process scheduling during the run.
 That requires a new dev-dependency, so the timeout increase is the lower-cost
 option.
+
+## Fix (applied 2026-05-23)
+
+Increased `SHUTDOWN_TIMEOUT` from 5 s to 15 s in `tests/daemon_lifecycle.rs`
+(line 13), matching `READY_TIMEOUT` which was already 15 s. This preserves the
+guard against a hung shutdown while giving the daemon sufficient time to exit
+cleanly under full suite parallel load.
+
+The flaky test now passes consistently under full parallel suite runs.

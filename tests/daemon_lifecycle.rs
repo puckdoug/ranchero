@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 const RELAY_FAIL_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Keychain service name written into every test config TOML so the
