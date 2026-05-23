@@ -1,0 +1,11 @@
+{
+  "athlete_id": 10001,
+  "world": 5,
+  "segments": [
+    {"ticks": 60, "power": 100, "heartrate": 120, "speed_mm_h":  8000000, "cadence_u_hz": 1200000},
+    {"ticks": 60, "power": 150, "heartrate": 130, "speed_mm_h":  9000000, "cadence_u_hz": 1250000},
+    {"ticks": 60, "power": 200, "heartrate": 140, "speed_mm_h": 10000000, "cadence_u_hz": 1300000},
+    {"ticks": 60, "power": 250, "heartrate": 150, "speed_mm_h": 11000000, "cadence_u_hz": 1333333},
+    {"ticks": 60, "power": 300, "heartrate": 160, "speed_mm_h": 12000000, "cadence_u_hz": 1400000}
+  ]
+}

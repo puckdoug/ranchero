@@ -20,6 +20,10 @@ path = "src/main.rs"
 name = "sanitize_capture"
 path = "src/bin/sanitize_capture.rs"
 
+[[bin]]
+name = "generate_compat_fixtures"
+path = "src/bin/generate_compat_fixtures.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

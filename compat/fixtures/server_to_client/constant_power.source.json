@@ -1,0 +1,13 @@
+{
+  "athlete_id": 10001,
+  "world": 5,
+  "segments": [
+    {
+      "ticks": 300,
+      "power": 250,
+      "heartrate": 140,
+      "speed_mm_h": 10000000,
+      "cadence_u_hz": 1333333
+    }
+  ]
+}

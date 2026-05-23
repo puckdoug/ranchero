@@ -1,0 +1,424 @@
+{
+  "10001": {
+    "age": 0.0,
+    "athlete": null,
+    "athleteId": 10001,
+    "courseId": 5,
+    "created": 0.0,
+    "createdServerTime": 1414016074401,
+    "lap": {
+      "activeTime": 0.0,
+      "cadence": {
+        "avg": null,
+        "max": 0.0,
+        "peaks": {},
+        "smooth": {}
+      },
+      "coffeeTime": 0,
+      "draft": {
+        "avg": null,
+        "kj": 0.0,
+        "max": 0.0,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          },
+          "60": {
+            "avg": null,
+            "period": 60.0,
+            "time": null,
+            "ts": null
+          }
+        },
+        "smooth": {
+          "1200": null,
+          "300": null,
+          "60": null
+        }
+      },
+      "elapsedTime": 0.0,
+      "followKj": 0.0,
+      "followTime": 0,
+      "hr": {
+        "avg": null,
+        "max": 0.0,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          },
+          "60": {
+            "avg": null,
+            "period": 60.0,
+            "time": null,
+            "ts": null
+          }
+        },
+        "smooth": {
+          "1200": null,
+          "300": null,
+          "60": null
+        }
+      },
+      "np": {
+        "avg": null,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          }
+        },
+        "smooth": {
+          "1200": null,
+          "300": null
+        }
+      },
+      "power": {
+        "avg": null,
+        "kj": 0.0,
+        "max": 0.0,
+        "np": null,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "15": {
+            "avg": null,
+            "period": 15.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          },
+          "5": {
+            "avg": null,
+            "period": 5.0,
+            "time": null,
+            "ts": null
+          },
+          "60": {
+            "avg": null,
+            "period": 60.0,
+            "time": null,
+            "ts": null
+          }
+        },
+        "smooth": {
+          "1200": null,
+          "15": null,
+          "300": null,
+          "5": null,
+          "60": null
+        },
+        "tss": null
+      },
+      "soloKj": 0.0,
+      "soloTime": 0,
+      "speed": {
+        "avg": null,
+        "max": 0.0,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          },
+          "60": {
+            "avg": null,
+            "period": 60.0,
+            "time": null,
+            "ts": null
+          }
+        },
+        "smooth": {
+          "1200": null,
+          "300": null,
+          "60": null
+        }
+      },
+      "workKj": 0.0,
+      "workTime": 0
+    },
+    "lapCount": 1,
+    "lastLap": null,
+    "state": null,
+    "stats": {
+      "activeTime": 299.0,
+      "cadence": {
+        "avg": 80.0,
+        "max": 80.0,
+        "peaks": {},
+        "smooth": {}
+      },
+      "coffeeTime": 0,
+      "draft": {
+        "avg": 0.0,
+        "kj": 0.0,
+        "max": 0.0,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          },
+          "60": {
+            "avg": 0.0,
+            "period": 60.0,
+            "time": 300.0,
+            "ts": 300000.0
+          }
+        },
+        "smooth": {
+          "1200": 0.0,
+          "300": 0.0,
+          "60": 0.0
+        }
+      },
+      "elapsedTime": 300.0,
+      "followKj": 0.0,
+      "followTime": 0,
+      "hr": {
+        "avg": 140.0,
+        "max": 140.0,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          },
+          "60": {
+            "avg": 140.0,
+            "period": 60.0,
+            "time": 300.0,
+            "ts": 300000.0
+          }
+        },
+        "smooth": {
+          "1200": 140.0,
+          "300": 140.0,
+          "60": 140.0
+        }
+      },
+      "np": {
+        "avg": null,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          }
+        },
+        "smooth": {
+          "1200": null,
+          "300": null
+        }
+      },
+      "power": {
+        "avg": 250.0,
+        "kj": 74.75,
+        "max": 250.0,
+        "np": 250.0,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "15": {
+            "avg": 250.0,
+            "period": 15.0,
+            "time": 300.0,
+            "ts": 300000.0
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          },
+          "5": {
+            "avg": 250.0,
+            "period": 5.0,
+            "time": 300.0,
+            "ts": 300000.0
+          },
+          "60": {
+            "avg": 250.0,
+            "period": 60.0,
+            "time": 300.0,
+            "ts": 300000.0
+          }
+        },
+        "smooth": {
+          "1200": 250.0,
+          "15": 250.0,
+          "300": 250.0,
+          "5": 250.0,
+          "60": 250.0
+        },
+        "timeInZones": [],
+        "tss": null,
+        "wBal": null
+      },
+      "soloKj": 0.0,
+      "soloTime": 0,
+      "speed": {
+        "avg": 2.7777777777777937,
+        "max": 2.7777777777777777,
+        "peaks": {
+          "1200": {
+            "avg": null,
+            "period": 1200.0,
+            "time": null,
+            "ts": null
+          },
+          "300": {
+            "avg": null,
+            "period": 300.0,
+            "time": null,
+            "ts": null
+          },
+          "3600": {
+            "avg": null,
+            "period": 3600.0,
+            "time": null,
+            "ts": null
+          },
+          "60": {
+            "avg": 2.777777777777774,
+            "period": 60.0,
+            "time": 300.0,
+            "ts": 300000.0
+          }
+        },
+        "smooth": {
+          "1200": 2.7777777777777937,
+          "300": 2.7777777777777937,
+          "60": 2.777777777777774
+        }
+      },
+      "timeInPowerZones": [],
+      "wBal": null,
+      "workKj": 0.0,
+      "workTime": 0
+    },
+    "timeInPowerZones": [],
+    "updated": 300.0,
+    "wBal": null
+  }
+}

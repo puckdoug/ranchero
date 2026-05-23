@@ -95,3 +95,64 @@ fn assert_parity_at(actual: &Value, golden: &Value, path: &str) {
         }
     }
 }
+
+/// Assert that `actual` and `golden` are structurally identical JSON values
+/// using metric-parity tolerances.
+///
+/// - Integer JSON numbers compare exactly (counts, lap numbers).
+/// - Float JSON numbers compare within absolute 1e-6 (sums, averages).
+/// - Key sets, array lengths, and non-numeric values compare exactly.
+#[allow(dead_code)]
+pub fn assert_metric_parity(actual: &Value, golden: &Value) {
+    assert_metric_at(actual, golden, "");
+}
+
+fn assert_metric_at(actual: &Value, golden: &Value, path: &str) {
+    match (actual, golden) {
+        (Value::Object(a_map), Value::Object(g_map)) => {
+            let a_keys: BTreeSet<&String> = a_map.keys().collect();
+            let g_keys: BTreeSet<&String> = g_map.keys().collect();
+            assert_eq!(
+                a_keys, g_keys,
+                "key sets differ at '{path}': actual={a_keys:?}, golden={g_keys:?}",
+            );
+            for key in &a_keys {
+                let child = if path.is_empty() {
+                    (*key).clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                assert_metric_at(&a_map[*key], &g_map[*key], &child);
+            }
+        }
+        (Value::Array(a_arr), Value::Array(g_arr)) => {
+            assert_eq!(
+                a_arr.len(), g_arr.len(),
+                "array length differs at '{path}': actual={}, golden={}",
+                a_arr.len(), g_arr.len(),
+            );
+            for (i, (a, g)) in a_arr.iter().zip(g_arr.iter()).enumerate() {
+                assert_metric_at(a, g, &format!("{path}[{i}]"));
+            }
+        }
+        (Value::Number(a_n), Value::Number(g_n)) => {
+            if a_n.is_i64() && g_n.is_i64() {
+                assert_eq!(
+                    a_n.as_i64(), g_n.as_i64(),
+                    "integer mismatch at '{path}'",
+                );
+            } else {
+                let a_f = a_n.as_f64().unwrap_or(0.0);
+                let g_f = g_n.as_f64().unwrap_or(0.0);
+                let diff = (a_f - g_f).abs();
+                assert!(
+                    diff <= 1e-6,
+                    "float mismatch at '{path}': actual={a_f}, golden={g_f}, diff={diff:.2e}",
+                );
+            }
+        }
+        (a, g) => {
+            assert_eq!(a, g, "value mismatch at '{path}'");
+        }
+    }
+}
