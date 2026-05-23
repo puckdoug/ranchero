@@ -509,25 +509,26 @@ rather than silently forgotten.
 
 STEP 19 is complete when:
 
-- [ ] 19.0 produces a sanitised, secret-free `recorded_ride.bin`, the
+- [x] 19.0 produces a sanitised, secret-free `recorded_ride.bin`, the
   cleanliness check passes, and `missing-proto-fixture.md` is closed.
-- [ ] 19.1 ships real ranchero widget pages (watching, nearby, groups, map),
+- [x] 19.1 ships real ranchero widget pages (watching, nearby, groups, map),
   served correctly, with nothing copied from sauce4zwift.
-- [ ] Items 1 and 2 have discoverable top-level tests (19.2, 19.3) and pass.
-- [ ] 19.4 confirms, from the sanitised capture, that a `ServerToClient` on
+- [x] Items 1 and 2 have discoverable top-level tests (19.2, 19.3) and pass.
+- [x] 19.4 confirms, from the sanitised capture, that a `ServerToClient` on
   TCP and a UDP packet decode — no live session used.
-- [ ] 19.5's battery runs raw bytes → decode → ingest → format with the
+- [x] 19.5's battery runs raw bytes → decode → ingest → format with the
   ≤ 1e-6 / exact-match regimes proven to bite; synthetic parity oracles and
   the real-ride regression golden both pass.
-- [ ] 19.6 has a payload-contract test and a rendered snapshot of the
+- [x] 19.6 has a payload-contract test and a rendered snapshot of the
   generated pages; covered/uncovered widgets are recorded.
-- [ ] Gap #1 (`state.latlng`) is resolved with a recorded decision; gap #2
-  (v2 fanout) is confirmed closed end-to-end.
-- [ ] 19.9 is measured, decided, and recorded; the CPU-cost item is recorded
-  as dismissed.
+- [x] Gap #1 (`state.latlng`) resolved in 19.7 (decision a — repack into
+  array); gap #2 (v2 fanout) confirmed closed end-to-end in 19.8.
+- [x] 19.9 measured (845.7 KB per athlete, ~82.6 MB at 100 athletes lower
+  bound), decided (a — keep full clone), and recorded; CPU-cost item
+  recorded as dismissed.
 - [ ] `cargo test -- --include-ignored` is green across the workspace (fast
   `cargo test` stays fast; new slow tests carry `slow:`-prefixed reasons).
-- [ ] `compat/README.md` records every fixture's provenance, the oracle
+- [x] `compat/README.md` records every fixture's provenance, the oracle
   derivation (parity vs regression), the AGPL licence note, and the
   sanitisation details.
 
