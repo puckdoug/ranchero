@@ -406,15 +406,18 @@ sauce4zwift (recommended — it is the field widgets read), or (b) keep
 
 Checklist:
 
-- [ ] **19.7 decision recorded** in `compat/README.md` and the STEP 18 parity
-  ledger (`docs/planning/done/STEP-18-parity-ledger.md`, `_formatState` and
-  gap G3 rows).
-- [ ] **19.7-T (if a)** — Failing test asserting `format_state` output
-  contains `latlng: [lat, lng]` (decide whether the scalar keys are dropped
-  or kept alongside).
-- [ ] **19.7-I (if a)** — Repack in `format_state`; update the ledger.
-- [ ] Re-run `tests/format_slices.rs`, the 19.6 position assertion, and the
-  map-widget snapshot to confirm no regression.
+- [x] **19.7 decision recorded** — decision (a): repack `lat`/`lng` into
+  `latlng: [lat, lng]` array.  Recorded in `compat/README.md` and the STEP 18
+  parity ledger (`_formatState` table and G3 row updated).
+- [x] **19.7-T** — `tests/format_v1_athlete.rs::state_latlng_is_array_not_separate_scalars`
+  asserts `state.latlng` is a `[lat, lng]` array and separate scalar fields
+  are absent.  Was red before 19.7-I.
+- [x] **19.7-I** — `format_state` in `src/web/format.rs` changed to emit
+  `"latlng": [state.lat, state.lng]`; separate `"lat"` and `"lng"` keys
+  removed.  Ledger and README updated.
+- [x] Re-run `tests/format_slices.rs`, the 19.6 position assertion, and the
+  map-widget snapshot confirm no regression.  19.6 position test renamed to
+  `state_position_is_latlng_array` and updated to assert the new behaviour.
 
 ## 19.8 — Confirm v2 WebSocket fanout parity (gap #2 — already wired)
 

@@ -131,11 +131,11 @@ The recorded-ride regression guard is marked `#[ignore = "slow: ..."]`.
 | `watching_v2_payload_has_stats_and_state` | `athlete/watching/v2` | `resources:["stats","state"], stats:true` | `version:2`, `stats` object, `state` object |
 | `nearby_v2_payload_has_athlete_id_and_state` | `nearby/v2` | `resources:["state"]` | `version:2`, `athleteId`, `state` object |
 | `groups_v2_payload_has_state_with_group_id` | `groups/v2` | `resources:["state"]` | `version:2`, `state.groupId` |
-| `state_position_is_separate_lat_lng_not_latlng_array` | `athlete/watching/v2` | `resources:["state"]` | `state.lat`, `state.lng` are scalars (gap vs sauce4zwift's `latlng: [lat,lng]`) |
+| `state_position_is_latlng_array` | `athlete/watching/v2` | `resources:["state"]` | `state.latlng` is a `[lat,lng]` array; separate `lat`/`lng` scalars are absent |
 
-**Gap #1 (`state.latlng`) is exposed but not resolved here.**  The test
-asserts the current behaviour (separate `lat`/`lng`) and notes that
-sauce4zwift emits `latlng: [lat, lng]`.  Resolution is 19.7.
+**Gap #1 (`state.latlng`) resolved in 19.7.**  `format_state` now emits
+`latlng: [lat, lng]` matching sauce4zwift.  The separate `lat`/`lng` scalar
+fields have been dropped.
 
 ### Rendered snapshot (slow, `#[ignore = "slow: headless browser render"]`)
 
@@ -161,7 +161,7 @@ helper expects mm/h.  This unit mismatch is a known gap deferred beyond 19.7.
 |---|---|---|
 | `athlete` profile | G1 | Athlete profile cache not wired; `null` for all athletes. |
 | FTP-dependent stats (TSS, kJ) | G2 | FTP not cached; `null` until athlete profile is available. |
-| `state.latlng` | G3 | World-coordinate → lat/lng projection deferred to STEP 20. |
+| `state.x/y`, `roadCompletion`, `progress` | G3 | World-coordinate projection deferred to STEP 20. `state.latlng` resolved in 19.7. |
 | Event/route metadata | G4 | Event and route lookup not yet implemented. |
 | `state.speed` (correct unit) | — | `format_state` emits m/s; widgets expect mm/h. |
 

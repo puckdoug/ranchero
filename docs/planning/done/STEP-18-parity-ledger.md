@@ -207,21 +207,18 @@ on the state record.
 | `groupId` | ✅ | |
 | `time` | ✅ | local relay time |
 | `eventDistance` | ✅ | |
-| `latlng` | ⚠️ absent | G3: JS computes `[lat, lng]` from world coordinates; ranchero emits separate `lat`/`lng` fields instead |
-| `lat` | ✅ | deviation from JS (JS uses `latlng`); widgets that read `state.latlng` will not see separate `lat`/`lng` |
-| `lng` | ✅ | as above |
+| `latlng` | ✅ | 19.7: repacked from separate `lat`/`lng` scalars into `[lat, lng]` array matching sauce4zwift |
+| `lat` | ⚠️ absent | removed in 19.7 — superseded by `latlng` array |
+| `lng` | ⚠️ absent | removed in 19.7 — superseded by `latlng` array |
 | `x` | ⚠️ absent | G3: Mercator projection; not computed by ranchero |
 | `y` | ⚠️ absent | G3: Mercator projection; not computed by ranchero |
 | `roadCompletion` | ⚠️ absent | G3: ratio of roadTime to total road length; not computed |
 | `progress` | ⚠️ absent | G3: route completion ratio; not computed |
 
-**Note on `latlng` vs `lat`/`lng`:** The `_formatState` JS result carries a single
-`latlng: [lat, lng]` array field.  Ranchero stores coordinates as separate scalar
-fields (`lat`, `lng`) on `MostRecentState` and emits them that way.  Widgets that
-read `state.latlng` will fail to find the pair.  This is a named deviation that
-should be resolved when implementing the world-coordinate pipeline (STEP 19 or
-later): either repack `lat`/`lng` into a `latlng` array in `format_state`, or
-record the deviation as a deliberate API extension.
+**Resolved in 19.7:** `format_state` now emits `latlng: [lat, lng]` matching
+sauce4zwift.  The separate `lat`/`lng` scalar fields have been dropped.  The
+underlying world-coordinate pipeline (`x`/`y`/`roadCompletion`/`progress`)
+remains deferred to STEP 20 §20.19/§20.20.
 
 ---
 
@@ -312,7 +309,7 @@ Rust: `format_athlete_streams` in `src/web/format.rs`.
 |-----|-------------|---------|--------|
 | G1 | Athlete profile cache absent | `athlete` field null everywhere | STEP 16 / post-18 |
 | G2 | No FTP without profile (G1) | `tss` null everywhere | STEP 16 / post-18 |
-| G3 | World-coordinate pipeline not computed | `state.latlng`, `state.x/y`, `state.roadCompletion`, `state.progress` absent; `lat`/`lng` emitted separately instead | STEP 19 or later |
+| G3 | World-coordinate pipeline not computed | `state.x/y`, `state.roadCompletion`, `state.progress` absent; `state.latlng` array resolved in 19.7 | STEP 20 §20.19/§20.20 |
 | G4 | Event/route metadata, game session | `gameState`, `eventLeader/Sweeper`, `remaining*` absent; `userDefined` absent | post-18 |
 | G5 | World-time unit (seconds vs ms) | resolved in 18.2-I | closed |
 

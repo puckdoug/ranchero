@@ -274,13 +274,12 @@ async fn groups_v2_payload_has_state_with_group_id() {
     handle.stop().await;
 }
 
-/// `state` contains `lat` and `lng` as separate scalar fields, not a `latlng`
-/// array.  This asserts the CURRENT behaviour and thereby documents the
-/// deviation from sauce4zwift (which emits `latlng: [lat, lng]`).  Resolving
-/// the deviation is 19.7.
+/// `state.latlng` is a `[lat, lng]` two-element array matching sauce4zwift's
+/// `_formatState` output.  Separate scalar `lat`/`lng` fields must not appear.
+/// This was the deviation documented by 19.6; 19.7 resolves it.
 #[tokio::test]
 #[ignore = "slow: real socket"]
-async fn state_position_is_separate_lat_lng_not_latlng_array() {
+async fn state_position_is_latlng_array() {
     let (tx, _) = broadcast::channel::<GameEvent>(16);
     let state   = state_with_watching_athlete(tx.clone());
 
@@ -313,18 +312,17 @@ async fn state_position_is_separate_lat_lng_not_latlng_array() {
     let state_obj = &ev["data"]["state"];
     assert!(state_obj.is_object(), "state must be an object; got {ev}");
 
-    // Current behaviour: separate scalar fields.
-    assert!(state_obj["lat"].is_number(), "state.lat must be a number; got {state_obj}");
-    assert!(state_obj["lng"].is_number(), "state.lng must be a number; got {state_obj}");
-
-    // Deviation from sauce4zwift: no latlng array.  Once 19.7 changes the
-    // formatter, this assertion will fail and should be updated accordingly.
+    // 19.7: latlng is now a [lat, lng] array matching sauce4zwift.
     let latlng = &state_obj["latlng"];
-    assert!(
-        latlng.is_null() || latlng.is_object() && latlng.as_object().map(|m| m.is_empty()).unwrap_or(false),
-        "state.latlng must be absent or null (current behaviour — separate lat/lng); \
-         if this fails, 19.7 has been applied; got {state_obj}",
-    );
+    assert!(latlng.is_array(), "state.latlng must be a [lat, lng] array; got {state_obj}");
+    let arr = latlng.as_array().unwrap();
+    assert_eq!(arr.len(), 2, "state.latlng must have 2 elements; got {latlng}");
+    assert!(arr[0].is_number(), "latlng[0] (lat) must be a number; got {latlng}");
+    assert!(arr[1].is_number(), "latlng[1] (lng) must be a number; got {latlng}");
+
+    // Separate scalar fields must no longer appear.
+    assert!(state_obj.get("lat").is_none(), "state.lat must be absent after 19.7; got {state_obj}");
+    assert!(state_obj.get("lng").is_none(), "state.lng must be absent after 19.7; got {state_obj}");
 
     shutdown.notify_one();
     handle.stop().await;

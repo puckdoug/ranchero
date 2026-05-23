@@ -15,6 +15,7 @@ mod support;
 
 use ranchero::web::format::format_athlete_data_v1;
 use support::{assert_json_parity, build_athlete};
+use zwift_stats::MostRecentState;
 
 // ── 18.6-T ───────────────────────────────────────────────────────────────────
 
@@ -103,4 +104,33 @@ fn state_null_with_no_state() {
         serde_json::Value::Null,
         "expected `state` to be null when most_recent_state is None",
     );
+}
+
+/// `state.latlng` is a two-element `[lat, lng]` array matching sauce4zwift's
+/// `_formatState` output.  Separate `lat`/`lng` scalar fields must not appear.
+///
+/// 19.7-T: fails until `format_state` is changed to emit `latlng` instead of
+/// separate `lat`/`lng` fields.
+#[test]
+fn state_latlng_is_array_not_separate_scalars() {
+    let mut ad = build_athlete(&[]);
+    ad.most_recent_state = Some(MostRecentState {
+        world_time: 0.0, speed: 0.0, power: 0.0, heartrate: 0, cadence: 0,
+        draft: 0.0, distance: 0.0, altitude: 0.0,
+        lat: 1.23, lng: 4.56,
+        course_id: 0, road_id: 0, road_time: 0.0, reverse: false,
+        event_subgroup_id: 0, group_id: 0, time: 0.0, event_distance: 0.0,
+    });
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let state = &result["state"];
+
+    let latlng = &state["latlng"];
+    assert!(latlng.is_array(), "state.latlng must be an array; got {state}");
+    let arr = latlng.as_array().unwrap();
+    assert_eq!(arr.len(), 2, "state.latlng must have exactly 2 elements; got {latlng}");
+    assert!((arr[0].as_f64().unwrap() - 1.23).abs() < 1e-9, "latlng[0] must be lat=1.23; got {latlng}");
+    assert!((arr[1].as_f64().unwrap() - 4.56).abs() < 1e-9, "latlng[1] must be lng=4.56; got {latlng}");
+
+    assert!(state.get("lat").is_none(), "state.lat must be absent; got {state}");
+    assert!(state.get("lng").is_none(), "state.lng must be absent; got {state}");
 }
