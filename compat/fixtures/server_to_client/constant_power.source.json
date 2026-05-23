@@ -3,11 +3,12 @@
   "world": 5,
   "segments": [
     {
-      "ticks": 300,
+      "ticks": 8,
       "power": 250,
-      "heartrate": 140,
-      "speed_mm_h": 10000000,
-      "cadence_u_hz": 1333333
+      "heartrate": 150,
+      "speed_mm_h": 126000000,
+      "cadence_u_hz": 1500000,
+      "draft": 1
     }
   ]
 }

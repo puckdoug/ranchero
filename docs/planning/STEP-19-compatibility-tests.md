@@ -474,14 +474,20 @@ STEP 14.
 
 Checklist:
 
-- [ ] Promote `crates/zwift-stats/tests/fixtures/athlete_stream.json` into
-  `compat/fixtures/server_to_client/constant_power.{source.json,bin}` so the
-  same trace runs from raw bytes, not just the stats-engine slice.
-- [ ] Copy the per-period peak and NP-peak values into
-  `compat/expected/constant_power.metrics.json`.
-- [ ] Keep tolerance consistent with STEP 14 (≤ 1e-6 sums, exact peaks/zones).
-- [ ] Leave `crates/zwift-stats/tests/stream_parity.rs` in place as the fast
-  unit-level guard; the compat test is the broader orchestration guard.
+- [x] Promoted `crates/zwift-stats/tests/fixtures/athlete_stream.json` into
+  `compat/fixtures/server_to_client/constant_power.source.json` (8 ticks:
+  250 W, 150 bpm, speed_mm_h=126_000_000 [35.0 m/s], cadence_u_hz=1_500_000
+  [90 rpm], draft=1). Added `draft: i32` (`#[serde(default)]`) to `Segment`
+  in `src/bin/generate_compat_fixtures.rs` and wired it to `PlayerState.draft`.
+  Regenerated `constant_power.bin` (8 frames) and `constant_power.metrics.json`.
+- [x] Per-period peaks and NP-peak values in the regenerated oracle:
+  `power.avg=250.0`, `power.peaks.5=250.0`, `power.peaks.15=null` (8 ticks <
+  15 s window), `hr.avg=150.0`, `speed.avg=35.0`, `cadence.avg=90.0`,
+  `draft.avg=1.0`.  The existing `assert_metric_parity` (≤ 1e-6 float
+  tolerance, exact integers) verifies these values end-to-end.
+- [x] Tolerance consistent with STEP 14 — `assert_metric_parity` uses 1e-6.
+- [x] `crates/zwift-stats/tests/stream_parity.rs` left in place unchanged;
+  it guards the stats-engine slice independently.
 
 ---
 

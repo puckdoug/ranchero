@@ -52,6 +52,8 @@ struct Segment {
     heartrate:    i32,
     speed_mm_h:   u32,
     cadence_u_hz: i32,
+    #[serde(default)]
+    draft:        i32,
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,7 @@ fn build_ticks(src: &SourceFile) -> Vec<(u64, Vec<u8>)> {
                 heartrate:    Some(seg.heartrate),
                 speed:        Some(seg.speed_mm_h),
                 cadence_u_hz: Some(seg.cadence_u_hz),
+                draft:        Some(seg.draft),
                 ..Default::default()
             };
             let stc = ServerToClient {

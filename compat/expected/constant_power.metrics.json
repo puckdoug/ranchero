@@ -212,18 +212,18 @@
     "lastLap": null,
     "state": null,
     "stats": {
-      "activeTime": 299.0,
+      "activeTime": 7.0,
       "cadence": {
-        "avg": 80.0,
-        "max": 80.0,
+        "avg": 90.0,
+        "max": 90.0,
         "peaks": {},
         "smooth": {}
       },
       "coffeeTime": 0,
       "draft": {
-        "avg": 0.0,
-        "kj": 0.0,
-        "max": 0.0,
+        "avg": 1.0,
+        "kj": 0.007,
+        "max": 1.0,
         "peaks": {
           "1200": {
             "avg": null,
@@ -244,24 +244,24 @@
             "ts": null
           },
           "60": {
-            "avg": 0.0,
+            "avg": null,
             "period": 60.0,
-            "time": 300.0,
-            "ts": 300000.0
+            "time": null,
+            "ts": null
           }
         },
         "smooth": {
-          "1200": 0.0,
-          "300": 0.0,
-          "60": 0.0
+          "1200": 1.0,
+          "300": 1.0,
+          "60": 1.0
         }
       },
-      "elapsedTime": 300.0,
+      "elapsedTime": 8.0,
       "followKj": 0.0,
       "followTime": 0,
       "hr": {
-        "avg": 140.0,
-        "max": 140.0,
+        "avg": 150.0,
+        "max": 150.0,
         "peaks": {
           "1200": {
             "avg": null,
@@ -282,16 +282,16 @@
             "ts": null
           },
           "60": {
-            "avg": 140.0,
+            "avg": null,
             "period": 60.0,
-            "time": 300.0,
-            "ts": 300000.0
+            "time": null,
+            "ts": null
           }
         },
         "smooth": {
-          "1200": 140.0,
-          "300": 140.0,
-          "60": 140.0
+          "1200": 150.0,
+          "300": 150.0,
+          "60": 150.0
         }
       },
       "np": {
@@ -323,7 +323,7 @@
       },
       "power": {
         "avg": 250.0,
-        "kj": 74.75,
+        "kj": 1.75,
         "max": 250.0,
         "np": 250.0,
         "peaks": {
@@ -334,10 +334,10 @@
             "ts": null
           },
           "15": {
-            "avg": 250.0,
+            "avg": null,
             "period": 15.0,
-            "time": 300.0,
-            "ts": 300000.0
+            "time": null,
+            "ts": null
           },
           "300": {
             "avg": null,
@@ -354,14 +354,14 @@
           "5": {
             "avg": 250.0,
             "period": 5.0,
-            "time": 300.0,
-            "ts": 300000.0
+            "time": 8.0,
+            "ts": 8000.0
           },
           "60": {
-            "avg": 250.0,
+            "avg": null,
             "period": 60.0,
-            "time": 300.0,
-            "ts": 300000.0
+            "time": null,
+            "ts": null
           }
         },
         "smooth": {
@@ -378,8 +378,8 @@
       "soloKj": 0.0,
       "soloTime": 0,
       "speed": {
-        "avg": 2.7777777777777937,
-        "max": 2.7777777777777777,
+        "avg": 35.0,
+        "max": 35.0,
         "peaks": {
           "1200": {
             "avg": null,
@@ -400,16 +400,16 @@
             "ts": null
           },
           "60": {
-            "avg": 2.777777777777774,
+            "avg": null,
             "period": 60.0,
-            "time": 300.0,
-            "ts": 300000.0
+            "time": null,
+            "ts": null
           }
         },
         "smooth": {
-          "1200": 2.7777777777777937,
-          "300": 2.7777777777777937,
-          "60": 2.777777777777774
+          "1200": 35.0,
+          "300": 35.0,
+          "60": 35.0
         }
       },
       "timeInPowerZones": [],
@@ -418,7 +418,7 @@
       "workTime": 0
     },
     "timeInPowerZones": [],
-    "updated": 300.0,
+    "updated": 8.0,
     "wBal": null
   }
 }
