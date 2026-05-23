@@ -53,7 +53,7 @@ tests are still failing.
 
 - **Step 1** — Profile fetch + `Profile` struct (`getProfiles` / `getProfile`, FTP)
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 2** — Read-through athlete profile cache + `athletes.sqlite` (JSON blob)
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

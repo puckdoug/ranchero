@@ -108,10 +108,23 @@ pub struct Tokens {
     pub token_type: String,
 }
 
-/// Minimal athlete profile from `GET /api/profiles/me`.
+/// Athlete profile from `GET /api/profiles/{id}` or `/api/profiles/me`.
+/// All fields except `id` are optional — Zwift may omit them based on
+/// privacy settings or whether the field has been set by the athlete.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Profile {
     pub id: i64,
+    #[serde(rename = "firstName", default)]
+    pub first_name: Option<String>,
+    #[serde(rename = "lastName", default)]
+    pub last_name: Option<String>,
+    /// Functional threshold power in watts. `None` means no FTP is on
+    /// file, not zero.
+    #[serde(default)]
+    pub ftp: Option<u32>,
+    /// Body weight in grams, as returned by the Zwift profile JSON API.
+    #[serde(rename = "weight", default)]
+    pub weight_g: Option<u32>,
 }
 
 /// Direction tag passed to a [`CaptureSink`] for each HTTP exchange.
@@ -451,6 +464,76 @@ impl ZwiftAuth {
                 )))
             }
         }
+    }
+
+    /// Fetch a single athlete profile from `GET /api/profiles/{id}` (JSON
+    /// response). On a 401 response, transparently triggers a token refresh
+    /// and retries once. Mirrors sauce4zwift's `getProfile` (`zwift.mjs:541`).
+    pub async fn get_profile(&self, id: i64) -> Result<Profile> {
+        let urn = format!("/api/profiles/{id}");
+        let resp = self.fetch(&urn).await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        serde_json::from_slice::<Profile>(&bytes)
+            .map_err(|e| Error::AuthFailedBadSchema(e.to_string()))
+    }
+
+    /// Fetch profiles for multiple athletes from `GET /api/profiles?id=…`
+    /// (protobuf-encoded `PlayerProfiles` response). Results are returned in
+    /// the same order as `ids`; athletes absent from the response are silently
+    /// omitted. Mirrors sauce4zwift's `getProfiles` (`zwift.mjs:559`).
+    pub async fn get_profiles(&self, ids: &[i64]) -> Result<Vec<Profile>> {
+        use prost::Message as _;
+
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let query = ids
+            .iter()
+            .map(|id| format!("id={id}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        let urn = format!("/api/profiles?{query}");
+
+        let resp = self.fetch_pb(&urn).await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+
+        let batch = zwift_proto::PlayerProfiles::decode(&bytes[..])
+            .map_err(|e| Error::ProtobufDecode(e.to_string()))?;
+
+        let by_id: std::collections::HashMap<i64, Profile> = batch
+            .profiles
+            .into_iter()
+            .filter_map(|p| {
+                let id = p.id?;
+                Some((
+                    id,
+                    Profile {
+                        id,
+                        first_name: p.first_name,
+                        last_name: p.last_name,
+                        ftp: p.ftp,
+                        weight_g: p.weight_in_grams,
+                    },
+                ))
+            })
+            .collect();
+
+        Ok(ids.iter().filter_map(|id| by_id.get(id).cloned()).collect())
     }
 
     /// Return the authenticated athlete's Zwift profile ID. Populated by
