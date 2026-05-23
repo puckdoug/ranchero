@@ -14,6 +14,613 @@ porting effort.
 
 ---
 
+## Implementation plan (built 2026-05-24)
+
+This section turns the work that the 2026-05-24 answers committed to (items
+20.21–20.28 plus the sub-items they activated in 20.17 / 20.19 / 20.20) into
+ordered, test-first steps. The parking-lot items 20.1–20.20 stay parked: they are
+conditional deferrals with their own "revisit when …" triggers and are *not* part
+of this plan.
+
+**Out of scope by decision** (do not build): write-back to Zwift — the write RPCs
+and any write fetchers (QA1); a fourth `event_subgroups.sqlite` database (QD2);
+repacking position into a `latlng` array — ranchero emits `lat`/`lng` scalars
+(QE1).
+
+**Conventions every step follows:**
+
+- **Test-first.** Write the tests listed under "Tests first", watch them fail,
+  then write the smallest code under "Implementation" that turns them green. Do
+  not write implementation before the failing test exists.
+- **Slow-test marking.** Any test that spawns a daemon or runs ≥ 100 ms must be
+  `#[ignore]` with a reason starting `slow:` (see `README.md`). The fast set must
+  stay fast.
+- **Run.** Use the narrow command while iterating (`cargo test -p <crate>` or a
+  single test path), and `cargo test -- --include-ignored` before calling a step
+  done.
+- **Field visibility.** POD/snapshot types expose `pub` fields; stateful
+  aggregators keep fields private behind accessors.
+- **Order.** Steps are listed in dependency order; the "Depends on" line in each
+  step is authoritative. Several later steps can proceed in parallel once their
+  dependencies are met.
+- Plan-file moves into `docs/plans/done/` are Doug's, not the implementer's.
+
+### Checklist
+
+Each step is two checkboxes: write the failing tests (red), then implement until
+they pass (green). Do not tick the implementation box while any of the step's
+tests are still failing.
+
+- **Step 1** — Profile fetch + `Profile` struct (`getProfiles` / `getProfile`, FTP)
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 2** — Read-through athlete profile cache + `athletes.sqlite` (JSON blob)
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 3** — Self identity (`self` = watched athlete)
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 4** — Per-tick recording I: current state, streams, grade, stale guard
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 5** — Per-tick recording II: road history, auto-lap, bucket growth, time/kJ splits
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 6** — Per-tick recording III: W′ balance + power zones
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 7** — Relay: watched position from stream + UDP server selection fix
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 8** — Relay: consume inbound UDP telemetry
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 9** — Relay: rebuild UDP on TCP reconnect
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 10** — Relay: WorldUpdate decode + new `GameEvent` variants
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 11** — Relay: Ghost drop, heartbeat content, multipleLogins, refresher self/429
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 12** — 1 Hz nearby/groups processor + event sources + gap estimation
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 13** — Event chain: proto tags 29/34 + `getEvent` + subgroup cache + detection
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 14** — Live event streams: chat, rideon, game-state, watching-athlete-change
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 15** — Segment leaderboards: fetchers + `segments.sqlite` + evictor + active-segment
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 16** — RPC read-only getter surface
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 17** — Route tables (`zwift-routes` crate) + route progress
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 18** — World-meta tables + position projection (lat/lng scalars)
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+- **Step 19** — Persistence wiring audit + `GameEvent::PlayerState` cleanup
+  - [ ] ① Tests (red)
+  - [ ] ② Implementation (green)
+
+### Step 1 — Profile fetch and `Profile` struct
+
+**Goal.** Add the Zwift REST profile fetchers and extend `Profile`, giving the
+rest of the plan a real source for athlete identity, name, and FTP.
+**Resolves.** 20.26 (`getProfiles`, `getProfile`); the QC3 blocker (`Profile` is
+`{ id }` only today, `crates/zwift-api/src/lib.rs:113`).
+**Depends on.** Nothing.
+
+**① Tests first (red)** — `crates/zwift-api/tests/` (wiremock, fast):
+- `get_profile_parses_ftp_and_name`: mock `GET /api/profiles/{id}`; assert the
+  parsed `Profile` exposes `id`, `first_name`, `last_name`,
+  `ftp` (from `functional_threshold_power`), `weight`, and the privacy flag.
+- `get_profiles_batch_returns_all`: mock the batch endpoint (sauce
+  `zwift.mjs:559`); assert both ids come back, in request order.
+- `get_profile_missing_ftp_is_none`: a profile without FTP → `ftp == None`, not 0.
+- `get_profiles_propagates_auth_error`: a 401 surfaces an `Error`, not an empty
+  result.
+
+**② Implementation (green).**
+- Extend `Profile` (`crates/zwift-api/src/lib.rs:113`) with `first_name`,
+  `last_name`, `ftp: Option<f64>`, `weight: Option<f64>`, and the privacy flag;
+  keep it POD with `pub` fields.
+- Add `ZwiftAuth::get_profile(id)` (`/api/profiles/{id}`, sauce `zwift.mjs:541`)
+  and `get_profiles(ids)` (batch, `zwift.mjs:559`), mirroring `get_profile_me`'s
+  request shape and its `Accept: application/json` header (the 20.16 fix).
+
+**Done when.** `cargo test -p zwift-api` passes the four tests and production code
+can read a profile's FTP.
+
+### Step 2 — Read-through athlete profile cache + `athletes.sqlite` (JSON blob)
+
+**Goal.** A `WebState` in-memory profile cache, populated from `getProfiles`,
+written through to `athletes.sqlite` (JSON-blob schema), and read by the
+formatters so `athlete`, `ftp`, and `tss` stop being null.
+**Resolves.** QC2 (live authoritative, SQLite is the cache), QD1 (JSON-blob
+schema), 20.20 item 1 (gaps G1/G2), 20.17 item 1 (write side), 20.28 item 1.
+**Depends on.** Step 1.
+
+**① Tests first (red).**
+- `crates/zwift-store/tests/`: `athletes_db_roundtrips_json_blob` — migrate to
+  `athletes(id INTEGER PRIMARY KEY, data TEXT)`, upsert a full athlete JSON, and
+  read it back intact including `marked`, `following`, `gender`, privacy.
+  `athletes_db_marked_query` — `json_each(data,'$.marked')` returns marked ids
+  (sauce `stats.mjs:2440`).
+- web/format tests: `format_v1_populates_athlete_from_cache` — a cache entry with
+  name + FTP makes `athlete` non-null and `ftp` set; `tss_computed_from_ftp` —
+  with NP + FTP, `tss` is non-null (gap G2); `athlete_null_on_cache_miss` —
+  no entry → `athlete: null` (parity).
+- `profile_cache_serves_live_then_falls_back_to_sqlite`.
+
+**② Implementation (green).**
+- Replace the fixed-column `athletes` schema with the JSON-blob `data TEXT`
+  schema in `crates/zwift-store`; `AthletesDb::upsert/get/touch` operate on the
+  serialized athlete; add a `marked()` query.
+- Add a profile cache to `WebState` (`src/web/state.rs`) populated from
+  `get_profiles` (Step 1) and written through to `AthletesDb`; live data is
+  authoritative, SQLite is the fallback consulted only before live data exists.
+- Have `format_athlete_data_v1` / `format_athlete_v2` (`src/web/format.rs`) read
+  the cache for `athlete`/`ftp` and compute `tss` from FTP.
+
+**Done when.** `cargo test -p zwift-store` and the format tests pass; a watched
+athlete with a known FTP shows name, FTP, and TSS.
+
+### Step 3 — Self identity (`self` = watched athlete)
+
+**Goal.** Populate `self_athlete_id` so the `self` aliases and self-comparisons
+work.
+**Resolves.** QC1, 20.19 item 3 (`TODO 17.36-I`).
+**Depends on.** Nothing (small; placed early because self-only fields need it).
+
+**① Tests first (red).**
+- `web_state_self_id_equals_watched` — building `WebState` from a config with
+  `watched_athlete_id = N` yields `self_athlete_id == Some(N)`.
+- `self_alias_resolves_to_watched` — `GET /athlete/self` returns the watched
+  athlete's record, and `apply_event_state`'s self-comparison uses the watched id
+  (not the `0` fallback).
+
+**② Implementation (green).**
+- In `src/daemon/runtime.rs:305-306`, set
+  `s.self_athlete_id = cfg.watched_athlete_id.map(|id| id as u32);` and remove
+  `TODO 17.36-I`.
+- Read `WebState.self_athlete_id` in the `self` aliases and `apply_event_state`.
+- The monitor account's `auth.athlete_id()` is **not** used for self (see QC1).
+
+**Done when.** `self` aliases resolve and the TODO is gone.
+
+### Step 4 — Per-tick recording I: current state, streams, grade, stale guard
+
+**Goal.** Wire the first slice of `_recordAthleteStats` / `_preprocessState` into
+`route_player_state`: store the current state, record streams, publish grade, and
+reject stale/duplicate packets.
+**Resolves.** 20.21 (`most_recent_state`, `record_streams`, grade publication,
+stale guard), QF3, the settled `road_time` finding.
+**Depends on.** Step 1.
+
+**① Tests first (red)** — `crates/zwift-stats/tests/` and the `src/web`
+proto_to_stats tests:
+- `records_most_recent_state` — after one ingest, `ad.most_recent_state` is
+  `Some(state)` and the v1/v2 payload `state` is non-null.
+- `records_streams` — distance/altitude/latlng/wbal stream vectors grow by one
+  per tick.
+- `publishes_grade` — `state.grade` equals the smoothed grade (today computed and
+  discarded).
+- `road_time_reverse_adjustment` — a reverse rider gives
+  `road_time = 1005000 - raw`; forward gives `raw - 5000` (sauce `zwift.mjs:321`).
+- `rejects_stale_or_duplicate_state` — a packet with `elapsed <= 0` versus the
+  last is dropped and rolling sums are unchanged (`stats.mjs:3146`).
+
+**② Implementation (green).**
+- In `route_player_state` (`src/web/proto_to_stats.rs`): set `most_recent_state`,
+  call `record_streams`, keep and publish the smoothed grade, and add the
+  `elapsed <= 0` guard before ingest.
+- Fix `ProtoView::road_time` (`src/web/proto_view.rs:75`) to apply the reverse
+  adjustment from the direction bit.
+
+**Done when.** `state` and `state.grade` appear in payloads; tests pass.
+
+### Step 5 — Per-tick recording II: road history, auto-lap, bucket growth, time/kJ splits
+
+**Goal.** Record road history, detect auto-laps, grow the per-lap/segment/event
+buckets, and split work/follow/solo/coffee time and kJ.
+**Resolves.** 20.21 (`road_history.record`, `auto_lap_check`, slice/bucket growth,
+the four time and kJ splits) and the settled "DataCollector has no growth
+mechanism" finding.
+**Depends on.** Step 4.
+
+**① Tests first (red)** — `crates/zwift-stats/tests/`:
+- `data_collector_resize_grows_window` — a new growth method extends capacity and
+  preserves existing samples.
+- `data_slice_grows_after_new_from` — `DataSlice::new_from` (`slice.rs:22`) then
+  growth yields a bucket that accumulates (today `clone_reset` leaves it empty).
+- `auto_lap_detected_by_distance_and_time` — crossing the threshold
+  (`stats.mjs:3092`) creates a lap; `lapCount` and `laps[]` update.
+- `road_history_recorded` — `road_history.record` appends, respecting the reverse
+  adjustment from Step 4.
+- `work_follow_solo_coffee_split` — across ticks with draft/coffee state, the four
+  time buckets and `workKj`/`followKj`/`soloKj` accumulate (`stats.mjs:3397-3463`).
+
+**② Implementation (green).**
+- Add a growth method to `DataCollector` (`crates/zwift-stats/src/collector.rs`)
+  and make `DataSlice` growable.
+- In `route_player_state`: call `road_history.record`, `auto_lap_check`,
+  create/grow slices, and accumulate the time and kJ splits.
+
+**Done when.** Per-lap stats and time/kJ splits are non-zero; tests pass.
+
+### Step 6 — Per-tick recording III: W′ balance + power zones
+
+**Goal.** Configure and accumulate W′ balance and time-in-power-zones from the
+profile FTP.
+**Resolves.** 20.21 (W′/zones), QC3.
+**Depends on.** Step 2 (profile FTP), Step 4 (recording loop).
+
+**① Tests first (red)** — `crates/zwift-stats/tests/`:
+- `wbal_configured_from_profile` — with `cp = ftp` and `w_prime = 20000`,
+  `WBalAccumulator` gives a non-null series that depletes above CP and recovers
+  below (sauce `stats.mjs:2864-2867`).
+- `wbal_defaults_when_no_cp` — missing CP falls back to FTP; missing W′ falls back
+  to 20000 (`wPrimeDefault`, `stats.mjs:15`).
+- `zones_configured_from_ftp` — `ZonesAccumulator::configure(ftp,
+  getPowerZones(ftp))` then accumulation fills `timeInPowerZones`; a null FTP
+  gives empty zones (parity).
+- `get_power_zones_matches_coggan` — the ported `getPowerZones(ftp)` returns the
+  expected boundaries (sauce `stats.mjs:1223-1241`).
+
+**② Implementation (green).**
+- Port `getPowerZones(ftp)` (Coggan zones).
+- In `route_player_state`: on the first state and on FTP change, call
+  `wBal.configure(cp, w_prime)` (CP = FTP fallback, W′ = 20000) and
+  `timeInPowerZones.configure(ftp, zones)`, then accumulate each tick.
+
+**Done when.** `wBal` and `timeInPowerZones` populate; tests pass.
+
+### Step 7 — Relay: watched position from stream + UDP server selection fix
+
+**Goal.** Feed the watched athlete's live `(x, y, courseId, portal)` into UDP
+server selection, and fix the selection fall-through.
+**Resolves.** 20.25 item 3, QF1.
+**Depends on.** Nothing in this plan (relay-internal); pairs with Step 8.
+
+**① Tests first (red)** — relay tests (mark daemon-spawning ones `#[ignore]`
+`slow:`):
+- `watched_position_updates_from_stream` — successive PlayerStates update
+  `WatchedAthleteState` `(x, y, course)` (today seeded `(0,0)`/course 0;
+  `observe_watched_player_state` / `switch_watched_athlete` are `#[cfg(test)]`,
+  `relay.rs:2512,2530`).
+- `recompute_udp_selection_uses_live_position` — selection evaluates against the
+  live position, not `(0,0)`.
+- `find_best_udp_server_no_swap_when_out_of_bounds` — with `use_first_in_bounds`
+  and the rider outside every bound, returns `None` (no swap), matching sauce
+  `zwift.mjs:2277-2299` (today falls through to nearest-centre, `relay.rs:921`).
+- `find_best_udp_server_bounds_and_distance_match_upstream` — reconcile the
+  bounds test and the distance reference (centre vs corner) with upstream (QF1).
+
+**② Implementation (green).**
+- Promote `observe_watched_player_state` / `switch_watched_athlete` out of
+  `#[cfg(test)]` and call them from the recv loop / state-refresher.
+- Fix `find_best_udp_server`: return `None` when nothing is in bounds under
+  `use_first_in_bounds`; reconcile the bounds test and distance reference.
+
+**Done when.** UDP server choice tracks the rider; tests pass.
+
+### Step 8 — Relay: consume inbound UDP telemetry
+
+**Goal.** Process inbound UDP `ServerToClient` instead of discarding it.
+**Resolves.** 20.25 item 1 (high impact).
+**Depends on.** Step 7 (UDP channel pointed at the right server).
+
+**① Tests first (red)** — relay tests plus a capture fixture:
+- `udp_inbound_player_states_reach_bridge` — injecting a UDP `ServerToClient`
+  with player states emits `GameEvent::PlayerState`(s) (today the UDP recv arm is
+  a no-op, `relay.rs:3448`).
+- `udp_and_tcp_inbound_decode_identically` — the two transports share the decode
+  path (extract the helper from 20.2 if convenient).
+
+**② Implementation (green).**
+- Replace the no-op `ChannelEvent::Inbound(_stc)` UDP arm (`relay.rs:3448`) with
+  the same processing the TCP inbound branch uses: decode, then route player
+  states and world updates to `game_events_tx`.
+
+**Done when.** Live telemetry flows over UDP; tests pass.
+
+### Step 9 — Relay: rebuild UDP on TCP reconnect
+
+**Goal.** Re-establish the UDP channel and heartbeat after a TCP reconnect.
+**Resolves.** 20.25 item 2.
+**Depends on.** Step 8.
+
+**① Tests first (red)** — relay tests (`#[ignore]` `slow:` if daemon-spawning):
+- `tcp_reconnect_reestablishes_udp` — after a simulated TCP drop and reconnect, a
+  new UDP channel and heartbeat open and `watched_id`/`game_events_tx` are
+  retained (today discarded, `relay.rs:3056-3061`; `resume_udp` is single-shot).
+- `udp_survives_multiple_reconnects` — two reconnects, UDP still flowing.
+
+**② Implementation (green).**
+- In `connection_manager` (`relay.rs:2851`): on reconnect, re-open UDP and the
+  heartbeat, carrying `watched_id` / `game_events_tx`; make `resume_udp`
+  reusable.
+
+**Done when.** UDP keeps working across TCP reconnects; tests pass.
+
+### Step 10 — Relay: WorldUpdate decode + new `GameEvent` variants
+
+**Goal.** Decode `WorldUpdate` payloads and surface them as `GameEvent` variants.
+**Resolves.** 20.25 item 4; the source for Step 14 (chat/rideon) and the live
+SegmentResult half of Step 15.
+**Depends on.** Step 8.
+
+**① Tests first (red)** — relay/proto tests with crafted WorldUpdate payloads:
+- `decodes_rideon_world_update` → a `GameEvent::RideOn { … }`.
+- `decodes_chat_world_update` (SocialAction) → a `GameEvent::Chat { … }`.
+- `decodes_segment_result_world_update` — payloadType 105 → a SegmentResult event.
+- `unknown_world_update_is_ignored` — an unknown type does not panic.
+
+**② Implementation (green).**
+- Port sauce's WorldUpdate dispatch (`zwift.mjs:2164-2187`): `< 100` by nested
+  protobuf name (RideOn, SocialAction, PlayerLeftWorld, PlayerRegisteredForEvent,
+  NotableMoment, …), `≥ 100` via binary decoders (SegmentResult = 105).
+- Add the new `GameEvent` variants (today only `PlayerState`, `Latency`,
+  `StateChange`, `PoolSwap`) and emit them from the recv loop (replacing the
+  timestamp-only read at `relay.rs:3354-3372`).
+
+**Done when.** WorldUpdates decode into the new variants; tests pass.
+
+### Step 11 — Relay: Ghost drop, heartbeat content, multipleLogins, refresher self/429
+
+**Goal.** The smaller relay-parity items.
+**Resolves.** QE2 (Ghost/NINJA drop), 20.25 item 5 (heartbeat content), item 6
+(multipleLogins), item 7 + QF2 (refresher self/429).
+**Depends on.** Step 7 (position), Step 3 (self id for the self-poll).
+
+**① Tests first (red)** — relay/stats tests:
+- `drops_player_state_when_ghost_powerup` — a state whose decoded `activePowerUp`
+  (low 4 bits of `aux3`, proto field 20) is NINJA/Ghost (enum 6) is dropped
+  (sauce `zwift.mjs:2194`).
+- `heartbeat_includes_portal_roadid_eventsubgroup` —
+  `HeartbeatScheduler::next_state` (`relay.rs:797`) forwards the watched
+  athlete's `portal`, roadId, and `eventSubgroupId` (sauce `zwift.mjs:1942-1957`).
+- `warns_on_multiple_logins` — a state with `multipleLogins` set logs a warning
+  (sauce `zwift.mjs:2144`).
+- `refresher_polls_self_when_self_ne_watching` and
+  `refresher_suppresses_429_logging` (sauce `_refreshStates`, `zwift.mjs:1998`).
+
+**② Implementation (green).**
+- Decode `activePowerUp`; drop NINJA/Ghost states at ingest.
+- Extend `HeartbeatScheduler::next_state` with portal/roadId/eventSubgroup.
+- Detect `multipleLogins` and warn.
+- State-refresher: also poll self when self ≠ watching; treat HTTP 429 as
+  expected (no error log).
+
+**Done when.** Tests pass.
+
+### Step 12 — 1 Hz nearby/groups processor + event sources + gap estimation
+
+**Goal.** A 1 Hz tick that computes nearby + groups, sets
+gap/group-id/event-rank, emits the `nearby`/`groups` (v1 + v2) events, and fixes
+the event-name routing bug.
+**Resolves.** 20.22, 20.27 item 2 (EventSubgroupPlacements), and the settled
+`event_matches_athlete` bug.
+**Depends on.** Steps 4/5 (`most_recent_state` + road history).
+
+**① Tests first (red)** — stats and web/subs tests:
+- `compute_groups_sets_group_id` and `apply_gap_sets_gap_fields` (today `None`).
+- `nearby_sorted_by_gap` — `/nearby/*` returns riders sorted by gap, not HashMap
+  order (`http/mod.rs:247`).
+- `groups_non_empty_when_group_id_set` (`http/mod.rs:297`).
+- `event_matches_athlete_rejects_nearby_groups` — the bug fix: `nearby`/`groups`
+  are not treated as per-athlete events (`src/web/subs/mod.rs`).
+- `nearby_ws_emits_sorted_array_not_single_athlete` — the WS `nearby`
+  subscription delivers a sorted array (today single-athlete payloads).
+- `incremental_gap_estimation` — adjacent-rider chaining (`refSpeedForEst`,
+  `incRP`) fills missing gaps (sauce `_computeNearby`).
+- `event_subgroup_placements_processed` — `ev_subgroup_ps = 23` fills
+  `eventPosition` / `eventParticipants`.
+
+**② Implementation (green).**
+- Add a 1 Hz tick task in `src/web/state.rs` (sibling to `gc_tick_loop:95`)
+  running `compute_groups` + nearby, setting gap/group/event-rank, and emitting
+  `nearby` / `groups` / `nearby/v2` / `groups/v2`.
+- Add `nearby` / `groups` producers in `src/web/subs/`; fix
+  `event_matches_athlete`.
+- Port incremental gap estimation into `crates/zwift-stats/src/gap.rs`.
+- Process `EventSubgroupPlacements`.
+
+**Done when.** Nearby/groups widgets receive sorted arrays; tests pass.
+
+### Step 13 — Event chain: proto tags 29/34 + `getEvent` + subgroup cache + detection
+
+**Goal.** Make events detectable from telemetry and populate event-context fields.
+**Resolves.** QA3, QB1, 20.27 item 1, 20.26 (`getEvent`), 20.19 item 4 (event
+spread of G4).
+**Depends on.** Step 1 (REST), Step 4 (recording), Step 12 (event rank, optional).
+
+**① Tests first (red).**
+- Capture verification (QB1): decode proto tags 29 and 34 from a sanitised
+  capture and assert they carry the event-subgroup id and the event distance
+  (cm), confirming the sauce reading over the zwift-offline labels. If the
+  capture disproves it, the test records the correct meaning instead.
+- `proto_view_exposes_event_subgroup_id_and_distance` — the accessors return the
+  decoded values (today hardcoded `0` / `0.0`).
+- `get_event_parses_subgroups` — wiremock `/api/events/{id}` (sauce
+  `zwift.mjs:808`).
+- `apply_event_state_detects_event` — a state with a non-zero subgroup id and a
+  populated cache returns the event (today always `Idle`).
+- `formatter_spreads_event_fields` — `eventLeader`, `eventSweeper`, `remaining*`
+  present on a cache hit, absent on a miss (parity).
+
+**② Implementation (green).**
+- Reinterpret vendored proto tags 29/34 (`udp-node-msgs.proto:151,156`) per QB1:
+  rename with a comment recording the deviation (precedent: `draft = 10`, line
+  122); wire the `ProtoView` accessors.
+- Add `ZwiftAuth::get_event(id)`; populate the in-memory `WebState.event_subgroups`
+  cache from it (no SQLite, per QD2 — repopulate after restart).
+- Make `apply_event_state` use the real subgroup id; spread the event half of
+  `_getEventOrRouteInfo` in the formatters.
+
+**Done when.** A rider in an event shows event context; tests pass.
+
+### Step 14 — Live event streams: chat, rideon, game-state, watching-athlete-change
+
+**Goal.** Emit the non-per-athlete event streams over WebSocket.
+**Resolves.** 20.24, 20.20 item 2 (`gameState` field), the `app` / `setting-change`
+source.
+**Depends on.** Step 10 (WorldUpdate variants), Step 3 (self/watching).
+
+**① Tests first (red)** — web/subs tests:
+- `chat_stream_emits_on_world_update` and `rideon_stream_emits_on_world_update`
+  (from the Step 10 variants; sauce `stats.mjs:2650,2591`).
+- `game_state_stream_and_field` — a `game-state` producer plus the `gameState`
+  formatter field for self (`stats.mjs:1250`, 20.20 item 2).
+- `watching_athlete_change_emitted` — switching the watched athlete fires the
+  event (`stats.mjs:2659`).
+- `app_source_setting_change` — subscribing to `app` for `setting-change` works
+  (today `create_delegation` knows only `stats` / `gameConnection`); ties to
+  `getSetting` / `setSetting` in Step 16.
+
+**② Implementation (green).**
+- Add subs producers for `chat`, `rideon`, `game-state`, and
+  `watching-athlete-change`; add a game-state object; register the `app` source.
+
+**Done when.** Chat/rideon/game-state widgets receive data; tests pass.
+
+### Step 15 — Segment leaderboards: fetchers + `segments.sqlite` + evictor + active-segment
+
+**Goal.** Fetch segment results/leaderboards, cache them, evict expired rows, and
+detect active segments.
+**Resolves.** QA2, 20.26 (segment fetchers), 20.17 item 2 (evictor), 20.21
+(`active_segment_check`).
+**Depends on.** Step 5 (road history); segment **detection** also depends on
+segment geometry from Step 18 — the fetchers/cache can land first.
+
+**① Tests first (red).**
+- `get_segment_results_parses` / `get_live_segment_leaders_parses` /
+  `get_live_segment_leaderboard_parses` — wiremock (sauce `zwift.mjs:633-645`).
+- `segments_db_evict_expired_called_on_schedule` — a scheduled task calls
+  `SegmentsDb::evict_expired(now)` (the method exists and is tested; here wire
+  the caller).
+- `active_segment_detected` — crossing a segment boundary populates `segments[]`
+  (`stats.mjs:3077`); gated on Step 18 geometry.
+
+**② Implementation (green).**
+- Add the three fetchers; write results into `segments.sqlite`; schedule
+  `evict_expired`.
+- Wire `active_segment_check` into `route_player_state` once Step 18's segment
+  geometry is available.
+
+**Done when.** Leaderboards are fetched, cached, and evicted; segment detection
+works once geometry lands; tests pass.
+
+### Step 16 — RPC read-only getter surface
+
+**Goal.** Register the read-only RPC handlers widgets call (write actions excluded
+per QA1).
+**Resolves.** 20.23 (read-only subset).
+**Depends on.** Steps 2, 12, 13, 15 (data to return).
+
+**① Tests first (red)** — `src/web/rpc.rs` tests:
+- One test per handler group asserting a registered handler returns the expected
+  shape: athlete getters (`getAthlete`, `getAthletes`, `getAthleteData`,
+  `getAthletesData`, `getAthleteLaps`, `getAthleteSegments`, `getAthleteStreams`,
+  `getPlayerState`, `getPowerZones`, `getPowerProfile`); `getNearbyData` /
+  `getGroupsData`; event getters (`getCachedEvent(s)`, `getEvent`,
+  `getEventSubgroup`, `getEventSubgroupEntrants` / `Results`); `getSegmentResults`;
+  `getChatHistory`; `getGameState`; geometry getters (`getWorldMetas`,
+  `getCourseId`, `getRoad`, `getRoute`, `getSegment`, …); settings (`getSetting`,
+  `setSetting`, `getDebugInfo`, `getWebServerURL`, `getZwiftLoginInfo`,
+  `getZwiftConnectionInfo`).
+- `write_rpcs_not_registered` — `setFollowing`, `giveRideon`, `updateAthlete`,
+  etc. are absent (QA1).
+
+**② Implementation (green).**
+- Register the handlers in `RpcRegistry::new` (`src/web/rpc.rs:17`), each
+  delegating to the data sources built in earlier steps.
+
+**Done when.** Read RPCs resolve; write RPCs return `unknown rpc handler` by
+design; tests pass.
+
+### Step 17 — Route tables (`zwift-routes` crate) + route progress
+
+**Goal.** Vendor route/curve tables and compute route progress.
+**Resolves.** QA4, 20.27 item 3, the route half of `_getEventOrRouteInfo`.
+**Depends on.** Step 13 (event/route info plumbing).
+
+**① Tests first (red)** — new `crates/zwift-routes/tests/`:
+- `route_lookup_by_id` — a known route resolves to its distance/segments.
+- `compute_route_distance` — `_computeRouteDistance` (`stats.mjs:3197`) returns
+  the expected metres for a sample position.
+- `route_remaining_fields` — `routeDistance`, route %, and
+  `remaining`/`remainingMetric`/`remainingType`/`remainingEnd` populate (today
+  hardcoded `None`).
+
+**② Implementation (green).**
+- Create `crates/zwift-routes` (route + curve tables from `shared/routes.mjs` +
+  `shared/curves.mjs`, spec §7.2 / §7.8).
+- Port `_computeRouteDistance` and the route branch of `_getEventOrRouteInfo`;
+  wire the formatter fields.
+
+**Done when.** Route-progress fields populate; tests pass.
+
+### Step 18 — World-meta tables + position projection (lat/lng scalars)
+
+**Goal.** Vendor world-meta tables and project position to
+altitude/lat/lng/x/y/roadCompletion/progress.
+**Resolves.** 20.19 item 2 (G3), 20.27 item 4, QE1 (scalars), 20.26
+(`getGameInfo` / world metas).
+**Depends on.** Step 4 (state recording).
+
+**① Tests first (red).**
+- `altitude_adjusted_by_world_meta` —
+  `(z - seaLevel + eleOffset) / 100 * physicsSlopeScale` (today raw `z / 100`).
+- `latlng_projected` — `state.lat` / `state.lng` are real (today `0.0`), emitted
+  as separate scalars, not a `latlng` array (QE1 — documented divergence).
+- `web_mercator_x_y` and `road_completion_and_progress` populate.
+- `get_game_info_parses` — wiremock `/api/game_info` (sauce `zwift.mjs:681`).
+
+**② Implementation (green).**
+- Vendor the world-meta tables; implement the altitude adjustment and projection
+  in `src/web/proto_to_stats.rs` / `src/web/proto_view.rs` (replace the TODOs);
+  keep `lat` / `lng` as scalars.
+- Add `get_game_info` / world-meta data.
+
+**Done when.** Map-position fields populate as scalars; tests pass.
+
+### Step 19 — Persistence wiring audit + `GameEvent::PlayerState` cleanup
+
+**Goal.** Confirm the store DBs are actually read and written in production
+end-to-end, do the vestigial-variant cleanup, and optionally enrich
+`ranchero status`.
+**Resolves.** 20.28 item 3, QE3, 20.17 item 3 (optional).
+**Depends on.** Steps 2 and 15 (the writers).
+
+**① Tests first (red).**
+- `stores_read_and_written_in_production` — a daemon run (or an integration
+  harness) shows `upsert` / `get` / `put` / `evict_expired` called outside tests
+  (today bound as `_stores`, `src/daemon/stores.rs` / `run_daemon`).
+- `game_event_player_state_is_athlete_id_only` — the reduced variant compiles and
+  the fanout still works (QE3).
+- (optional) `status_reports_row_counts` — `ranchero status` shows `user_version`
+  and per-table row counts (20.17 item 3).
+
+**② Implementation (green).**
+- Ensure the earlier steps' readers/writers use the opened DBs (so `_stores` is no
+  longer inert); add the end-to-end assertion.
+- Reduce `GameEvent::PlayerState` to `{ athlete_id }` (re-touch the ~6 test files
+  and 2 relay tests).
+- (optional) enrich `format_persistence_status`.
+
+**Done when.** Persistence is exercised in production; the cleanup is done; tests
+pass.
+
+---
+
 ## Open items
 
 ### 20.1 — Virtual-time vs. real-time in async HTTP tests (from STEP 07)
