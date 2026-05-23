@@ -52,7 +52,7 @@ they pass (green). Do not tick the implementation box while any of the step's
 tests are still failing.
 
 - **Step 1** — Profile fetch + `Profile` struct (`getProfiles` / `getProfile`, FTP)
-  - [ ] ① Tests (red)
+  - [x] ① Tests (red)
   - [ ] ② Implementation (green)
 - **Step 2** — Read-through athlete profile cache + `athletes.sqlite` (JSON blob)
   - [ ] ① Tests (red)
