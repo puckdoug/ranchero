@@ -10,7 +10,7 @@ use tokio::task::AbortHandle;
 
 use crate::daemon::relay::GameEvent;
 use zwift_relay::ZWIFT_EPOCH_MS;
-use crate::web::format::format_athlete_data_v1;
+use crate::web::format::{format_athlete_data_v1, format_athlete_v2};
 use crate::web::state::WebState;
 
 // ---------------------------------------------------------------------------
@@ -212,13 +212,18 @@ struct ClientSink {
     tx:             mpsc::UnboundedSender<(Value, usize)>,
     buffered_bytes: Arc<AtomicUsize>,
     close_notify:   Arc<Notify>,
+    /// The v2 query for this subscriber.  Empty (default) for v1 subscriptions
+    /// where the fanout task ignores the query.
+    query:          AthleteV2Query,
 }
 
 impl DelegationHandle {
     /// Adds a new per-client sink and returns the receiving end, the byte
-    /// counter, and the close-signal notifier.
+    /// counter, and the close-signal notifier.  `query` is stored alongside
+    /// the sink so the v2 fanout task can read all active queries at once.
     pub fn add_sink(
         &self,
+        query: AthleteV2Query,
     ) -> (mpsc::UnboundedReceiver<(Value, usize)>, Arc<AtomicUsize>, Arc<Notify>) {
         let (tx, rx)       = mpsc::unbounded_channel();
         let buffered_bytes = Arc::new(AtomicUsize::new(0));
@@ -227,6 +232,7 @@ impl DelegationHandle {
             tx,
             buffered_bytes: Arc::clone(&buffered_bytes),
             close_notify:   Arc::clone(&close_notify),
+            query,
         });
         (rx, buffered_bytes, close_notify)
     }
@@ -254,8 +260,14 @@ impl DelegationMap {
     }
 
     /// Returns a `SubscriptionHandle` whose sink receives formatted event values.
-    /// Reuses a live delegation when one exists for the same (source, event, query)
-    /// triple; creates a fresh one otherwise.
+    ///
+    /// For v1 events (no `/v2` suffix) the delegation is keyed by
+    /// `source/event/canonical_query` so each distinct query gets its own
+    /// upstream receiver and its own fanout task.
+    ///
+    /// For v2 events (`/v2` suffix) the delegation is keyed by `source/event`
+    /// only — all subscribers to the same event share one upstream receiver and
+    /// the v2 fanout task merges their queries via `emit_v2`.
     pub fn subscribe(
         &self,
         source: &str,
@@ -263,13 +275,17 @@ impl DelegationMap {
         query:  &AthleteV2Query,
         state:  &Arc<WebState>,
     ) -> Result<SubscriptionHandle, String> {
-        let key = format!("{source}/{event}/{}", query.canonical_key());
+        let key = if is_v2_event(event) {
+            format!("{source}/{event}")
+        } else {
+            format!("{source}/{event}/{}", query.canonical_key())
+        };
         let mut map = self.inner.lock().unwrap();
 
         // Reuse a live delegation.
         if let Some(weak) = map.get(&key) {
             if let Some(arc) = weak.upgrade() {
-                let (sink, buffered_bytes, close_notify) = arc.add_sink();
+                let (sink, buffered_bytes, close_notify) = arc.add_sink(query.clone());
                 return Ok(SubscriptionHandle {
                     sink, buffered_bytes, close_notify, delegation: arc,
                 });
@@ -278,7 +294,7 @@ impl DelegationMap {
 
         // No live delegation; create one (tokio::spawn is safe under a Mutex guard).
         let arc = create_delegation(source, event, state)?;
-        let (sink, buffered_bytes, close_notify) = arc.add_sink();
+        let (sink, buffered_bytes, close_notify) = arc.add_sink(query.clone());
         map.insert(key, Arc::downgrade(&arc));
         Ok(SubscriptionHandle { sink, buffered_bytes, close_notify, delegation: arc })
     }
@@ -303,7 +319,11 @@ fn create_delegation(
             let sinks_ref = Arc::clone(&sinks);
             let state_ref = Arc::clone(state);
             let event_str = event.to_string();
-            tokio::spawn(stats_fanout_task(rx, sinks_ref, state_ref, event_str))
+            if is_v2_event(event) {
+                tokio::spawn(stats_fanout_task_v2(rx, sinks_ref, state_ref, event_str))
+            } else {
+                tokio::spawn(stats_fanout_task(rx, sinks_ref, state_ref, event_str))
+            }
         }
         "gameConnection" => {
             // No events emitted yet; task parks until aborted.
@@ -382,15 +402,205 @@ async fn stats_fanout_task(
 }
 
 /// Returns `true` when the `event` path indicates this `athlete_id` should
-/// be forwarded to subscribers.
+/// be forwarded to subscribers.  Recognises the `/v2` suffix on all patterns.
 fn event_matches_athlete(event: &str, athlete_id: i64, state: &WebState) -> bool {
-    if event == "athlete/watching" {
+    // Strip the optional /v2 suffix before pattern matching.
+    let base = event.strip_suffix("/v2").unwrap_or(event);
+
+    if base == "athlete/watching" {
         return state.watching_id.map(|id| id as i64) == Some(athlete_id);
     }
-    if let Some(id_str) = event.strip_prefix("athlete/") {
+    if let Some(id_str) = base.strip_prefix("athlete/") {
         if let Ok(id) = id_str.parse::<i64>() {
             return athlete_id == id;
         }
     }
     true
+}
+
+/// Returns `true` when `event` is a v2 event path (ends with `/v2`).
+fn is_v2_event(event: &str) -> bool {
+    event.ends_with("/v2")
+}
+
+// ---------------------------------------------------------------------------
+// v2 fanout task
+// ---------------------------------------------------------------------------
+
+/// Fanout task for v2 events.  All subscribers to the same event share this
+/// single task regardless of their individual queries.  On each tick the
+/// queries of all active sinks are batched via `emit_v2`, which picks the
+/// cheapest formatting strategy, calls `format_athlete_v2` once per batch,
+/// and applies per-group masks so each subscriber receives only the resources
+/// it requested.
+async fn stats_fanout_task_v2(
+    mut rx: broadcast::Receiver<GameEvent>,
+    sinks:  Arc<Mutex<Vec<ClientSink>>>,
+    state:  Arc<WebState>,
+    event:  String,
+) {
+    loop {
+        match rx.recv().await {
+            Ok(GameEvent::PlayerState { athlete_id, .. }) => {
+                if !event_matches_athlete(&event, athlete_id, &state) {
+                    continue;
+                }
+                let athlete_id_u32 = match u32::try_from(athlete_id) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+
+                // Hold the sinks lock for the entire operation so the list of
+                // (query, sink) pairs is consistent between collecting queries
+                // and distributing the per-query results.
+                let mut sinks_guard = sinks.lock().unwrap();
+                if sinks_guard.is_empty() {
+                    continue;
+                }
+
+                let results: Option<Vec<Value>> = {
+                    let registry = state.registry.read().unwrap();
+                    registry.get(athlete_id_u32).map(|athlete| {
+                        let listeners: Vec<QueryListener> = sinks_guard
+                            .iter()
+                            .map(|s| QueryListener { query: s.query.clone() })
+                            .collect();
+                        emit_v2(&listeners, |q| {
+                            format_athlete_v2(
+                                athlete,
+                                &q.resources,
+                                state.watching_id,
+                                state.self_athlete_id,
+                                q.stats,
+                            )
+                        })
+                    })
+                };
+
+                let Some(results) = results else { continue };
+
+                let mut i = 0;
+                sinks_guard.retain(|sink| {
+                    let data          = results[i].clone();
+                    i += 1;
+                    let byte_estimate = serde_json::to_string(&data)
+                        .map(|s| s.len())
+                        .unwrap_or(256)
+                        + 50;
+                    let queued = sink.buffered_bytes.load(Relaxed);
+                    if queued + byte_estimate > MAX_BUFFERED_BYTES {
+                        tracing::warn!(
+                            buffered = queued,
+                            "outbound buffer exceeded limit; disconnecting client"
+                        );
+                        sink.close_notify.notify_one();
+                        false
+                    } else {
+                        sink.buffered_bytes.fetch_add(byte_estimate, Relaxed);
+                        sink.tx.send((data, byte_estimate)).is_ok()
+                    }
+                });
+            }
+            Ok(_) => {}
+            Err(broadcast::error::RecvError::Closed)    => break,
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// apply_filter_group
+// ---------------------------------------------------------------------------
+
+/// Apply a filter group's mask to a formatted v2 payload.
+///
+/// - Keys listed in `group.mask` are removed from the returned object.
+/// - For each slice resource listed in `group.stats_mask`, the `stats` field
+///   inside every element of that array is set to `null`.
+///
+/// This is the Rust equivalent of the `filterData` closure produced by
+/// `createFilterGroups` in `stats.mjs:809`.
+pub fn apply_filter_group(mut value: Value, group: &FilterGroup) -> Value {
+    if let Value::Object(ref mut map) = value {
+        for key in &group.mask {
+            map.remove(key);
+        }
+        if let Some(ref stats_mask) = group.stats_mask {
+            for resource in stats_mask {
+                if let Some(arr) = map.get_mut(resource) {
+                    if let Value::Array(slices) = arr {
+                        for slice in slices.iter_mut() {
+                            if let Value::Object(slice_map) = slice {
+                                slice_map.insert("stats".to_string(), Value::Null);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    value
+}
+
+// ---------------------------------------------------------------------------
+// emit_v2
+// ---------------------------------------------------------------------------
+
+/// Format and fan out a v2 payload to a set of listeners, calling the
+/// formatter at most once per batch.
+///
+/// The cheapest batching strategy is selected via `compute_query_cost`.
+/// Within each batch, listeners are grouped by their required filter pass
+/// (`create_filter_groups`); `apply_filter_group` strips keys and nulls
+/// per-slice stats before the payload reaches each group.
+///
+/// Returns one `Value` per listener in the same order as the input slice.
+///
+/// Mirrors `QueryReductionEmitter.emit` / `_compileEventContext`
+/// (`stats.mjs:652-748`).
+pub fn emit_v2(
+    listeners: &[QueryListener],
+    format:    impl Fn(&AthleteV2Query) -> Value,
+) -> Vec<Value> {
+    if listeners.is_empty() {
+        return Vec::new();
+    }
+
+    let strategies = create_query_strategies(listeners);
+    let best = strategies
+        .into_iter()
+        .min_by(|a, b| {
+            let cost = |s: &[QueryBatch]| -> f64 {
+                s.iter().map(|batch| compute_query_cost(&batch.query)).sum()
+            };
+            cost(a).partial_cmp(&cost(b)).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .expect("non-empty listeners produce at least one strategy");
+
+    // Map each canonical query key to its filtered payload.  Listeners with
+    // the same canonical key (identical queries) share the same filtered value
+    // and end up in the same filter group, so `or_insert_with` is correct.
+    let mut key_to_value: HashMap<String, Value> = HashMap::new();
+
+    for batch in &best {
+        let super_payload = format(&batch.query);
+        for group in create_filter_groups(batch) {
+            let filtered = apply_filter_group(super_payload.clone(), &group);
+            for listener in &group.listeners {
+                key_to_value
+                    .entry(listener.query.canonical_key())
+                    .or_insert_with(|| filtered.clone());
+            }
+        }
+    }
+
+    listeners
+        .iter()
+        .map(|l| {
+            key_to_value
+                .get(&l.query.canonical_key())
+                .cloned()
+                .unwrap_or(Value::Null)
+        })
+        .collect()
 }
