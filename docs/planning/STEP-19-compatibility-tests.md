@@ -272,12 +272,12 @@ known-answer vector. Add a discoverable workspace-root entry point.
 
 Checklist:
 
-- [ ] **19.2-T** — Add `tests/compat_aes_vector.rs` that calls
+- [x] **19.2-T** — Add `tests/compat_aes_vector.rs` that calls
   `zwift_relay::encrypt`/`decrypt` on the fixed `(key, iv, aad, plaintext)`
   and asserts byte-equality with the frozen ciphertext+tag (reuse the exact
   vector from `gen_vectors.mjs`; do not invent a new one).
-- [ ] **19.2-I** — No production code expected.
-- [ ] Confirm fast (no `#[ignore]`); cross-reference the canonical pin in
+- [x] **19.2-I** — No production code expected.
+- [x] Confirm fast (no `#[ignore]`); cross-reference the canonical pin in
   `compat/README.md`.
 
 ## 19.3 — Header codec round-trip, pinned at the top level
