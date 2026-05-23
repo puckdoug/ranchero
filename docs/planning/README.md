@@ -46,14 +46,14 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 |  15 | ☑ | Groups / laps / segments / W' balance / zones | [STEP-15-groups-segments.md](done/STEP-15-groups-segments.md) |
 |  16 | ☑ | SQLite persistence — KV store, athletes DB, segment cache | [STEP-16-persistence.md](done/STEP-16-persistence.md) |
 |  17 | ☑ | HTTP + WebSocket server compatible with `webserver.mjs` | [STEP-17-web-server.md](done/STEP-17-web-server.md) |
-|  18 | ☐ | v1/v2 payload formatters (field-for-field parity) | [STEP-18-format-payloads.md](STEP-18-format-payloads.md) |
+|  18 | ☑ | v1/v2 payload formatters (field-for-field parity) | [STEP-18-format-payloads.md](done/STEP-18-format-payloads.md), [STEP-18-parity-ledger.md](done/STEP-18-parity-ledger.md) |
 |  19 | ☐ | Compatibility test battery (AES vector, header roundtrip, metric parity, widget smoke) | [STEP-19-compatibility-tests.md](STEP-19-compatibility-tests.md) |
 |  20 | — | Additional considerations (parking lot) — deferred items from earlier steps, with a revisit rule for each | [STEP-20-additional-considerations.md](STEP-20-additional-considerations.md) |
 
 Later steps may be renumbered or split as the project progresses. Steps
-01–17 are complete and their files have moved to `done/`. STEP 18 is fully
-elaborated and ready to implement; STEP 19 is a sketch and STEP 20 is the
-parking lot. STEP 12 also has a series of corrective sub-steps
+01–18 are complete and their files have moved to `done/`. STEP 19 is fully
+elaborated and ready to implement; STEP 20 is the parking lot. STEP 12 also
+has a series of corrective sub-steps
 (12.5–12.17, 12.20, 12.30) in `done/` that are not listed individually in
 the index above.
 
