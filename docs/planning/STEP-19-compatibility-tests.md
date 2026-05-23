@@ -287,7 +287,7 @@ flag combinations. Add a discoverable workspace-root entry point.
 
 Checklist:
 
-- [ ] **19.3-T** — Add `tests/compat_header_roundtrip.rs` that round-trips
+- [x] **19.3-T** — Add `tests/compat_header_roundtrip.rs` that round-trips
   `decode_header(encode(...))` across all 8 combinations of
   `{RELAY_ID, CONN_ID, SEQNO}` through the public `zwift_relay::Header` /
   `decode_header` API, asserting `encode(decode(x)) == x` and the consumed-
