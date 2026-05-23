@@ -203,6 +203,7 @@ fn read_log_until(path: &Path, needle: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "slow: spawns daemon process"]
 fn verbose_flag_emits_startup_info_to_stderr() {
     let mut h = LogHarness::new();
     h.spawn_foreground(&["-v"]);
@@ -227,6 +228,7 @@ fn verbose_flag_emits_startup_info_to_stderr() {
 }
 
 #[test]
+#[ignore = "slow: spawns daemon process"]
 fn default_silences_info_on_stderr() {
     // No flags → default level is warn. The startup/shutdown info events
     // should not reach stderr. (The user-facing `println!` lines go to
@@ -250,6 +252,7 @@ fn default_silences_info_on_stderr() {
 }
 
 #[test]
+#[ignore = "slow: spawns daemon process"]
 fn debug_flag_emits_control_debug_to_stderr() {
     let mut h = LogHarness::new();
     // -D implies --foreground.
@@ -284,6 +287,7 @@ fn debug_flag_emits_control_debug_to_stderr() {
 }
 
 #[test]
+#[ignore = "slow: spawns daemon process"]
 fn rust_log_env_overrides_default_filter() {
     // Without RUST_LOG the default is warn and info is suppressed.
     // RUST_LOG=ranchero=info should let the startup event through even
@@ -310,6 +314,7 @@ fn rust_log_env_overrides_default_filter() {
 }
 
 #[test]
+#[ignore = "slow: spawns daemon process"]
 fn backgrounded_daemon_writes_lifecycle_to_logfile_without_flags() {
     // Regression: a plain `ranchero start` (no -v, no -D) must still
     // record startup and shutdown to the configured logfile. Lifecycle
@@ -340,6 +345,7 @@ fn backgrounded_daemon_writes_lifecycle_to_logfile_without_flags() {
 }
 
 #[test]
+#[ignore = "slow: spawns daemon process"]
 fn logfile_is_appended_across_two_runs() {
     let h = LogHarness::new();
 

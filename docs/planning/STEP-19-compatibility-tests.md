@@ -99,9 +99,11 @@ Conclusions:
 - **It captures a full ride** — 205 `ServerToClient` frames for item 4.
 - **It contains secrets and personal data.** Record #0 holds a plaintext
   password, #1 holds OAuth tokens, #8/#9 hold AES keys, and the telemetry
-  carries real athlete identifiers. **This file must never be committed.**
-  It stays in `tmp/` (outside git) and is only ever read by the one-time
-  sanitiser in 19.0, which produces the committable fixtures.
+  carries real athlete identifiers. `tmp/` is in `.gitignore`, so the raw
+  file is never tracked — that is what the directory is for. The care is
+  needed on the *derived* fixture: 19.0's sanitiser must strip every secret
+  and personal identifier before promoting anything into `compat/`, which is
+  tracked.
 - The first UDP *data* frame is ≈ 121 s in (the rider started later), so
   the "within 5 s" timing in item 3 is a live-only property; the offline
   test confirms a `ServerToClient` and a UDP packet are present and decode,
@@ -114,7 +116,9 @@ Conclusions:
 These shape the work below; each is converted into a checklist item.
 
 - **D1 — Capture sanitisation (gates items 3 and 4).** `tmp/output.cap`
-  cannot be committed. 19.0 builds a one-time sanitiser that reads it,
+  lives in the git-ignored `tmp/`, so the raw file is never tracked; the
+  sanitiser exists to make the *derived* fixture safe for the tracked
+  `compat/` tree. 19.0 builds a one-time sanitiser that reads it,
   drops every HTTP record (credentials, tokens, REST bodies), keeps the
   TCP/UDP relay telemetry, decrypts it once using the manifest key,
   remaps real athlete identifiers to synthetic ones, and re-emits a clean
@@ -194,8 +198,9 @@ licence, consistent with the project's licensing.
   `#[ignore = "slow: <reason>"]` so the inner `cargo test` loop stays fast.
 - **No git operations.** Do not commit, move plan files into `done/`, or run
   `git mv`/`git add`/`git rm` on plan files. You own those.
-- **The raw capture stays out of git.** `tmp/output.cap` is read only by the
-  19.0 sanitiser; only its sanitised output is committed.
+- **The raw capture is already out of git.** `tmp/` is in `.gitignore`;
+  `tmp/output.cap` is read only by the 19.0 sanitiser, and only its
+  sanitised output is committed into `compat/`.
 
 ---
 
@@ -206,7 +211,7 @@ not a test that runs every build.
 
 Checklist:
 
-- [ ] **19.0-I (sanitiser)** — Add a small generator (a `compat` binary or a
+- [x] **19.0-I (sanitiser)** — Add a small generator (a `compat` binary or a
   `cargo xtask`-style helper) that:
   - reads `tmp/output.cap` with `CaptureReader`;
   - **drops every HTTP record** (records #0–#7 and all later HTTP records),
@@ -216,14 +221,14 @@ Checklist:
   - re-emits `compat/fixtures/server_to_client/recorded_ride.bin` containing
     plaintext `ServerToClient` frames (`content_type = ProtobufLite`) and a
     **zeroed** manifest (no AES key, frames are plaintext).
-- [ ] **19.0 (verify clean)** — Add a check (a fast committed test) that the
+- [x] **19.0 (verify clean)** — Add a check (a fast committed test) that the
   emitted fixture contains no HTTP records, a zeroed manifest key, and no
   occurrence of the original athlete identifiers. This guards against a
   future re-run leaking data.
-- [ ] **19.0 (document)** — In `compat/README.md`, record that
+- [x] **19.0 (document)** — In `compat/README.md`, record that
   `recorded_ride.bin` was derived from a live capture, list exactly what was
   stripped/remapped, and note the AGPL-3.0-only licence.
-- [ ] **19.0 (close the open fixture gap)** — Once `recorded_ride.bin` (or an
+- [x] **19.0 (close the open fixture gap)** — Once `recorded_ride.bin` (or an
   extracted single frame) exists, also satisfy the long-missing
   `crates/zwift-proto/tests/fixtures/server_to_client_basic.bin` and update
   `docs/planning/missing-proto-fixture.md` to closed.

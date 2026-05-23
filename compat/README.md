@@ -1,0 +1,69 @@
+# compat/ — compatibility and regression fixtures
+
+This directory holds the test fixtures used by the STEP-19 compatibility
+battery. Every file here is safe to commit: no credentials, no OAuth
+tokens, no real AES keys, and no unremapped athlete identifiers.
+
+---
+
+## Fixtures
+
+### `fixtures/server_to_client/recorded_ride.bin`
+
+A sanitised ranchero capture file (format: `RNCWCAP\0`, version 3).
+
+**Source:** `tmp/output.cap` — a real Zwift relay session captured with
+`ranchero start --capture`. `tmp/` is in `.gitignore`; the raw file is
+never tracked.
+
+**What the sanitiser did** (`cargo run --bin sanitize_capture`):
+
+1. Dropped all HTTP records — OAuth request/response, REST profile body,
+   relay login request/response. No credentials or tokens are present.
+2. Skipped all outbound relay frames (client heartbeats).
+3. Decrypted each inbound TCP and UDP frame using the AES-128-GCM session
+   key from the embedded `SessionManifest`.
+4. Decoded every frame as `ServerToClient` (prost) and remapped every
+   athlete ID (`player_id`, `PlayerState.id`) to a synthetic value
+   starting at 10001. No real athlete identifiers appear.
+5. Cleared `zc_local_ip`, `zc_local_port`, and `zc_key` from each frame.
+6. Re-emitted the frames as plaintext `ServerToClient` protobuf records
+   (content\_type = `ProtobufLite`) with a zeroed manifest (AES key =
+   `[0u8; 16]`).
+
+**Contents:** 224 frames — 205 TCP, 19 UDP — spanning roughly 206 s of
+relay telemetry. The session was a monitor-only pass; the server delivered
+configuration and world-time data but no `PlayerState` records (no other
+riders were in range during the monitored window).
+
+**Oracle kind:** regression guard. The frames are from a real Zwift
+session but the monitor received only configuration frames — no per-rider
+telemetry. The fixture confirms that the decode pipeline handles
+configuration-only sessions without error. It is not an independent
+JavaScript reference (there is no JavaScript replay path for ranchero
+captures).
+
+---
+
+## Re-generating the fixtures
+
+If `tmp/output.cap` is updated or the sanitiser logic changes, re-run:
+
+```sh
+cargo run --bin sanitize_capture -- tmp/output.cap \
+    compat/fixtures/server_to_client/recorded_ride.bin \
+    crates/zwift-proto/tests/fixtures/server_to_client_basic.bin
+```
+
+The sanitiser is idempotent: running it again produces the same output
+for the same input.
+
+---
+
+## Licence note
+
+The proto schema vendored under `crates/zwift-proto/proto/` is from
+[zwift-offline](https://github.com/zoffline/zwift-offline) (AGPL-3.0).
+ranchero is licensed AGPL-3.0-only. The sanitised fixture data is derived
+from Zwift relay wire traffic; no Zwift source code is present in this
+directory.

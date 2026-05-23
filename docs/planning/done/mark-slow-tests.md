@@ -580,3 +580,61 @@ clock. Steps 6 and 7 then trim further and fix a real bug.
 bounded by the slowest binary's serialization. Once Step 7 lands, the
 five Category C tests no longer need the marker, so the slow set
 shrinks accordingly.
+
+## Regression audit (2026-05-23)
+
+As of commit `b0fa35d`, the standard test suite (`cargo test`) has regressed
+from ≲ 7.6 s to 56.7 s wall clock. Root cause analysis follows.
+
+### Test growth
+
+Test count grew from 683 total (per STEP-3 checklist) to 1085 total as of
+2026-05-23. Major additions:
+
+| Category | Files | Count | Notes |
+|----------|-------|-------|-------|
+| HTTP (no real socket) | 12 http_*.rs | ~140 | Use `actix_web::test`; no slow markers needed; fast |
+| WebSocket (real socket) | ws_*.rs, subs_ws_*.rs | ~60 | Properly marked `#[ignore = "slow: real socket"]` |
+| Logging (daemon spawn) | logging.rs | 6 | **ISSUE**: 2 new tests added without slow markers |
+| Format, filter, emit | subs_emit_v2, subs_filter_group | 5 | Unit tests, use mock data, not socket-based; fast |
+| Other integration | relay_*.rs, daemon_*.rs etc. | ~100+ | Mixed: some marked slow, some fast |
+
+### Identified regressions
+
+#### 1. Two new tests in tests/logging.rs (spawns daemon)
+
+The file has grown from 4 tests to 6. The new tests are:
+- `backgrounded_daemon_writes_lifecycle_to_logfile_without_flags`
+- `logfile_is_appended_across_two_runs`
+
+These spawn the daemon via `Command::new(binary_path()).` and wait for completion
+via `child.wait_with_output()`, which takes ~5 s per test per the Step 7
+diagnostic. **Both should be marked `#[ignore = "slow: spawns daemon process"]`.**
+
+#### 2. Tests in tests/logging.rs that should have been marked
+
+Cross-reference with `mark-slow-tests.md` Step 2 checklist shows:
+- `tests/logging.rs::default_silences_info_on_stderr` ✓ (was marked, verify still marked)
+- `tests/logging.rs::verbose_flag_emits_startup_info_to_stderr` ✓ (was marked, verify)
+- `tests/logging.rs::debug_flag_emits_control_debug_to_stderr` ✓ (was marked, verify)
+- `tests/logging.rs::rust_log_env_overrides_default_filter` ✓ (was marked, verify)
+
+Audit result: the original 4 are NOT currently marked. **All 6 tests in
+logging.rs should be marked slow.**
+
+### Audit of other added tests
+
+Files added since last slow-test pass (commits 5a93a84..b0fa35d):
+
+- `tests/subs_emit_v2.rs` (2 tests): unit tests using mock data; no socket; FAST ✓
+- `tests/subs_filter_group.rs` (3 tests): unit tests using mock data; no socket; FAST ✓
+- `tests/subs_ws_v2_payload.rs` (2 tests): WebSocket tests; already marked `#[ignore = "slow: real socket"]` ✓
+
+### Quick-win remediation
+
+1. Mark all 6 tests in `tests/logging.rs` with `#[ignore = "slow: spawns daemon process"]`
+2. Verify that Step 3 tests (daemon_lifecycle, cli_args overrides) remain marked
+3. Verify that Step 2 tests were not inadvertently unmarked
+
+Once complete, the suite should return to ≲ 20 s wall clock (Steps 1–3 baseline),
+then benefit from any Step 6 & 7 optimizations that were completed.
