@@ -292,8 +292,8 @@ Checklist:
   `{RELAY_ID, CONN_ID, SEQNO}` through the public `zwift_relay::Header` /
   `decode_header` API, asserting `encode(decode(x)) == x` and the consumed-
   length invariant.
-- [ ] **19.3-I** — No production code expected.
-- [ ] Confirm fast (no `#[ignore]`); cross-reference in `compat/README.md`.
+- [x] **19.3-I** — No production code expected.
+- [x] Confirm fast (no `#[ignore]`); cross-reference in `compat/README.md`.
 
 ## 19.4 — Login confirmation by replaying the sanitised capture
 

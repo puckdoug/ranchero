@@ -60,6 +60,18 @@ for the same input.
 
 ---
 
+## Header codec round-trip (spec §7.11 compat test #2)
+
+The workspace-root test `tests/compat_header_roundtrip.rs` verifies that
+`Header::encode` and `decode_header` are inverses across all 8 subsets of
+`{RELAY_ID, CONN_ID, SEQNO}`, and that `consumed` equals the encoded length
+in every case.
+
+The canonical crate-level pin is
+`crates/zwift-relay/tests/header.rs::header_round_trip_all_flag_combinations`.
+
+---
+
 ## AES-GCM known-answer vector (spec §7.11 compat test #1)
 
 The workspace-root test `tests/compat_aes_vector.rs` pins the same
