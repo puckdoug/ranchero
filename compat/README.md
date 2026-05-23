@@ -60,6 +60,21 @@ for the same input.
 
 ---
 
+## Login confirmation (spec §7.11 compat test #3)
+
+The workspace-root test `tests/compat_login.rs` replays `recorded_ride.bin`
+and asserts that the first inbound TCP frame and at least one inbound UDP frame
+each decode successfully as `ServerToClient`.  These are the two artifacts
+produced by a real relay login.
+
+**The "within 5 s of establish()" timing from spec §7.11 item 3 is a
+live-network property and is not asserted here.**  The recorded UDP data begins
+≈121 s into the capture (the rider started later); an offline replay cannot
+reproduce the 5 s window.  The test confirms presence and valid decode, not
+the timing constraint.
+
+---
+
 ## Header codec round-trip (spec §7.11 compat test #2)
 
 The workspace-root test `tests/compat_header_roundtrip.rs` verifies that

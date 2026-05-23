@@ -312,14 +312,14 @@ What can and cannot be checked offline:
 
 Checklist:
 
-- [ ] **19.4-T** — Add `tests/compat_login.rs` that reads
+- [x] **19.4-T** — Add `tests/compat_login.rs` that reads
   `recorded_ride.bin`, finds the first inbound TCP frame, decodes it as a
   `ServerToClient`, and asserts at least one UDP frame is present and
   decodes. Mark `#[ignore = "slow: replays the full recorded-ride capture"]`
   if it exceeds ~100 ms.
-- [ ] **19.4-I** — Any test-only reader helper needed; no new production
+- [x] **19.4-I** — Any test-only reader helper needed; no new production
   surface beyond the existing capture/decode APIs.
-- [ ] Note in the test and in `compat/README.md` that the 5 s timing is a
+- [x] Note in the test and in `compat/README.md` that the 5 s timing is a
   live-only property, intentionally not asserted offline.
 
 ## 19.5 — Metric parity
