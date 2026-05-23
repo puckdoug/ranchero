@@ -41,14 +41,20 @@ impl std::error::Error for WebError {}
 /// Returned by [`start`]. Gives the caller the bound address and a way
 /// to stop the server.
 pub struct WebServerHandle {
-    addr:  SocketAddr,
-    inner: actix_web::dev::ServerHandle,
+    addr:       SocketAddr,
+    https_addr: Option<SocketAddr>,
+    inner:      actix_web::dev::ServerHandle,
 }
 
 impl WebServerHandle {
-    /// The address the server is actually listening on.
+    /// The HTTP address the server is actually listening on.
     pub fn local_addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// The HTTPS address, if TLS was successfully configured and bound.
+    pub fn https_addr(&self) -> Option<SocketAddr> {
+        self.https_addr
     }
 
     /// Stop the server gracefully and wait for it to exit.
@@ -145,33 +151,40 @@ pub async fn start(
     .bind(&bind_addr)
     .map_err(WebError::Bind)?;
 
-    // Conditionally bind a TLS listener on actual_http_port + 1.
-    let server = if cfg.server_https {
+    // Use the port the OS assigned for HTTP (handles server_port = 0).
+    let http_port = builder
+        .addrs()
+        .into_iter()
+        .next()
+        .map(|a| a.port())
+        .unwrap_or(cfg.server_port);
+
+    // Conditionally bind a TLS listener.  When the HTTP port was OS-assigned
+    // (server_port = 0), also request an OS-assigned HTTPS port to avoid the
+    // http_port + 1 collision that can occur under parallel test load.
+    let (server, bound_https_addr) = if cfg.server_https {
         match load_tls(&cfg.server_https_cert_dir)? {
             TlsState::Ready(tls_config) => {
-                // Use the port the OS assigned for HTTP (handles server_port = 0).
-                let http_port = builder
-                    .addrs()
-                    .into_iter()
-                    .next()
-                    .map(|a| a.port())
-                    .unwrap_or(cfg.server_port);
-                let https_addr = format!("{}:{}", cfg.server_bind, http_port + 1);
-                tracing::info!(bind = %https_addr, "web server HTTPS listener starting");
-                builder
-                    .bind_rustls_0_23(&https_addr, tls_config)
-                    .map_err(WebError::Bind)?
+                let https_port = if cfg.server_port == 0 { 0 } else { http_port + 1 };
+                let https_bind = format!("{}:{}", cfg.server_bind, https_port);
+                tracing::info!(bind = %https_bind, "web server HTTPS listener starting");
+                let s = builder
+                    .bind_rustls_0_23(&https_bind, tls_config)
+                    .map_err(WebError::Bind)?;
+                // The HTTPS address is the bound address whose port differs from http_port.
+                let https_addr = s.addrs().into_iter().find(|a| a.port() != http_port);
+                (s, https_addr)
             }
             TlsState::Missing => {
                 tracing::warn!(
                     cert_dir = %cfg.server_https_cert_dir.display(),
                     "HTTPS requested but cert.pem or key.pem is absent; running HTTP-only"
                 );
-                builder
+                (builder, None)
             }
         }
     } else {
-        builder
+        (builder, None)
     };
 
     let addr = server
@@ -197,5 +210,5 @@ pub async fn start(
 
     tracing::info!(bind = %addr, "web server started");
 
-    Ok(WebServerHandle { addr, inner: handle })
+    Ok(WebServerHandle { addr, https_addr: bound_https_addr, inner: handle })
 }

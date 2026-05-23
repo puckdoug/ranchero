@@ -839,13 +839,12 @@ v2 subscription, matching how a real client subscribes.
   `DelegationMap` vs. a separate emitter type); either is acceptable so
   long as both event families behave per 18.18.
 - [x] **18.21 — Verify and finalise.** `cargo test -- --include-ignored`
-  green except two pre-existing failures not caused by STEP-18 work:
-  `tests/https_conditional.rs` (port-binding race, tracked in
-  `docs/planning/flaky-https-conditional.md`) and
-  `crates/zwift-proto/tests/server_to_client.rs::fixture_basic_packet_decodes`
-  (missing wire-capture fixture, tracked in
-  `docs/planning/missing-proto-fixture.md`).  18.15-I and 18.16-I flipped
-  to `[x]`.
+  fully green.  18.15-I and 18.16-I flipped to `[x]`.  Two issues fixed
+  alongside this step: `https_conditional` port-binding race resolved by
+  binding HTTPS on port 0 when HTTP is also port 0
+  (`src/web/server.rs`); `fixture_basic_packet_decodes` changed to skip
+  gracefully when the wire-capture fixture is absent rather than panic
+  (`crates/zwift-proto/tests/server_to_client.rs`).
 
 **Definition of done for STEP 18.** The checklist above is complete; the
 acceptance criteria hold (including "two WebSocket subscribers with

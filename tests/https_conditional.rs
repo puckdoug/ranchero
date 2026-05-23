@@ -64,7 +64,8 @@ async fn https_bound_when_certs_present() {
     let dir = TempDir::new().unwrap();
     write_self_signed_cert(dir.path());
 
-    // Use port 0 so the OS assigns a free port; HTTPS port is http_port + 1.
+    // Port 0: the OS assigns both the HTTP and HTTPS ports independently,
+    // so there is no port-collision risk under parallel test load.
     let cfg      = test_config(dir.path(), 0);
     let state    = Arc::new(WebState::new());
     let shutdown = Arc::new(Notify::new());
@@ -73,13 +74,14 @@ async fn https_bound_when_certs_present() {
         .await
         .expect("server must start with valid certs");
 
-    let http_port  = handle.local_addr().port();
-    let https_port = http_port + 1;
-
+    let http_port = handle.local_addr().port();
     assert!(port_is_listening(http_port),
         "HTTP port {http_port} must be listening");
-    assert!(port_is_listening(https_port),
-        "HTTPS port {https_port} must be listening when certs are present");
+
+    let https_addr = handle.https_addr()
+        .expect("handle must report an HTTPS address when certs are present");
+    assert!(port_is_listening(https_addr.port()),
+        "HTTPS port {} must be listening when certs are present", https_addr.port());
 
     shutdown.notify_one();
     handle.stop().await;
@@ -90,7 +92,7 @@ async fn https_bound_when_certs_present() {
 async fn https_not_bound_when_certs_absent() {
     let dir = TempDir::new().unwrap(); // empty — no cert files
 
-    // Use port 0; server must still start (HTTP-only).
+    // Port 0; server must still start in HTTP-only mode.
     let cfg      = test_config(dir.path(), 0);
     let state    = Arc::new(WebState::new());
     let shutdown = Arc::new(Notify::new());
@@ -99,13 +101,10 @@ async fn https_not_bound_when_certs_absent() {
         .await
         .expect("server must start without certs (HTTP-only mode)");
 
-    let http_port  = handle.local_addr().port();
-    let https_port = http_port + 1;
-
-    assert!(port_is_listening(http_port),
-        "HTTP port {http_port} must be listening");
-    assert!(!port_is_listening(https_port),
-        "HTTPS port {https_port} must NOT be listening when certs are absent");
+    assert!(port_is_listening(handle.local_addr().port()),
+        "HTTP port must be listening");
+    assert!(handle.https_addr().is_none(),
+        "handle must not report an HTTPS address when certs are absent");
 
     shutdown.notify_one();
     handle.stop().await;
