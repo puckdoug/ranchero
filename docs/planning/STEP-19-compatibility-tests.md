@@ -253,7 +253,7 @@ WebSocket client module under `pages/shared/`, no build toolchain.
 
 Checklist:
 
-- [ ] **19.1-T** — A test that the daemon serves each new page with a 200 and
+- [x] **19.1-T** — A test that the daemon serves each new page with a 200 and
   the correct MIME type (extend the existing `tests/http_static_pages.rs` /
   `tests/http_mime_types.rs` patterns), and that each page's module loads
   without error.
