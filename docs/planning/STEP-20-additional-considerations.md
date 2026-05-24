@@ -71,7 +71,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 7** — Relay: watched position from stream + UDP server selection fix
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 8** — Relay: consume inbound UDP telemetry
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

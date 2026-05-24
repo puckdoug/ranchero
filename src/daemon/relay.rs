@@ -913,11 +913,11 @@ pub struct UdpServerEntry {
 
 /// Selects the appropriate UDP server from a pool given the
 /// watched athlete's `(x, y)` position. Ports
-/// `zwift.mjs:2295-2317`. With `use_first_in_bounds` set, the
+/// `zwift.mjs:2277-2299`. With `use_first_in_bounds` set, the
 /// first server whose bounding box contains the position is
-/// returned. Otherwise, or if no server is in bounds, the result
-/// is the server whose bound centre minimises the Euclidean
-/// distance to the position.
+/// returned; if no server is in bounds, returns `None` (no swap).
+/// Otherwise the server whose bound corner `(x_bound, y_bound)`
+/// minimises the squared Euclidean distance to the position wins.
 pub fn find_best_udp_server(pool: &UdpServerPool, x: f64, y: f64) -> Option<&UdpServerEntry> {
     if pool.servers.is_empty() {
         return None;
@@ -932,20 +932,19 @@ pub fn find_best_udp_server(pool: &UdpServerPool, x: f64, y: f64) -> Option<&Udp
                 return Some(server);
             }
         }
+        return None;
     }
     pool.servers.iter().min_by(|a, b| {
-        let da = euclidean_distance_to_centre(a, x, y);
-        let db = euclidean_distance_to_centre(b, x, y);
+        let da = squared_distance_to_corner(a, x, y);
+        let db = squared_distance_to_corner(b, x, y);
         da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
     })
 }
 
-fn euclidean_distance_to_centre(server: &UdpServerEntry, x: f64, y: f64) -> f64 {
-    let cx = (server.x_bound_min + server.x_bound) / 2.0;
-    let cy = (server.y_bound_min + server.y_bound) / 2.0;
-    let dx = cx - x;
-    let dy = cy - y;
-    (dx * dx + dy * dy).sqrt()
+fn squared_distance_to_corner(server: &UdpServerEntry, x: f64, y: f64) -> f64 {
+    let dx = server.x_bound - x;
+    let dy = server.y_bound - y;
+    dx * dx + dy * dy
 }
 
 /// Maintains a per-`(realm, courseId)` table of UDP server pools.
@@ -2508,7 +2507,6 @@ impl RelayRuntime {
 
     /// Drive a watched-athlete `(realm, courseId, x, y)` update
     /// and recompute the best UDP server.
-    #[cfg(test)]
     pub fn observe_watched_player_state(&self, realm: i32, course_id: i32, x: f64, y: f64) {
         {
             let mut watched = self
@@ -2526,7 +2524,6 @@ impl RelayRuntime {
     /// Switch the watched athlete by id. Clears the cached
     /// `(realm, courseId, x, y)`; the next
     /// `observe_watched_player_state` call repopulates it.
-    #[cfg(test)]
     pub fn switch_watched_athlete(&self, new_athlete_id: i64) {
         let mut watched = self
             .inner
@@ -3316,9 +3313,24 @@ where
                                 // above omits. `PlayerState` is `Copy`.
                                 let _ = inner.player_states_tx.send(*state);
                                 // L2: an inbound self-state for the watched
-                                // athlete updates the idle-age clock and resumes
-                                // the daemon if the refresher had suspended it.
+                                // athlete updates the idle-age clock, the live
+                                // position used for UDP server selection, and
+                                // resumes the daemon if the refresher had
+                                // suspended it.
                                 if athlete_id == watched_id {
+                                    {
+                                        let mut watched = inner
+                                            .watched_state
+                                            .lock()
+                                            .expect("watched_state mutex");
+                                        watched.course_id = state.world.unwrap_or(0);
+                                        // proto.x = sauce x; proto.z = sauce y
+                                        watched.position = (
+                                            state.x.unwrap_or(0.0) as f64,
+                                            state.z.unwrap_or(0.0) as f64,
+                                        );
+                                    }
+                                    inner.recompute_udp_selection();
                                     *inner
                                         .last_self_state_at
                                         .lock()
@@ -4462,25 +4474,23 @@ mod tests {
     }
 
     #[test]
-    fn find_best_first_in_bounds_falls_back_to_distance_when_no_match() {
-        // No bounding box contains the query; the result is the
-        // server whose bound centre minimises the Euclidean
-        // distance.
+    fn find_best_first_in_bounds_returns_none_when_no_match() {
+        // With use_first_in_bounds and no server in bounds, None is
+        // returned — no swap. Matches sauce zwift.mjs:2282.
         let pool_value = pool(
             0,
             1,
             true,
             vec![
-                entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0), // centre (5, 5)
-                entry("10.0.0.2:3025", 100.0, 110.0, 100.0, 110.0), // centre (105, 105)
+                entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0),
+                entry("10.0.0.2:3025", 100.0, 110.0, 100.0, 110.0),
             ],
         );
         let best = find_best_udp_server(&pool_value, 50.0, 50.0);
-        assert_eq!(
-            best.map(|s| s.addr.to_string()),
-            Some("10.0.0.1:3025".to_string()),
-            "STEP-12.4 red state: when no bounding box matches, the \
-             nearest-centre server must be returned",
+        assert!(
+            best.is_none(),
+            "when use_first_in_bounds is set and no server is in bounds, \
+             must return None; got {best:?}",
         );
     }
 
