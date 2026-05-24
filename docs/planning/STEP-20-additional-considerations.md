@@ -61,7 +61,7 @@ tests are still failing.
   - [x] ① Tests (red)
   - [x] ② Implementation (green)
 - **Step 4** — Per-tick recording I: current state, streams, grade, stale guard
-  - [ ] ① Tests (red)
+  - [x] ① Tests (red)
   - [ ] ② Implementation (green)
 - **Step 5** — Per-tick recording II: road history, auto-lap, bucket growth, time/kJ splits
   - [ ] ① Tests (red)
