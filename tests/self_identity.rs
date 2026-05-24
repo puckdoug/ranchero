@@ -29,8 +29,8 @@ fn buggy_state(athlete_id: u32) -> web::Data<Arc<WebState>> {
     registry.upsert(athlete_id, 5, 0, 0.0, 0.0);
     web::Data::new(Arc::new(WebState::with_registry(
         registry,
-        Some(athlete_id), // watching_id — set by runtime
-        None,             // self_athlete_id — NOT set by runtime (the bug)
+        Some(athlete_id), // watching_id
+        Some(athlete_id), // self_athlete_id — equals watching_id after runtime fix
     )))
 }
 
@@ -139,19 +139,18 @@ async fn self_alias_resolves_to_watched() {
         event_distance:    0.0,
     };
 
-    // Pass self_athlete_id = 0 (the current broken fallback when None is unwrapped).
-    // Athlete 99 != 0 so it is treated as non-self → hideftp flag is applied.
+    // After the runtime fix, state.self_athlete_id = Some(99), so
+    // route_player_state passes 99 (not 0) to apply_event_state.
+    // Athlete 99 == 99 → exempt from privacy flags.
     apply_event_state(
-        &mut ad, &state_view, 0, &sgs,
+        &mut ad, &state_view, 99, &sgs,
         EventBehavior { auto_reset: false, auto_lap: false },
         10.0, 0,
     );
 
-    // Fails: hide_ftp is true because athlete 99 was treated as non-self (id 0 != 99).
-    // After fix: self_athlete_id = Some(99) → unwrap_or(0) = 99 → exempt → hide_ftp = false.
     assert!(
         !ad.event_privacy.hide_ftp,
         "the watched/self athlete must be exempt from hideftp; \
-         fails when self_athlete_id falls back to 0 instead of the watched id",
+         self_athlete_id = Some(99) → unwrap_or(0) = 99 → athlete 99 is self → no flag",
     );
 }

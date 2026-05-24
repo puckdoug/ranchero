@@ -301,10 +301,9 @@ async fn run_daemon(
     let web_state = {
         let mut s = crate::web::WebState::with_rpc(crate::web::RpcRegistry::new())
             .and_game_events(game_events_tx);
-        s.event_behavior = cfg.event_behavior;
-        s.watching_id    = cfg.watched_athlete_id.map(|id| id as u32);
-        // TODO 17.36-I: populate self_athlete_id when the relay exposes a
-        //               watched-athlete subscription.
+        s.event_behavior   = cfg.event_behavior;
+        s.watching_id      = cfg.watched_athlete_id.map(|id| id as u32);
+        s.self_athlete_id  = cfg.watched_athlete_id.map(|id| id as u32);
         Arc::new(s)
     };
     let web_handle = crate::web::start(&cfg, Arc::clone(&web_state), Arc::clone(&web_shutdown))

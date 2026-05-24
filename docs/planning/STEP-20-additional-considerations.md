@@ -59,7 +59,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 3** — Self identity (`self` = watched athlete)
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 4** — Per-tick recording I: current state, streams, grade, stale guard
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)
