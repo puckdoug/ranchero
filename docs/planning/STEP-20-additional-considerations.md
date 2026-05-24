@@ -73,7 +73,7 @@ tests are still failing.
   - [x] ① Tests (red)
   - [x] ② Implementation (green)
 - **Step 8** — Relay: consume inbound UDP telemetry
-  - [ ] ① Tests (red)
+  - [x] ① Tests (red)
   - [ ] ② Implementation (green)
 - **Step 9** — Relay: rebuild UDP on TCP reconnect
   - [ ] ① Tests (red)

@@ -3457,10 +3457,63 @@ where
                     Ok(zwift_relay::ChannelEvent::Established { latency_ms }) => {
                         tracing::info!(target: "ranchero::relay", latency_ms, "relay.udp.established");
                     }
-                    Ok(zwift_relay::ChannelEvent::Inbound(_stc)) => {
-                        // The per-message UDP recv tracing is owned by
-                        // `zwift_relay::udp::recv_loop` (`relay.udp.message.recv`).
-                        // The orchestrator-side branch is intentionally silent.
+                    Ok(zwift_relay::ChannelEvent::Inbound(stc)) => {
+                        let watched_id = inner
+                            .watched_state
+                            .lock()
+                            .expect("watched_state mutex")
+                            .athlete_id;
+                        for state in &stc.states {
+                            if let Some(athlete_id) = state.id {
+                                let _ = inner.game_events_tx.send(GameEvent::PlayerState {
+                                    athlete_id,
+                                    power_w:       state.power.unwrap_or(0),
+                                    cadence_u_hz:  state.cadence_u_hz.unwrap_or(0),
+                                    speed_mm_h:    state.speed.unwrap_or(0),
+                                    world_time_ms: state.world_time.unwrap_or(0),
+                                    world:         state.world.unwrap_or(0),
+                                    sport:         state.sport.unwrap_or(0),
+                                    distance:      state.distance.unwrap_or(0),
+                                    z:             state.z.unwrap_or(0.0),
+                                    draft:         state.draft.unwrap_or(0),
+                                    heartrate:     state.heartrate.unwrap_or(0),
+                                });
+                                let _ = inner.player_states_tx.send(*state);
+                                if athlete_id == watched_id {
+                                    {
+                                        let mut watched = inner
+                                            .watched_state
+                                            .lock()
+                                            .expect("watched_state mutex");
+                                        watched.course_id = state.world.unwrap_or(0);
+                                        watched.position = (
+                                            state.x.unwrap_or(0.0) as f64,
+                                            state.z.unwrap_or(0.0) as f64,
+                                        );
+                                    }
+                                    inner.recompute_udp_selection();
+                                    *inner
+                                        .last_self_state_at
+                                        .lock()
+                                        .expect("last_self_state_at mutex") =
+                                        Some(tokio::time::Instant::now());
+                                    if inner.suspended.swap(false, Ordering::Relaxed) {
+                                        let maybe_tx =
+                                            inner.resume_udp_tx.lock().unwrap().take();
+                                        if let Some(tx) = maybe_tx {
+                                            if let Some(course_id) = state.world {
+                                                let _ = tx.send(course_id);
+                                            }
+                                        } else {
+                                            tracing::info!(
+                                                target: "ranchero::relay",
+                                                "relay.runtime.resumed",
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Ok(zwift_relay::ChannelEvent::Timeout) => {
                         tracing::info!(target: "ranchero::relay", "relay.udp.timeout");
@@ -5267,6 +5320,129 @@ mod tests {
             best.is_none(),
             "S7-3: use_first_in_bounds with no match must return None (no swap); \
              currently falls through to nearest-centre: {best:?}",
+        );
+    }
+
+    /// Waits up to `timeout` for the next `GameEvent::PlayerState` on `rx`,
+    /// skipping all other event kinds.  Returns `None` on timeout or channel
+    /// error.
+    async fn next_player_state_event(
+        rx: &mut tokio::sync::broadcast::Receiver<GameEvent>,
+        timeout: std::time::Duration,
+    ) -> Option<GameEvent> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Ok(event @ GameEvent::PlayerState { .. })) => return Some(event),
+                Ok(Ok(_)) => {}
+                _ => return None,
+            }
+        }
+    }
+
+    /// S8-1: a UDP `ChannelEvent::Inbound` carrying a `PlayerState` must emit
+    /// `GameEvent::PlayerState`.  Today the UDP recv arm is a no-op so the
+    /// event never arrives.
+    #[tokio::test]
+    async fn udp_inbound_player_states_reach_bridge() {
+        let counter = CallCounter::new();
+        let cfg = make_config(Some("rider@example.com"), Some("secret"));
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+
+        let mut events_rx = runtime.events();
+
+        let stc = zwift_proto::ServerToClient {
+            seqno: Some(1),
+            world_time: Some(100),
+            states: vec![zwift_proto::PlayerState {
+                id: Some(42),
+                power: Some(300),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        runtime.inject_udp_event(zwift_relay::ChannelEvent::Inbound(Box::new(stc)));
+
+        let event = next_player_state_event(&mut events_rx, std::time::Duration::from_millis(500))
+            .await
+            .expect("S8-1: GameEvent::PlayerState must arrive via UDP inbound");
+
+        match event {
+            GameEvent::PlayerState { athlete_id, power_w, .. } => {
+                assert_eq!(athlete_id, 42, "S8-1: athlete_id must match proto.id");
+                assert_eq!(power_w, 300, "S8-1: power_w must match proto.power");
+            }
+            other => panic!("expected GameEvent::PlayerState; got {other:?}"),
+        }
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
+
+    /// S8-2: the same `ServerToClient` injected via UDP and TCP must produce
+    /// identical `GameEvent::PlayerState` values, proving both transports share
+    /// the same decode path.
+    #[tokio::test]
+    async fn udp_and_tcp_inbound_decode_identically() {
+        let make_runtime = || async {
+            let counter = CallCounter::new();
+            let cfg = make_config(Some("rider@example.com"), Some("secret"));
+            let auth = StubAuth::ok(counter.clone());
+            let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+            let tcp = StubTcpFactory::ok(counter.clone());
+            RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+                .await
+                .expect("start_with_deps must succeed")
+        };
+
+        let stc = || zwift_proto::ServerToClient {
+            seqno: Some(2),
+            world_time: Some(200),
+            states: vec![zwift_proto::PlayerState {
+                id: Some(77),
+                power: Some(250),
+                cadence_u_hz: Some(90_000_000),
+                speed: Some(40_000_000),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        // Collect the event from a TCP injection.
+        let tcp_runtime = make_runtime().await;
+        let mut tcp_rx = tcp_runtime.events();
+        tcp_runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc())));
+        let tcp_event =
+            next_player_state_event(&mut tcp_rx, std::time::Duration::from_millis(500))
+                .await
+                .expect("S8-2: GameEvent::PlayerState must arrive via TCP");
+        tcp_runtime.shutdown();
+        let _ = tcp_runtime.join().await;
+
+        // Collect the event from a UDP injection.
+        let udp_runtime = make_runtime().await;
+        let mut udp_rx = udp_runtime.events();
+        udp_runtime.inject_udp_event(zwift_relay::ChannelEvent::Inbound(Box::new(stc())));
+        let udp_event =
+            next_player_state_event(&mut udp_rx, std::time::Duration::from_millis(500))
+                .await
+                .expect("S8-2: GameEvent::PlayerState must arrive via UDP");
+        udp_runtime.shutdown();
+        let _ = udp_runtime.join().await;
+
+        assert_eq!(
+            tcp_event, udp_event,
+            "S8-2: UDP and TCP must decode the same STC to identical GameEvent::PlayerState",
         );
     }
 
