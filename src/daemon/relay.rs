@@ -5036,4 +5036,257 @@ mod tests {
         runtime.shutdown();
         let _ = runtime.join().await;
     }
+
+    // -----------------------------------------------------------------
+    // STEP-7 — Relay: watched position from stream + UDP server selection fix
+    // -----------------------------------------------------------------
+
+    /// Wait for the next `PoolSwap` event on `rx`, skipping all other
+    /// event kinds, bounded by `timeout`. Returns the selected address,
+    /// or `None` if the deadline elapses first.
+    async fn next_pool_swap(
+        rx: &mut tokio::sync::broadcast::Receiver<GameEvent>,
+        timeout: std::time::Duration,
+    ) -> Option<std::net::SocketAddr> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Ok(GameEvent::PoolSwap { to, .. })) => return Some(to),
+                Ok(Ok(_)) => {}
+                _ => return None,
+            }
+        }
+    }
+
+    /// S7-1: successive inbound `PlayerState` messages for the watched
+    /// athlete must update `WatchedAthleteState (x, y, course)` and drive
+    /// `recompute_udp_selection`. Today the recv-loop does not call
+    /// `observe_watched_player_state`, so the watched position stays at
+    /// `(0, 0)` and no PoolSwap fires after inject — the test times out.
+    #[tokio::test]
+    async fn watched_position_updates_from_stream() {
+        let counter = CallCounter::new();
+        let mut cfg = make_config(Some("rider@example.com"), Some("secret"));
+        cfg.watched_athlete_id = Some(12345u64);
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start");
+
+        let mut events_rx = runtime.events();
+
+        // Generic pool (course_id=0) matches the default watched-state
+        // course before any PlayerState has arrived. Server A is near the
+        // origin; server B is near (80, 80).
+        runtime.apply_pool_update(UdpServerPool {
+            realm: 0,
+            course_id: 0,
+            use_first_in_bounds: false,
+            servers: vec![
+                UdpServerEntry {
+                    addr: "10.0.0.1:3025".parse().unwrap(),
+                    x_bound_min: 0.0,
+                    x_bound: 30.0,
+                    y_bound_min: 0.0,
+                    y_bound: 30.0,
+                },
+                UdpServerEntry {
+                    addr: "10.0.0.2:3025".parse().unwrap(),
+                    x_bound_min: 60.0,
+                    x_bound: 100.0,
+                    y_bound_min: 60.0,
+                    y_bound: 100.0,
+                },
+            ],
+        });
+
+        // At position (0,0) the initial recompute selects server A
+        // (centre 15,15 is closest).
+        let first = drain_pool_swaps(&mut events_rx);
+        assert_eq!(first.len(), 1, "expected one initial PoolSwap; got {first:?}");
+        assert_eq!(first[0].1.to_string(), "10.0.0.1:3025");
+
+        // Place the watched athlete near server B.
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(
+            zwift_proto::ServerToClient {
+                states: vec![zwift_proto::PlayerState {
+                    id: Some(12345),
+                    x: Some(80.0),
+                    z: Some(80.0),
+                    world: Some(0),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )));
+
+        let to_b = next_pool_swap(&mut events_rx, std::time::Duration::from_millis(500)).await;
+        assert_eq!(
+            to_b.map(|a| a.to_string()).as_deref(),
+            Some("10.0.0.2:3025"),
+            "S7-1: PlayerState at (80,80) must drive PoolSwap to server B; \
+             got {to_b:?} — recv-loop does not yet call observe_watched_player_state",
+        );
+
+        // Move back toward server A.
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(
+            zwift_proto::ServerToClient {
+                states: vec![zwift_proto::PlayerState {
+                    id: Some(12345),
+                    x: Some(10.0),
+                    z: Some(10.0),
+                    world: Some(0),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )));
+
+        let to_a = next_pool_swap(&mut events_rx, std::time::Duration::from_millis(500)).await;
+        assert_eq!(
+            to_a.map(|a| a.to_string()).as_deref(),
+            Some("10.0.0.1:3025"),
+            "S7-1: second PlayerState at (10,10) must drive PoolSwap back to server A",
+        );
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
+
+    /// S7-2: UDP server selection must evaluate against the live watched
+    /// position, not the default `(0, 0)`. At startup, position `(0, 0)`
+    /// selects server B (nearest the origin). After an inbound PlayerState
+    /// places the athlete at `(80, 80)`, server A (nearest that position)
+    /// must be selected. Without the fix, position never updates and no
+    /// second PoolSwap fires — the test times out.
+    #[tokio::test]
+    async fn recompute_udp_selection_uses_live_position() {
+        let counter = CallCounter::new();
+        let mut cfg = make_config(Some("rider@example.com"), Some("secret"));
+        cfg.watched_athlete_id = Some(12345u64);
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start");
+
+        let mut events_rx = runtime.events();
+
+        // Server A is near (85, 85); server B is near the origin (5, 5).
+        runtime.apply_pool_update(UdpServerPool {
+            realm: 0,
+            course_id: 0,
+            use_first_in_bounds: false,
+            servers: vec![
+                UdpServerEntry {
+                    addr: "10.0.0.1:3025".parse().unwrap(),
+                    x_bound_min: 70.0,
+                    x_bound: 100.0,
+                    y_bound_min: 70.0,
+                    y_bound: 100.0,
+                },
+                UdpServerEntry {
+                    addr: "10.0.0.2:3025".parse().unwrap(),
+                    x_bound_min: 0.0,
+                    x_bound: 10.0,
+                    y_bound_min: 0.0,
+                    y_bound: 10.0,
+                },
+            ],
+        });
+
+        // At (0,0) the initial recompute selects B.
+        let initial = drain_pool_swaps(&mut events_rx);
+        assert_eq!(initial.len(), 1, "expected one initial PoolSwap to B; got {initial:?}");
+        assert_eq!(initial[0].1.to_string(), "10.0.0.2:3025");
+
+        // Place the watched athlete near server A.
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(
+            zwift_proto::ServerToClient {
+                states: vec![zwift_proto::PlayerState {
+                    id: Some(12345),
+                    x: Some(80.0),
+                    z: Some(80.0),
+                    world: Some(0),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        )));
+
+        let to_a = next_pool_swap(&mut events_rx, std::time::Duration::from_millis(500)).await;
+        assert_eq!(
+            to_a.map(|a| a.to_string()).as_deref(),
+            Some("10.0.0.1:3025"),
+            "S7-2: selection must use the live position (80,80), not the default \
+             (0,0) which would have kept server B; got {to_a:?}",
+        );
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+    }
+
+    /// S7-3: with `use_first_in_bounds=true` and the rider outside every
+    /// bounding box, `find_best_udp_server` must return `None` — no swap.
+    /// Sauce's `findBestUDPServer` returns `undefined` in this case
+    /// (`zwift.mjs:2282`); ranchero currently falls through to the
+    /// nearest-centre server instead.
+    #[test]
+    fn find_best_udp_server_no_swap_when_out_of_bounds() {
+        let pool_value = pool(
+            0,
+            1,
+            true,
+            vec![
+                entry("10.0.0.1:3025", 0.0, 10.0, 0.0, 10.0),
+                entry("10.0.0.2:3025", 90.0, 100.0, 90.0, 100.0),
+            ],
+        );
+        // Position (50,50) is outside both bounding boxes.
+        let best = find_best_udp_server(&pool_value, 50.0, 50.0);
+        assert!(
+            best.is_none(),
+            "S7-3: use_first_in_bounds with no match must return None (no swap); \
+             currently falls through to nearest-centre: {best:?}",
+        );
+    }
+
+    /// S7-4: distance must be measured to the bound corner `(xBound, yBound)`,
+    /// matching sauce `zwift.mjs:2288-2290`. Ranchero currently uses the
+    /// bound centre. With `use_first_in_bounds=false`:
+    ///
+    /// - Server A bounds `[0,100]×[0,100]`. Centre `(50,50)` → dist from
+    ///   `(60,60)` = 14.1. Corner `(100,100)` → dist = 56.6.
+    /// - Server B bounds `[0,70]×[0,70]`. Centre `(35,35)` → dist = 35.4.
+    ///   Corner `(70,70)` → dist = 14.1.
+    ///
+    /// Corner-based (upstream): B wins. Centre-based (current): A wins.
+    #[test]
+    fn find_best_udp_server_bounds_and_distance_match_upstream() {
+        let pool_value = pool(
+            0,
+            1,
+            false,
+            vec![
+                entry("10.0.0.1:3025", 0.0, 100.0, 0.0, 100.0),
+                entry("10.0.0.2:3025", 0.0, 70.0, 0.0, 70.0),
+            ],
+        );
+        let best = find_best_udp_server(&pool_value, 60.0, 60.0);
+        assert_eq!(
+            best.map(|s| s.addr.to_string()),
+            Some("10.0.0.2:3025".to_string()),
+            "S7-4: distance must be measured to the bound corner; \
+             currently uses bound centre which selects server A instead of B",
+        );
+    }
 }
