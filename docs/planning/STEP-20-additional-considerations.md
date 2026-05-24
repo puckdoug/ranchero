@@ -67,7 +67,7 @@ tests are still failing.
   - [x] ① Tests (red)
   - [x] ② Implementation (green)
 - **Step 6** — Per-tick recording III: W′ balance + power zones
-  - [ ] ① Tests (red)
+  - [x] ① Tests (red)
   - [ ] ② Implementation (green)
 - **Step 7** — Relay: watched position from stream + UDP server selection fix
   - [ ] ① Tests (red)
