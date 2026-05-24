@@ -3514,6 +3514,64 @@ where
                                 }
                             }
                         }
+                        // Advance last_world_update_ts for any WorldAttribute
+                        // updates carried in this UDP batch (same as TCP §L3).
+                        let mut found_ts = false;
+                        for wa in &stc.updates {
+                            if let Some(ts) = wa.timestamp {
+                                inner.last_world_update_ts.fetch_max(
+                                    ts,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                found_ts = true;
+                            }
+                        }
+                        if found_ts {
+                            let tracked = inner
+                                .last_world_update_ts
+                                .load(std::sync::atomic::Ordering::Relaxed);
+                            tracing::debug!(
+                                target: "ranchero::relay",
+                                last_world_update_ts = tracked,
+                                "relay.udp.world_update.tracked",
+                            );
+                        }
+                        // Apply any pool-configuration update embedded in the
+                        // UDP batch (same as TCP Batch A §Ab).
+                        if let Some(pools) = zwift_relay::extract_udp_pools(&stc) {
+                            {
+                                let mut router =
+                                    inner.pool_router.lock().expect("pool_router mutex");
+                                for pool_entry in &pools {
+                                    tracing::debug!(
+                                        target: "ranchero::relay",
+                                        lb_realm = pool_entry.lb_realm,
+                                        lb_course = pool_entry.lb_course,
+                                        server_count = pool_entry.addresses.len(),
+                                        "relay.udp.pool_router.updated",
+                                    );
+                                    router.apply_pool_update(build_server_pool(pool_entry));
+                                }
+                            }
+                            inner.recompute_udp_selection();
+                            if inner.initial_udp_addr.lock().unwrap().is_none() {
+                                let generic = pools
+                                    .iter()
+                                    .find(|p| p.lb_course == 0 && p.lb_realm == 0);
+                                if let Some(g) = generic
+                                    && let Some(addr) = pick_initial_udp_target(&g.addresses)
+                                {
+                                    *inner.initial_udp_addr.lock().unwrap() = Some(addr);
+                                }
+                            }
+                        }
+                        if let Some(reason) = stc.expunge_reason {
+                            tracing::info!(
+                                target: "ranchero::relay",
+                                reason,
+                                "relay.udp.expunge_reason",
+                            );
+                        }
                     }
                     Ok(zwift_relay::ChannelEvent::Timeout) => {
                         tracing::info!(target: "ranchero::relay", "relay.udp.timeout");
