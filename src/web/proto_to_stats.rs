@@ -15,7 +15,8 @@
 use std::sync::Arc;
 
 use zwift_stats::{
-    apply_event_state, start_athlete_lap, ExpWeightedAvg, MostRecentState, PlayerStateView,
+    apply_event_state, auto_lap_check, start_athlete_lap,
+    ExpWeightedAvg, MostRecentState, PlayerStateView,
     periods::SMOOTH_GRADE_WINDOW,
 };
 
@@ -110,7 +111,48 @@ pub fn route_player_state(
     ad.altitude = altitude;
 
     let view = ProtoView(proto);
+
+    // Auto-lap check precedes road-history and stream recording, matching
+    // sauce stats.mjs:3075 → _autoLapCheck → _recordAthleteRoadHistory →
+    // _recordAthleteStats order.
+    if let Some(cfg) = &state.auto_lap_config {
+        auto_lap_check(ad, &view, cfg, now);
+    }
+
+    // Road history uses the previous tick's most_recent_state as the
+    // `prev` argument (sauce _recordAthleteRoadHistory:3105).
+    let prev_state_ref: Option<&dyn PlayerStateView> =
+        ad.most_recent_state.as_ref().map(|s| s as &dyn PlayerStateView);
+    ad.road_history.record(&view, prev_state_ref);
+
     ad.record_streams(&view, now);
+
+    // Time splits (sauce stats.mjs:3397-3463).
+    // `coffee_stop` = active power-up is COFFEE_STOP (proto enum value 9),
+    // packed in the low 4 bits of aux3 (decodePlayerStateFlags2).
+    let coffee_stop = (proto.aux3.unwrap_or(0) & 0xf) == 9;
+    if let Some(prev) = &ad.most_recent_state {
+        let elapsed_ms = (world_time - prev.world_time) * 1000.0;
+        if elapsed_ms < 10_000.0 {
+            if coffee_stop {
+                ad.bucket.set_coffee_time(ad.bucket.coffee_time() + elapsed_ms);
+            } else if speed_mps > 0.0 {
+                let kj = power_w * elapsed_ms / 1_000_000.0;
+                if view.group_id() != 0 {
+                    if draft > 0.0 {
+                        ad.bucket.set_follow_time(ad.bucket.follow_time() + elapsed_ms);
+                        ad.bucket.set_follow_kj(ad.bucket.follow_kj() + kj);
+                    } else {
+                        ad.bucket.set_work_time(ad.bucket.work_time() + elapsed_ms);
+                        ad.bucket.set_work_kj(ad.bucket.work_kj() + kj);
+                    }
+                } else {
+                    ad.bucket.set_solo_time(ad.bucket.solo_time() + elapsed_ms);
+                    ad.bucket.set_solo_kj(ad.bucket.solo_kj() + kj);
+                }
+            }
+        }
+    }
 
     let grade = ad.smooth_grade.get();
     ad.most_recent_state = Some(MostRecentState {

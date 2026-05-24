@@ -108,6 +108,7 @@ fn work_follow_solo_coffee_split() {
             id:         Some(700),
             world_time: Some((i + 1) * 1_000),
             power:      Some(200),
+            speed:      Some(36_000_000), // 10 m/s; sauce checks state.speed > 0
             world:      Some(1),
             ..Default::default()
         };

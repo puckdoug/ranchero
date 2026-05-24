@@ -396,8 +396,8 @@
         "tss": null,
         "wBal": null
       },
-      "soloKj": 0.0,
-      "soloTime": 0,
+      "soloKj": 1.75,
+      "soloTime": 7,
       "speed": {
         "avg": 35.0,
         "max": 35.0,

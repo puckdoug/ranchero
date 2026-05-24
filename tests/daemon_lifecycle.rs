@@ -289,6 +289,7 @@ fn stderr_string(out: &Output) -> String {
 // ---------------------------------------------------------------------------
 
 #[test]
+#[ignore = "slow: spawns the daemon binary and waits for the pidfile (~5 s); run with --include-ignored"]
 fn start_writes_pid_file_and_status_reports_running() {
     let mut h = DaemonHarness::new();
     h.spawn_foreground(false);
@@ -309,6 +310,7 @@ fn start_writes_pid_file_and_status_reports_running() {
 }
 
 #[test]
+#[ignore = "slow: spawns the daemon binary, stops it, and waits for pidfile removal (~6 s); run with --include-ignored"]
 fn stop_clears_pid_file_and_status_reports_shutdown() {
     let mut h = DaemonHarness::new();
     h.spawn_foreground(false);

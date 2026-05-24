@@ -233,6 +233,18 @@ impl<R: RollingWindow> DataCollector<R> {
         self.max_value
     }
 
+    /// Append a new periodized entry for `period` without disturbing existing entries.
+    ///
+    /// `clone_reset` preserves all entries in `self.periodized`, so grown
+    /// periods survive into slices automatically.
+    pub fn grow_period(&mut self, period: f64) {
+        self.periodized.push(PeriodizedEntry {
+            period,
+            roll: R::new_with_period(Some(period), self.opts),
+            peak: None,
+        });
+    }
+
     pub fn clone_reset(&self) -> Self {
         let opts = DataCollectorOptions {
             ideal_gap: self.opts.ideal_gap.unwrap_or(1.0),

@@ -65,7 +65,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 5** — Per-tick recording II: road history, auto-lap, bucket growth, time/kJ splits
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 6** — Per-tick recording III: W′ balance + power zones
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

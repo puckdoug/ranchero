@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::broadcast;
-use zwift_stats::{AthleteRegistry, EventBehavior, EventSubgroup};
+use zwift_stats::{AthleteRegistry, AutoLapConfig, EventBehavior, EventSubgroup};
 use zwift_store::AthletesDb;
 use crate::web::format::CachedProfile;
 
@@ -56,6 +56,10 @@ pub struct WebState {
     /// background fetch is pending.
     pub event_subgroups: Arc<RwLock<HashMap<u32, EventSubgroup>>>,
     pub event_behavior:  EventBehavior,
+    /// When `Some`, each call to `route_player_state` checks whether the
+    /// watched athlete's metric has advanced past the threshold and fires a
+    /// lap if so (sauce `stats.mjs:3092`).  `None` disables auto-lap.
+    pub auto_lap_config: Option<AutoLapConfig>,
     /// Count of live WebSocket client connections. Incremented when a
     /// client task starts and decremented when it ends; reported by
     /// `ranchero status` as the web server's connection count.
@@ -73,6 +77,7 @@ impl WebState {
             delegations:     DelegationMap::new(),
             event_subgroups: Arc::new(RwLock::new(HashMap::new())),
             event_behavior:  EventBehavior::default(),
+            auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -91,6 +96,7 @@ impl WebState {
             delegations:     DelegationMap::new(),
             event_subgroups: Arc::new(RwLock::new(HashMap::new())),
             event_behavior:  EventBehavior::default(),
+            auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -105,6 +111,7 @@ impl WebState {
             delegations:     DelegationMap::new(),
             event_subgroups: Arc::new(RwLock::new(HashMap::new())),
             event_behavior:  EventBehavior::default(),
+            auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
         }
     }
