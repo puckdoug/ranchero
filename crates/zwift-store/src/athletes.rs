@@ -10,16 +10,16 @@ const MIGRATIONS: &[Migration] = &[
         version: 1,
         sql: include_str!("../migrations/athletes/0001_init.sql"),
     },
+    Migration {
+        version: 2,
+        sql: include_str!("../migrations/athletes/0002_json_blob.sql"),
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AthleteRecord {
     pub id:        i64,
-    pub fname:     Option<String>,
-    pub lname:     Option<String>,
-    pub ftp:       Option<i32>,
-    pub weight:    Option<f64>,
-    pub badges:    Option<serde_json::Value>,
+    pub data:      serde_json::Value,
     pub last_seen: i64,
 }
 
@@ -35,22 +35,15 @@ impl AthletesDb {
     }
 
     pub fn upsert(&self, rec: &AthleteRecord) -> Result<()> {
-        let badges = rec.badges.as_ref().map(|v| v.to_string());
+        let data = rec.data.to_string();
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO athletes (id, fname, lname, ftp, weight, badges, last_seen)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO athletes (id, data, last_seen)
+             VALUES (?1, ?2, ?3)
              ON CONFLICT(id) DO UPDATE SET
-                 fname     = excluded.fname,
-                 lname     = excluded.lname,
-                 ftp       = excluded.ftp,
-                 weight    = excluded.weight,
-                 badges    = excluded.badges,
+                 data      = excluded.data,
                  last_seen = excluded.last_seen",
-            rusqlite::params![
-                rec.id, rec.fname, rec.lname,
-                rec.ftp, rec.weight, badges, rec.last_seen,
-            ],
+            rusqlite::params![rec.id, data, rec.last_seen],
         )?;
         Ok(())
     }
@@ -67,27 +60,32 @@ impl AthletesDb {
     pub fn get(&self, id: i64) -> Result<Option<AthleteRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
-            "SELECT id, fname, lname, ftp, weight, badges, last_seen
-             FROM athletes WHERE id = ?1",
+            "SELECT id, data, last_seen FROM athletes WHERE id = ?1",
         )?;
         let mut rows = stmt.query(rusqlite::params![id])?;
         match rows.next()? {
             None => Ok(None),
             Some(row) => {
-                let badges: Option<String> = row.get(5)?;
-                let badges = badges
-                    .map(|s| serde_json::from_str(&s))
-                    .transpose()?;
+                let data_str: String = row.get(1)?;
+                let data: serde_json::Value = serde_json::from_str(&data_str)?;
                 Ok(Some(AthleteRecord {
                     id:        row.get(0)?,
-                    fname:     row.get(1)?,
-                    lname:     row.get(2)?,
-                    ftp:       row.get(3)?,
-                    weight:    row.get(4)?,
-                    badges,
-                    last_seen: row.get(6)?,
+                    data,
+                    last_seen: row.get(2)?,
                 }))
             }
         }
+    }
+
+    /// Return the IDs of every athlete whose JSON blob has `marked: true`.
+    pub fn marked(&self) -> Result<Vec<i64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id FROM athletes WHERE json_extract(data, '$.marked') = 1",
+        )?;
+        let ids = stmt
+            .query_map([], |r| r.get::<_, i64>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(ids)
     }
 }

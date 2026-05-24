@@ -15,6 +15,17 @@ use zwift_stats::athlete::MostRecentState;
 const MAX_SMOOTH_PERIOD: f64 = 1200.0;
 const MIN_NP_PERIOD: f64 = 300.0;
 
+/// Athlete identity and performance fields cached from the profile store or a
+/// live update.  Passed to `format_athlete_data_v1` so the `athlete` block in
+/// the response is populated.
+#[derive(Debug, Clone)]
+pub struct CachedProfile {
+    pub first_name: Option<String>,
+    pub last_name:  Option<String>,
+    pub ftp:        Option<u32>,
+    pub weight_g:   Option<u32>,
+}
+
 fn local_now() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -466,18 +477,20 @@ struct AthleteDataV1 {
 ///
 /// - `watching_id` / `self_id`: the currently-watched and logged-in athlete IDs
 ///   used to set the optional `watching` / `self` flags.
-/// - `ftp`: the athlete's FTP (for TSS computation); pass `None` when not known.
+/// - `profile`: cached athlete identity; populates the `athlete` block and
+///   supplies FTP for TSS computation.  Pass `None` when not yet available.
 /// - `now`: current local time in seconds (Unix epoch) used for `age`.
 /// - `ts_offset_ms`: local-time offset in milliseconds added to peak timestamps.
 pub fn format_athlete_data_v1(
     athlete:      &AthleteData,
     watching_id:  Option<u32>,
     self_id:      Option<u32>,
-    ftp:          Option<f64>,
+    profile:      Option<&CachedProfile>,
     now:          f64,
     ts_offset_ms: f64,
 ) -> Value {
-    let id = athlete.athlete_id;
+    let id  = athlete.athlete_id;
+    let ftp = profile.and_then(|p| p.ftp).map(|v| v as f64);
     let lap_count = athlete.lap_slices.len();
 
     let stats = format_bucket_stats_v1(&athlete.bucket, athlete, ftp, ts_offset_ms, true);
@@ -519,7 +532,12 @@ pub fn format_athlete_data_v1(
         self_:               (self_id    == Some(id)).then_some(true),
         course_id:           athlete.course_id,
         athlete_id:          id,
-        athlete:             None,  // cache not available at formatter level
+        athlete:             profile.map(|p| json!({
+            "firstName": p.first_name,
+            "lastName":  p.last_name,
+            "ftp":       p.ftp,
+            "weightKg":  p.weight_g.map(|w| w as f64 / 1000.0),
+        })),
         stats,
         lap,
         last_lap,

@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use serde_json::json;
 use tempfile::tempdir;
 use zwift_store::{AthletesDb, AthleteRecord};
 
 fn base_record() -> AthleteRecord {
     AthleteRecord {
-        id: 1,
-        fname: Some("Alice".into()),
-        lname: Some("Smith".into()),
-        ftp: Some(280),
-        weight: Some(62.5),
-        badges: None,
+        id:        1,
+        data:      json!({
+            "firstName": "Alice",
+            "ftp":       280,
+            "weight":    62_500,
+        }),
         last_seen: 1_000,
     }
 }
@@ -36,9 +37,9 @@ fn touch_does_not_modify_other_columns() {
     db.touch(1, 9_999).unwrap();
 
     let got = db.get(1).unwrap().unwrap();
-    assert_eq!(got.fname.as_deref(), Some("Alice"));
-    assert_eq!(got.ftp, Some(280));
-    assert_eq!(got.weight, Some(62.5));
+    assert_eq!(got.data["firstName"].as_str(), Some("Alice"));
+    assert_eq!(got.data["ftp"].as_u64(), Some(280));
+    assert_eq!(got.data["weight"].as_u64(), Some(62_500));
 }
 
 #[test]

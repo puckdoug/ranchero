@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use serde_json::json;
 use tempfile::tempdir;
 use zwift_store::{AthletesDb, AthleteRecord};
 
 fn record(id: i64) -> AthleteRecord {
     AthleteRecord {
         id,
-        fname: Some("Alice".into()),
-        lname: Some("Smith".into()),
-        ftp: Some(280),
-        weight: Some(62.5),
-        badges: None,
+        data: json!({
+            "firstName": "Alice",
+            "lastName":  "Smith",
+            "ftp":       280,
+            "weight":    62_500,
+        }),
         last_seen: 1_000_000,
     }
 }
@@ -33,16 +35,15 @@ fn upsert_replaces_existing_row_by_id() {
     db.upsert(&record(1)).unwrap();
 
     let updated = AthleteRecord {
-        id: 1,
-        fname: Some("Bob".into()),
-        ftp: Some(300),
-        ..record(1)
+        id:        1,
+        data:      json!({ "firstName": "Bob", "ftp": 300 }),
+        last_seen: 1_000_000,
     };
     db.upsert(&updated).unwrap();
 
     let got = db.get(1).unwrap().unwrap();
-    assert_eq!(got.fname.as_deref(), Some("Bob"));
-    assert_eq!(got.ftp, Some(300));
+    assert_eq!(got.data["firstName"].as_str(), Some("Bob"));
+    assert_eq!(got.data["ftp"].as_u64(), Some(300));
 }
 
 #[test]
@@ -51,20 +52,16 @@ fn upsert_preserves_none_optional_columns_as_null() {
     let db = AthletesDb::open(&dir.path().join("athletes.sqlite")).unwrap();
 
     let rec = AthleteRecord {
-        id: 2,
-        fname: None,
-        lname: None,
-        ftp: None,
-        weight: None,
-        badges: None,
+        id:        2,
+        data:      json!({}),
         last_seen: 0,
     };
     db.upsert(&rec).unwrap();
 
     let got = db.get(2).unwrap().unwrap();
-    assert!(got.fname.is_none());
-    assert!(got.ftp.is_none());
-    assert!(got.weight.is_none());
+    assert!(got.data.get("firstName").is_none_or(|v| v.is_null()));
+    assert!(got.data.get("ftp").is_none_or(|v| v.is_null()));
+    assert!(got.data.get("weight").is_none_or(|v| v.is_null()));
 }
 
 #[test]

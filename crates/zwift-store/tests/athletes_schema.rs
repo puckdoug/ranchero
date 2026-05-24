@@ -10,7 +10,6 @@ fn athletes_table_exists_with_correct_columns() {
     AthletesDb::open(&db_path).unwrap();
     let conn = open(&db_path).unwrap();
 
-    // Each expected column must appear in table_info.
     let cols: Vec<String> = conn
         .prepare("PRAGMA table_info(athletes)")
         .unwrap()
@@ -19,7 +18,7 @@ fn athletes_table_exists_with_correct_columns() {
         .map(|r| r.unwrap())
         .collect();
 
-    for expected in &["id", "fname", "lname", "ftp", "weight", "badges", "last_seen"] {
+    for expected in &["id", "data", "last_seen"] {
         assert!(cols.contains(&expected.to_string()), "missing column: {expected}");
     }
 }

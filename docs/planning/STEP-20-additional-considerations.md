@@ -56,7 +56,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 2** — Read-through athlete profile cache + `athletes.sqlite` (JSON blob)
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 3** — Self identity (`self` = watched athlete)
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

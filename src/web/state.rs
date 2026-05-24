@@ -2,14 +2,45 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::broadcast;
 use zwift_stats::{AthleteRegistry, EventBehavior, EventSubgroup};
+use zwift_store::AthletesDb;
+use crate::web::format::CachedProfile;
 
 use crate::daemon::relay::GameEvent;
 use super::rpc::RpcRegistry;
 use super::subs::DelegationMap;
+
+/// Two-layer athlete profile cache: in-memory live data takes precedence over
+/// the SQLite `athletes.sqlite` fallback.
+pub struct ProfileCache {
+    live: Mutex<HashMap<u32, CachedProfile>>,
+    db:   AthletesDb,
+}
+
+impl ProfileCache {
+    pub fn new(db: AthletesDb) -> Self {
+        Self { live: Mutex::new(HashMap::new()), db }
+    }
+
+    pub fn insert_live(&self, id: u32, profile: CachedProfile) {
+        self.live.lock().unwrap().insert(id, profile);
+    }
+
+    pub fn get(&self, id: u32) -> Option<CachedProfile> {
+        if let Some(p) = self.live.lock().unwrap().get(&id).cloned() {
+            return Some(p);
+        }
+        self.db.get(id as i64).ok().flatten().map(|rec| CachedProfile {
+            first_name: rec.data["firstName"].as_str().map(|s| s.to_owned()),
+            last_name:  rec.data["lastName"].as_str().map(|s| s.to_owned()),
+            ftp:        rec.data["ftp"].as_u64().map(|v| v as u32),
+            weight_g:   rec.data["weight"].as_u64().map(|v| v as u32),
+        })
+    }
+}
 
 /// Shared state threaded through every actix-web request handler.
 pub struct WebState {
