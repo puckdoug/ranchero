@@ -76,7 +76,7 @@ tests are still failing.
   - [x] ① Tests (red)
   - [x] ② Implementation (green)
 - **Step 9** — Relay: rebuild UDP on TCP reconnect
-  - [ ] ① Tests (red)
+  - [x] ① Tests (red)
   - [ ] ② Implementation (green)
 - **Step 10** — Relay: WorldUpdate decode + new `GameEvent` variants
   - [ ] ① Tests (red)

@@ -5166,3 +5166,150 @@ async fn login_http_exchange_appears_in_capture() {
          body, Json for responses)",
     );
 }
+
+// ==========================================================================
+// Step 9 — Relay: rebuild UDP on TCP reconnect
+//
+// Red state: `connection_manager` discards `watched_id` and `game_events_tx`
+// after a successful TCP reconnect (relay.rs:3056-3061) instead of calling
+// `resume_udp`. UDP is never re-established after a TCP drop.
+// ==========================================================================
+
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+/// A TCP factory that always succeeds, vending a fresh
+/// `NoopTcpTransport` pre-loaded with the default UDP config push on
+/// each `connect()` call. Used by reconnect tests that need multiple
+/// TCP connections.
+struct MultiConnectTcpFactory;
+
+impl TcpTransportFactory for MultiConnectTcpFactory {
+    type Transport = NoopTcpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        async { Ok(NoopTcpTransport::with_pending(Some(default_udp_config_push()))) }
+    }
+}
+
+/// A UDP factory that counts how many times `connect()` has been
+/// called.  Each successful connect returns a `NoopUdpTransport`.
+struct CountingUdpFactory {
+    count: Arc<AtomicUsize>,
+}
+
+impl CountingUdpFactory {
+    fn new() -> (Self, Arc<AtomicUsize>) {
+        let count = Arc::new(AtomicUsize::new(0));
+        (Self { count: Arc::clone(&count) }, count)
+    }
+}
+
+impl UdpTransportFactory for CountingUdpFactory {
+    type Transport = NoopUdpTransport;
+
+    fn connect(
+        &self,
+        _addr: std::net::SocketAddr,
+    ) -> impl std::future::Future<Output = std::io::Result<Self::Transport>> + Send {
+        self.count.fetch_add(1, AtomicOrdering::Relaxed);
+        async { Ok(NoopUdpTransport) }
+    }
+
+    fn channel_config(&self) -> zwift_relay::UdpChannelConfig {
+        zwift_relay::UdpChannelConfig { max_hellos: 0, ..Default::default() }
+    }
+}
+
+/// S9-1: after a TCP drop and reconnect, a new UDP channel and
+/// heartbeat must be opened.  Currently `connection_manager` discards
+/// `watched_id` / `game_events_tx` at relay.rs:3056-3061 instead of
+/// re-invoking `resume_udp`, so `CountingUdpFactory::connect` is only
+/// called once (initial start) rather than twice (start + reconnect).
+#[tokio::test]
+#[ignore = "slow: reconnect backoff adds ≥1 s of wall time"]
+async fn tcp_reconnect_reestablishes_udp() {
+    let (udp_factory, udp_count) = CountingUdpFactory::new();
+
+    let cfg = make_config("rider@example.com", "secret");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        MultiConnectTcpFactory,
+        udp_factory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    assert_eq!(
+        udp_count.load(AtomicOrdering::Relaxed),
+        1,
+        "S9-1: UDP factory must have been called exactly once during startup",
+    );
+
+    // Trigger a TCP disconnect.
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Shutdown);
+
+    // Wait for the reconnect backoff (≥1 s) plus time for the post-reconnect
+    // UDP re-establishment path to complete.
+    tokio::time::sleep(std::time::Duration::from_millis(1600)).await;
+
+    let count_after = udp_count.load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        count_after,
+        2,
+        "S9-1: UDP factory must be called again after TCP reconnect (got {count_after}); \
+         today connection_manager discards watched_id/game_events_tx instead of \
+         calling resume_udp — relay.rs:3056-3061",
+    );
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+}
+
+/// S9-2: UDP must keep working across two consecutive TCP reconnects.
+/// Each reconnect must open a new UDP channel and heartbeat.
+#[tokio::test]
+#[ignore = "slow: two reconnect backoffs add ≥2 s of wall time"]
+async fn udp_survives_multiple_reconnects() {
+    let (udp_factory, udp_count) = CountingUdpFactory::new();
+
+    let cfg = make_config("rider@example.com", "secret");
+    let runtime = RelayRuntime::start_with_all_deps(
+        &cfg,
+        None,
+        StubAuth,
+        StubSupervisorFactory::new(fixture_session()),
+        MultiConnectTcpFactory,
+        udp_factory,
+    )
+    .await
+    .expect("start_with_all_deps must succeed");
+
+    assert_eq!(udp_count.load(AtomicOrdering::Relaxed), 1, "S9-2: initial UDP connect");
+
+    // First TCP drop.
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Shutdown);
+    tokio::time::sleep(std::time::Duration::from_millis(1600)).await;
+    assert_eq!(
+        udp_count.load(AtomicOrdering::Relaxed),
+        2,
+        "S9-2: UDP factory must be called after first reconnect",
+    );
+
+    // Second TCP drop.
+    runtime.inject_tcp_event(zwift_relay::TcpChannelEvent::Shutdown);
+    tokio::time::sleep(std::time::Duration::from_millis(1600)).await;
+    assert_eq!(
+        udp_count.load(AtomicOrdering::Relaxed),
+        3,
+        "S9-2: UDP factory must be called after second reconnect",
+    );
+
+    runtime.shutdown();
+    let _ = runtime.join().await;
+}
