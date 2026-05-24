@@ -20,6 +20,13 @@ pub enum SweetspotKind {
     Coggan,
 }
 
+/// Return the default power zones for `ftp`, matching sauce4zwift's
+/// `getPowerZones` with no custom type configured (falls through to
+/// `Sauce.power.cogganZones`, `stats.mjs:1224-1228`).
+pub fn get_power_zones(ftp: f64) -> Vec<Zone> {
+    coggan_zones(ftp)
+}
+
 pub fn coggan_zones(ftp: f64) -> Vec<Zone> {
     vec![
         Zone {

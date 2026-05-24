@@ -28,6 +28,24 @@ impl WBalAccumulator {
         self.w_prime
     }
 
+    /// Configure using athlete-profile values with the same fallback rules as
+    /// sauce `_updateAthleteDataFromDatabase` (`stats.mjs:2864-2867`):
+    ///
+    /// - `cp || ftp` — explicit CP takes precedence; falls back to FTP.
+    /// - `w_prime || 20 000` — explicit W′ overrides the constant default.
+    /// - If neither `cp` nor `ftp` is provided, the accumulator is left
+    ///   unconfigured and the method returns without calling `configure`.
+    pub fn configure_from_profile(
+        &mut self,
+        ftp:     Option<f64>,
+        cp:      Option<f64>,
+        w_prime: Option<f64>,
+    ) {
+        let Some(effective_cp) = cp.or(ftp) else { return };
+        let effective_w_prime = w_prime.unwrap_or(20_000.0);
+        self.configure(effective_cp, effective_w_prime);
+    }
+
     pub fn configure(&mut self, cp: f64, w_prime: f64) {
         self.cp = Some(cp);
         self.w_prime = Some(w_prime);

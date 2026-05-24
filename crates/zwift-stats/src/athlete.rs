@@ -251,6 +251,7 @@ impl AthleteData {
         self.streams.latlng.push(state.latlng());
         let wbal = self.w_bal.accumulate(state.time(), Sample::Value(state.power()));
         self.streams.wbal.push(wbal);
+        self.time_in_power_zones.accumulate(state.time(), state.power());
     }
 
     pub fn record_update(&mut self, world_time: f64, now: f64) {
