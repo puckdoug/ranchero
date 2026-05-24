@@ -68,6 +68,7 @@ pub struct MostRecentState {
     pub group_id: u32,
     pub time: f64,
     pub event_distance: f64,
+    pub grade: f64,
 }
 
 impl PlayerStateView for MostRecentState {

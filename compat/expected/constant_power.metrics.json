@@ -210,7 +210,28 @@
     },
     "lapCount": 1,
     "lastLap": null,
-    "state": null,
+    "state": {
+      "altitude": 0.0,
+      "cadence": 90,
+      "courseId": 5,
+      "distance": 0.0,
+      "draft": 1.0,
+      "eventDistance": 0.0,
+      "eventSubgroupId": 0,
+      "groupId": 0,
+      "heartrate": 150,
+      "latlng": [
+        0.0,
+        0.0
+      ],
+      "power": 250.0,
+      "reverse": true,
+      "roadId": 0,
+      "roadTime": 1005000.0,
+      "speed": 35.0,
+      "time": 0.0,
+      "worldTime": 8.0
+    },
     "stats": {
       "activeTime": 7.0,
       "cadence": {

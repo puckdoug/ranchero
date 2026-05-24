@@ -14,7 +14,10 @@
 
 use std::sync::Arc;
 
-use zwift_stats::{apply_event_state, start_athlete_lap, ExpWeightedAvg, periods::SMOOTH_GRADE_WINDOW};
+use zwift_stats::{
+    apply_event_state, start_athlete_lap, ExpWeightedAvg, MostRecentState, PlayerStateView,
+    periods::SMOOTH_GRADE_WINDOW,
+};
 
 use crate::web::WebState;
 use crate::web::proto_view::ProtoView;
@@ -69,6 +72,12 @@ pub fn route_player_state(
     let mut registry = state.registry.write().unwrap();
     let ad = registry.upsert(athlete_id, course_id, sport, world_time, now);
 
+    // Drop packets that do not advance the athlete's world clock (sauce stats.mjs:3146).
+    let prev_world_time = ad.most_recent_state.map(|s| s.world_time).unwrap_or(f64::NEG_INFINITY);
+    if world_time <= prev_world_time {
+        return;
+    }
+
     // Detect a session-context change (world or sport changed since the last
     // frame for this athlete).  Matches sauce4zwift's `_preprocessState`
     // world/sport change handler.
@@ -100,10 +109,36 @@ pub fn route_player_state(
     ad.distance = distance;
     ad.altitude = altitude;
 
+    let view = ProtoView(proto);
+    ad.record_streams(&view, now);
+
+    let grade = ad.smooth_grade.get();
+    ad.most_recent_state = Some(MostRecentState {
+        world_time,
+        speed:             speed_mps,
+        power:             power_w,
+        heartrate:         hr_bpm as u16,
+        cadence:           cadence_rpm as u16,
+        draft,
+        distance,
+        altitude,
+        lat:               view.lat(),
+        lng:               view.lng(),
+        course_id,
+        road_id:           view.road_id(),
+        road_time:         view.road_time(),
+        reverse:           view.reverse(),
+        event_subgroup_id: view.event_subgroup_id(),
+        group_id:          view.group_id(),
+        time:              view.time(),
+        event_distance:    view.event_distance(),
+        grade,
+    });
+
     let sg_lookup = state.event_subgroups.read().unwrap();
     apply_event_state(
         ad,
-        &ProtoView(proto),
+        &view,
         state.self_athlete_id.unwrap_or(0),
         &sg_lookup,
         state.event_behavior,

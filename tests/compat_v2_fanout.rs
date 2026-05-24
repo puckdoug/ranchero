@@ -101,6 +101,7 @@ fn state_with_watching_athlete(tx: broadcast::Sender<GameEvent>) -> Arc<WebState
         lat: 1.23, lng: 4.56,
         course_id: 5, road_id: 0, road_time: 0.0, reverse: false,
         event_subgroup_id: 0, group_id: 0, time: 0.0, event_distance: 0.0,
+        grade: 0.0,
     });
     Arc::new(
         WebState::with_registry(registry, Some(1001), Some(1001))

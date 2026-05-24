@@ -123,6 +123,7 @@ fn known_most_recent_state() -> MostRecentState {
         group_id:         0,
         time:             0.0,
         event_distance:   0.0,
+        grade:            0.0,
     }
 }
 

@@ -135,6 +135,7 @@ fn active_segment_check_proto_and_most_recent_state_produce_identical_result() {
         group_id:          0,
         time:              0.0,
         event_distance:    0.0,
+        grade:             0.0,
     };
 
     let mut ad_proto = AthleteData::new(1, 3, 0, 1.0, 1.0);

@@ -56,6 +56,7 @@ fn make_state(course_id: u32, road_id: u32, road_time: f64) -> MostRecentState {
         group_id: 0,
         time: 0.0,
         event_distance: 0.0,
+        grade: 0.0,
     }
 }
 

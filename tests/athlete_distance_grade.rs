@@ -26,11 +26,12 @@ use ranchero::web::{proto_to_stats, WebState};
 use zwift_proto::PlayerState;
 use zwift_stats::{ExpWeightedAvg, periods::SMOOTH_GRADE_WINDOW};
 
-fn athlete_proto(id: i64, distance_m: i32, z: f32) -> PlayerState {
+fn athlete_proto(id: i64, world_time_ms: i64, distance_m: i32, z: f32) -> PlayerState {
     PlayerState {
-        id:       Some(id),
-        distance: Some(distance_m),
-        z:        Some(z),
+        id:         Some(id),
+        world_time: Some(world_time_ms),
+        distance:   Some(distance_m),
+        z:          Some(z),
         ..Default::default()
     }
 }
@@ -41,7 +42,7 @@ fn distance_altitude_grade_are_updated_by_router() {
     let now   = 1.0_f64;
 
     // First call: zero distance and altitude — no grade update.
-    let proto1 = athlete_proto(2001, 0, 0.0);
+    let proto1 = athlete_proto(2001, 10_000_i64, 0, 0.0);
     proto_to_stats::route_player_state(&proto1, &state, now, 0);
 
     {
@@ -54,7 +55,7 @@ fn distance_altitude_grade_are_updated_by_router() {
     }
 
     // Second call: 1000 m, z = 500 (altitude = 5.0 m).
-    let proto2 = athlete_proto(2001, 1000, 500.0);
+    let proto2 = athlete_proto(2001, 20_000_i64, 1000, 500.0);
     proto_to_stats::route_player_state(&proto2, &state, now + 1.0, 0);
 
     {

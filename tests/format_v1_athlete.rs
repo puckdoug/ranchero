@@ -120,6 +120,7 @@ fn state_latlng_is_array_not_separate_scalars() {
         lat: 1.23, lng: 4.56,
         course_id: 0, road_id: 0, road_time: 0.0, reverse: false,
         event_subgroup_id: 0, group_id: 0, time: 0.0, event_distance: 0.0,
+        grade: 0.0,
     });
     let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
     let state = &result["state"];

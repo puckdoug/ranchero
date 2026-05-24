@@ -203,6 +203,7 @@ fn step15_regression() {
             group_id: 0,
             time: now,
             event_distance: now * 10.0,
+            grade: 0.0,
         };
 
         // Rival is 5 seconds ahead on the same road, used to exercise apply_gap.
@@ -225,6 +226,7 @@ fn step15_regression() {
             group_id: 0,
             time: now,
             event_distance: (now + 5.0) * 10.0,
+            grade: 0.0,
         };
 
         let prev_ref: Option<&dyn PlayerStateView> =

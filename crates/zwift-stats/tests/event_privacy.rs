@@ -28,6 +28,7 @@ fn make_state(event_subgroup_id: u32) -> MostRecentState {
         group_id: 0,
         time: 5.0,
         event_distance: 0.0,
+        grade: 0.0,
     }
 }
 

@@ -73,7 +73,12 @@ impl PlayerStateView for ProtoView<'_> {
     }
 
     fn road_time(&self) -> f64 {
-        self.0.road_time.unwrap_or(0) as f64
+        let raw = self.0.road_time.unwrap_or(0) as f64;
+        if decode_reverse(self.0.f19.unwrap_or(0)) {
+            1_005_000.0 - raw
+        } else {
+            raw - 5_000.0
+        }
     }
 
     fn reverse(&self) -> bool {

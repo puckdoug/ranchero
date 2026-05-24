@@ -64,6 +64,7 @@ fn auto_lap_by_distance_threshold_triggers_at_each_interval() {
         group_id: 0,
         time: 0.0,
         event_distance: 0.0,
+        grade: 0.0,
     };
 
     // First call seeds the mark
@@ -100,6 +101,7 @@ fn auto_lap_by_time_threshold_triggers_at_each_interval() {
         group_id: 0,
         time: 0.0,
         event_distance: 0.0,
+        grade: 0.0,
     };
 
     // First call seeds the mark
@@ -136,6 +138,7 @@ fn auto_lap_mark_resets_on_course_change() {
         group_id: 0,
         time: 0.0,
         event_distance: 0.0,
+        grade: 0.0,
     };
 
     let cfg = AutoLapConfig { metric: AutoLapMetric::Distance, threshold: 10000.0 };
@@ -171,6 +174,7 @@ fn auto_lap_first_call_seeds_mark_without_lapping() {
         group_id: 0,
         time: 0.0,
         event_distance: 0.0,
+        grade: 0.0,
     };
 
     let cfg = AutoLapConfig { metric: AutoLapMetric::Distance, threshold: 10000.0 };

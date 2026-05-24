@@ -22,6 +22,7 @@ fn make_state(distance: f64, altitude: f64, lat: f64, lng: f64) -> MostRecentSta
         group_id: 0,
         time: 0.0,
         event_distance: 0.0,
+        grade: 0.0,
     }
 }
 

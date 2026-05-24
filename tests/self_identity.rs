@@ -137,6 +137,7 @@ async fn self_alias_resolves_to_watched() {
         group_id:          0,
         time:              5.0,
         event_distance:    0.0,
+        grade:             0.0,
     };
 
     // After the runtime fix, state.self_athlete_id = Some(99), so
