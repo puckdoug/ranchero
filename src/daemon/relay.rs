@@ -5812,6 +5812,301 @@ mod tests {
 
     // ── end Step 10 tests ──────────────────────────────────────────────────────
 
+    // ── Step 11 tests (red) ────────────────────────────────────────────────────
+
+    /// Build a minimal `Arc<RuntimeInner>` for `run_state_refresher` tests.
+    /// Does not start a runtime or open any channels beyond what the
+    /// refresher itself accesses.
+    fn make_inner_for_refresher() -> Arc<RuntimeInner> {
+        let (game_events_tx, _rx) = tokio::sync::broadcast::channel(16);
+        let (player_states_tx, _rx2) = tokio::sync::broadcast::channel(16);
+        Arc::new(RuntimeInner {
+            pool_router: std::sync::Mutex::new(UdpPoolRouter::new()),
+            watched_state: std::sync::Mutex::new(WatchedAthleteState::for_athlete(42)),
+            current_udp_server: std::sync::Mutex::new(None),
+            last_world_update_ts: std::sync::atomic::AtomicI64::new(0),
+            suspended: Arc::new(AtomicBool::new(false)),
+            last_self_state_at: std::sync::Mutex::new(Some(tokio::time::Instant::now())),
+            game_events_tx,
+            player_states_tx,
+            initial_udp_addr: std::sync::Mutex::new(None),
+            resume_udp_tx: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Records every `athlete_id` passed to `get_player_state`.
+    struct RecordingAuth {
+        polled_ids: Arc<StdMutex<Vec<i64>>>,
+    }
+
+    impl RecordingAuth {
+        fn new() -> (Self, Arc<StdMutex<Vec<i64>>>) {
+            let ids = Arc::new(StdMutex::new(Vec::new()));
+            (Self { polled_ids: Arc::clone(&ids) }, ids)
+        }
+    }
+
+    impl AuthLogin for RecordingAuth {
+        fn login(
+            &self,
+            _email: &str,
+            _password: &str,
+        ) -> impl std::future::Future<Output = Result<(), zwift_api::Error>> + Send {
+            async { Ok(()) }
+        }
+
+        fn athlete_id(
+            &self,
+        ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send {
+            async { Ok(1) }
+        }
+
+        fn get_player_state(
+            &self,
+            athlete_id: i64,
+        ) -> impl std::future::Future<
+            Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>,
+        > + Send {
+            let ids = Arc::clone(&self.polled_ids);
+            async move {
+                ids.lock().unwrap().push(athlete_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Always returns HTTP 429 from `get_player_state`.
+    struct AlwaysRateLimitedAuth;
+
+    impl AuthLogin for AlwaysRateLimitedAuth {
+        fn login(
+            &self,
+            _email: &str,
+            _password: &str,
+        ) -> impl std::future::Future<Output = Result<(), zwift_api::Error>> + Send {
+            async { Ok(()) }
+        }
+
+        fn athlete_id(
+            &self,
+        ) -> impl std::future::Future<Output = Result<i64, zwift_api::Error>> + Send {
+            async { Ok(1) }
+        }
+
+        fn get_player_state(
+            &self,
+            _athlete_id: i64,
+        ) -> impl std::future::Future<
+            Output = Result<Option<zwift_proto::PlayerState>, zwift_api::Error>,
+        > + Send {
+            async {
+                Err(zwift_api::Error::Status {
+                    status: 429,
+                    body:   String::new(),
+                })
+            }
+        }
+    }
+
+    /// S11-1: a `PlayerState` whose `aux3` low 4 bits equal 6 (Ghost/NINJA
+    /// powerup) must be dropped at ingest and never forwarded as a
+    /// `GameEvent::PlayerState`.
+    #[tokio::test]
+    async fn drops_player_state_when_ghost_powerup() {
+        let counter = CallCounter::new();
+        let cfg = make_config(Some("rider@example.com"), Some("secret"));
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+
+        let mut events = runtime.events();
+
+        // aux3 low 4 bits = 6 → NINJA/Ghost powerup
+        let stc = zwift_proto::ServerToClient {
+            states: vec![zwift_proto::PlayerState {
+                id:   Some(42),
+                aux3: Some(6),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+
+        let mut ghost_forwarded = false;
+        while let Ok(event) = events.try_recv() {
+            if matches!(event, GameEvent::PlayerState { athlete_id: 42, .. }) {
+                ghost_forwarded = true;
+            }
+        }
+        assert!(
+            !ghost_forwarded,
+            "S11-1: PlayerState with Ghost powerup (aux3 & 0xF == 6) must be \
+             dropped at ingest; it was forwarded as GameEvent::PlayerState",
+        );
+    }
+
+    /// S11-2: `HeartbeatScheduler` must expose `with_portal`, `with_road_id`,
+    /// and `with_event_subgroup` builder methods, and the resulting
+    /// `PlayerState` must carry those values in the expected fields.
+    ///
+    /// Compile-fail: the three builder methods do not exist yet.
+    #[tokio::test]
+    async fn heartbeat_includes_portal_roadid_eventsubgroup() {
+        let (sink, sent) = StubHeartbeatSink::new();
+        // S11-2: compile-fail — with_portal / with_road_id / with_event_subgroup
+        // do not yet exist on HeartbeatScheduler.
+        let scheduler = HeartbeatScheduler::new(
+            sink,
+            zwift_relay::WorldTimer::new(),
+            12345,
+            99,
+            10,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_portal(true)
+        .with_road_id(5u8)
+        .with_event_subgroup(72i64);
+
+        scheduler.send_one().await.expect("send_one");
+
+        let states = sent.lock().unwrap();
+        let state = states.first().expect("S11-2: at least one heartbeat");
+
+        assert_eq!(
+            state.portal,
+            Some(true),
+            "S11-2: heartbeat PlayerState must carry portal = true",
+        );
+        let road_id = (state.aux3.unwrap_or(0) >> 8) & 0xFF;
+        assert_eq!(
+            road_id, 5,
+            "S11-2: heartbeat PlayerState must carry road_id=5 in aux3 bits [8..15]; \
+             aux3 = {:?}",
+            state.aux3,
+        );
+        assert_eq!(
+            state.group_id,
+            Some(72),
+            "S11-2: heartbeat PlayerState must carry group_id=72 \
+             (sauce's eventSubgroupId, proto tag 29)",
+        );
+    }
+
+    /// S11-3: a `ServerToClient` with `has_simult_login = Some(true)` must
+    /// cause the recv-loop to emit a `relay.tcp.simultaneous_login` warning.
+    #[tokio::test]
+    #[tracing_test::traced_test]
+    async fn warns_on_multiple_logins() {
+        let counter = CallCounter::new();
+        let cfg = make_config(Some("rider@example.com"), Some("secret"));
+        let auth = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp = StubTcpFactory::ok(counter.clone());
+
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(
+            zwift_proto::ServerToClient {
+                has_simult_login: Some(true),
+                ..Default::default()
+            },
+        )));
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        runtime.shutdown();
+        let _ = runtime.join().await;
+
+        assert!(
+            logs_contain("relay.tcp.simultaneous_login"),
+            "S11-3: a ServerToClient with has_simult_login=true must emit \
+             a relay.tcp.simultaneous_login warning",
+        );
+    }
+
+    /// S11-4: when `self_id != watched_id`, the state refresher must poll
+    /// both athlete IDs each cycle.
+    ///
+    /// Compile-fail: `run_state_refresher` does not yet accept a `self_id`
+    /// argument (current signature: `auth, watched_id, inner`).
+    #[tokio::test(start_paused = true)]
+    async fn refresher_polls_self_when_self_ne_watching() {
+        let inner = make_inner_for_refresher();
+        let (auth, polled) = RecordingAuth::new();
+
+        // S11-4: compile-fail — run_state_refresher does not yet accept
+        // self_id as a separate parameter.
+        let handle = tokio::spawn(run_state_refresher(
+            Arc::new(auth),
+            99i64, // self_id (new parameter)
+            42i64, // watched_id
+            inner,
+        ));
+
+        // Yield so the task reaches its first sleep, then advance past it.
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_secs(4)).await;
+        tokio::task::yield_now().await;
+
+        handle.abort();
+        let _ = handle.await;
+
+        let ids = polled.lock().unwrap();
+        assert!(
+            ids.contains(&99i64),
+            "S11-4: refresher must poll self_id (99) in addition to watched_id; \
+             polled IDs: {ids:?}",
+        );
+        assert!(
+            ids.contains(&42i64),
+            "S11-4: refresher must poll watched_id (42); polled IDs: {ids:?}",
+        );
+    }
+
+    /// S11-5: a 429 response from `get_player_state` must not produce a
+    /// `relay.refresher.poll_error` log line.
+    ///
+    /// Compile-fail: same new `self_id` parameter as S11-4.
+    #[tokio::test(start_paused = true)]
+    #[tracing_test::traced_test]
+    async fn refresher_suppresses_429_logging() {
+        let inner = make_inner_for_refresher();
+
+        // S11-5: compile-fail — same new self_id parameter as S11-4.
+        let handle = tokio::spawn(run_state_refresher(
+            Arc::new(AlwaysRateLimitedAuth),
+            42i64, // self_id (new parameter; same as watched here)
+            42i64, // watched_id
+            inner,
+        ));
+
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_secs(4)).await;
+        tokio::task::yield_now().await;
+
+        handle.abort();
+        let _ = handle.await;
+
+        assert!(
+            !logs_contain("relay.refresher.poll_error"),
+            "S11-5: a 429 from get_player_state must not produce a \
+             relay.refresher.poll_error log line",
+        );
+    }
+
+    // ── end Step 11 tests ──────────────────────────────────────────────────────
+
     /// S7-4: distance must be measured to the bound corner `(xBound, yBound)`,
     /// matching sauce `zwift.mjs:2288-2290`. Ranchero currently uses the
     /// bound centre. With `use_first_in_bounds=false`:
