@@ -1947,6 +1947,10 @@ impl RelayRuntime {
         let (udp_events_tx, udp_events_rx) =
             tokio::sync::broadcast::channel::<zwift_relay::ChannelEvent>(64);
 
+        // Wrap in Arc so connection_manager can hold a clone for each reconnect
+        // without consuming the factory (Arc<U>: UdpTransportFactory via the blanket impl).
+        let udp_factory = Arc::new(udp_factory);
+
         // 8.5 – 10. UDP setup, post-establish registration, and heartbeat
         // are gated on the watched athlete being in a known world.
         // sauce4zwift (zwift.mjs:1917-1922) follows the same pattern:
@@ -2205,6 +2209,7 @@ impl RelayRuntime {
             let udp_events_tx_for_cm = udp_events_tx.clone();
             let capture_for_cm = capture_writer.clone();
             let game_events_for_cm = game_events_tx.clone();
+            let udp_for_cm = Arc::clone(&udp_factory);
             tokio::spawn(async move {
                 connection_manager(
                     initial_recv_handle,
@@ -2221,6 +2226,7 @@ impl RelayRuntime {
                     athlete_id,
                     watched_id_i64,
                     game_events_for_cm,
+                    udp_for_cm,
                 )
                 .await
             })
@@ -2845,7 +2851,7 @@ impl UdpTransportFactory for DefaultUdpTransportFactory {
 /// a new recv_loop.  Exits cleanly when `stopping` is true.
 /// (STEP-12.16 §F7 Phase 4b)
 #[allow(clippy::too_many_arguments)]
-async fn connection_manager<Tcp>(
+async fn connection_manager<Tcp, Udp>(
     current_recv_handle: tokio::task::JoinHandle<Result<(), RelayRuntimeError>>,
     tcp_factory: Tcp,
     tcp_config: zwift_relay::TcpChannelConfig,
@@ -2859,10 +2865,12 @@ async fn connection_manager<Tcp>(
     capture_writer: Option<Arc<zwift_relay::capture::CaptureWriter>>,
     athlete_id: i64,
     watched_id: i64,
-    game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    _game_events_tx: tokio::sync::broadcast::Sender<GameEvent>,
+    udp_factory: Arc<Udp>,
 ) -> Result<(), RelayRuntimeError>
 where
     Tcp: TcpTransportFactory,
+    Udp: UdpTransportFactory,
 {
     const RECONNECT_MIN_DELAY_MS: u64 = 1000;
     const RECONNECT_BACKOFF_FACTOR: f64 = 1.2;
@@ -3050,12 +3058,9 @@ where
         );
         backoff_count = 0;
 
-        // Emit a "I'm watching" post-establish send if the resume path hasn't
-        // done so (i.e. the watched athlete is still in a known world).
-        // For Phase 4b this is best-effort; full reconnect state restoration
-        // is addressed in a later phase.
-        let _ = game_events_tx;
-        let _ = watched_id;
+        // Clear the cached UDP address so the new recv_loop repopulates it
+        // from the first UDP config push in the fresh TCP stream.
+        *inner.initial_udp_addr.lock().unwrap() = None;
 
         // Spawn the new recv_loop.
         let new_udp_events_rx = udp_events_tx.subscribe();
@@ -3077,6 +3082,109 @@ where
             )
             .await
         });
+
+        // Re-establish UDP concurrently with the new recv_loop.  The recv_loop
+        // populates initial_udp_addr from the UDP config push in the new TCP
+        // stream; we poll for it for up to 200 ms before connecting.
+        {
+            let inner_for_udp = Arc::clone(&inner);
+            let session_for_udp = session.clone();
+            let capture_for_udp = capture_writer.clone();
+            let udp_factory_for_udp = Arc::clone(&udp_factory);
+            tokio::spawn(async move {
+                let udp_addr = {
+                    let mut attempts = 0u32;
+                    loop {
+                        let addr = *inner_for_udp.initial_udp_addr.lock().unwrap();
+                        if let Some(a) = addr {
+                            break Some(a);
+                        }
+                        if attempts >= 20 {
+                            tracing::warn!(
+                                target: "ranchero::relay",
+                                "relay.runtime.reconnect.no_udp_addr",
+                            );
+                            break None;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        attempts += 1;
+                    }
+                };
+                let Some(udp_addr) = udp_addr else { return; };
+                let course_id = inner_for_udp.watched_state.lock().unwrap().course_id;
+
+                tracing::info!(target: "ranchero::relay", addr = %udp_addr, "relay.udp.connecting");
+                let udp_transport = match udp_factory_for_udp.connect(udp_addr).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!(target: "ranchero::relay", error = %e, "relay.udp.connect_failed");
+                        return;
+                    }
+                };
+                let config = zwift_relay::UdpChannelConfig {
+                    athlete_id,
+                    conn_id: next_udp_conn_id(),
+                    capture: capture_for_udp,
+                    ..udp_factory_for_udp.channel_config()
+                };
+                let world_timer = zwift_relay::WorldTimer::new();
+                let heartbeat_world_timer = world_timer.clone();
+                let (udp_channel, _) = match zwift_relay::UdpChannel::establish(
+                    udp_transport,
+                    &session_for_udp,
+                    world_timer,
+                    config,
+                )
+                .await
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(target: "ranchero::relay", error = %e, "relay.udp.channel_failed");
+                        return;
+                    }
+                };
+                tracing::info!(
+                    target: "ranchero::relay",
+                    latency_ms = udp_channel.latency_ms().unwrap_or(0),
+                    "relay.udp.established",
+                );
+                let initial_state = zwift_proto::PlayerState {
+                    id: Some(athlete_id),
+                    just_watching: Some(true),
+                    watching_rider_id: Some(watched_id),
+                    world: Some(course_id),
+                    ..Default::default()
+                };
+                let udp_channel = Arc::new(udp_channel);
+                if let Err(e) = udp_channel.send_player_state(initial_state).await {
+                    tracing::warn!(target: "ranchero::relay", error = %e, "relay.udp.post_establish_failed");
+                } else {
+                    tracing::info!(
+                        target: "ranchero::relay",
+                        watching_rider_id = watched_id,
+                        just_watching = true,
+                        world = course_id,
+                        "relay.udp.post_establish.sent",
+                    );
+                }
+                let heartbeat_suspended = Arc::clone(&inner_for_udp.suspended);
+                let heartbeat_handle = tokio::spawn(async move {
+                    let sink = UdpHeartbeatSink(udp_channel);
+                    HeartbeatScheduler::new(
+                        sink,
+                        heartbeat_world_timer,
+                        athlete_id,
+                        watched_id,
+                        course_id,
+                        heartbeat_suspended,
+                    )
+                    .run()
+                    .await;
+                });
+                drop(heartbeat_handle);
+                tracing::info!(target: "ranchero::relay", "relay.heartbeat.started");
+            });
+        }
 
         // Wait for the new recv_loop; it signals reconnect_needed if TCP
         // drops again, and the outer loop handles that on the next iteration.
