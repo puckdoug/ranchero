@@ -463,7 +463,9 @@ async fn stats_fanout_task_v2(
     loop {
         match rx.recv().await {
             Ok(GameEvent::PlayerState { athlete_id, .. }) => {
-                if !event_matches_athlete(&event, athlete_id, &state) {
+                let base = event.strip_suffix("/v2").unwrap_or(&event);
+                let broadcast_all = base == "nearby" || base == "groups";
+                if !broadcast_all && !event_matches_athlete(&event, athlete_id, &state) {
                     continue;
                 }
                 let athlete_id_u32 = match u32::try_from(athlete_id) {
