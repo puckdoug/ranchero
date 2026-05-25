@@ -6176,6 +6176,45 @@ mod tests {
         );
     }
 
+    // ── Step 12 tests ─────────────────────────────────────────────────────────
+
+    /// S12-8: an `ev_subgroup_ps` field in an inbound `ServerToClient` must
+    /// emit a `GameEvent::EvSubgroupPlacements` on the broadcast channel.
+    #[tokio::test]
+    async fn event_subgroup_placements_processed() {
+        let counter = CallCounter::new();
+        let cfg     = make_config(Some("rider@example.com"), Some("secret"));
+        let auth    = StubAuth::ok(counter.clone());
+        let session = StubSession::ok(counter.clone(), fixture_session(fixture_servers()));
+        let tcp     = StubTcpFactory::ok(counter.clone());
+        let runtime = RelayRuntime::start_with_deps(&cfg, None, auth, session, tcp)
+            .await
+            .expect("start_with_deps must succeed");
+        let mut events = runtime.events();
+
+        let stc = zwift_proto::ServerToClient {
+            ev_subgroup_ps: Some(zwift_proto::EventSubgroupPlacements {
+                position:          Some(3),
+                event_total_riders: Some(12),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        runtime.inject_event(zwift_relay::TcpChannelEvent::Inbound(Box::new(stc)));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        runtime.shutdown();
+        let _ = runtime.join().await;
+
+        let mut found = false;
+        while let Ok(event) = events.try_recv() {
+            // S12-8: compile-fail — GameEvent::EvSubgroupPlacements does not exist yet.
+            if matches!(event, GameEvent::EvSubgroupPlacements { position: 3, .. }) {
+                found = true;
+            }
+        }
+        assert!(found, "S12-8: ev_subgroup_ps must emit GameEvent::EvSubgroupPlacements");
+    }
+
     // ── end Step 11 tests ──────────────────────────────────────────────────────
 
     /// S7-4: distance must be measured to the bound corner `(xBound, yBound)`,

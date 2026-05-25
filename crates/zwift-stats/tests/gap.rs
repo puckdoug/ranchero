@@ -336,6 +336,45 @@ fn estimated_gap_uses_ewma_of_watching_speed() {
     assert!((gap - 10.0).abs() < 1e-6, "estimated gap = gap_distance / smoothed_speed = 100 / 10 = 10, got {gap}");
 }
 
+// S12-2: apply_gaps_for_registry applies gap to all athletes via a batch call.
+#[test]
+fn apply_gap_sets_gap_fields() {
+    let env = StubGeometry { road_length_m: 1000.0 };
+    let mut registry = zwift_stats::AthleteRegistry::new();
+    {
+        let watching = registry.upsert(1, 1, 0, 0.0, 0.0);
+        record_road(&mut watching.road_history, 1, 10, false, 0.6, 100_000.0);
+    }
+    {
+        let target = registry.upsert(2, 1, 0, 0.0, 0.0);
+        record_road(&mut target.road_history, 1, 10, false, 0.5, 95_000.0);
+    }
+    // S12-2: compile-fail — apply_gaps_for_registry does not exist yet.
+    zwift_stats::apply_gaps_for_registry(&mut registry, 1u32, &env);
+    assert!(
+        registry.get(2).expect("target athlete").gap.is_some(),
+        "S12-2: gap must be set after apply_gaps_for_registry",
+    );
+}
+
+// S12-7: apply_gap_chained fills gaps via adjacent rider when direct road match fails.
+#[test]
+fn incremental_gap_estimation() {
+    let env = StubGeometry { road_length_m: 1000.0 };
+    let mut watching = AthleteData::new(1, 1, 1, 0.0, 0.0);
+    let mut ad_b = AthleteData::new(2, 1, 1, 0.0, 0.0);
+    let mut ad_c = AthleteData::new(3, 1, 1, 0.0, 0.0);
+    record_road(&mut watching.road_history, 1, 10, false, 0.6, 100_000.0);
+    record_road(&mut ad_b.road_history,    1, 10, false, 0.5, 95_000.0);
+    record_road(&mut ad_c.road_history,    1, 11, false, 0.3, 90_000.0); // different road
+    apply_gap(&mut ad_b, &watching, &env);
+    assert_eq!(ad_b.gap, Some(5.0), "pre-condition: ad_b gap known");
+    // S12-7: compile-fail — apply_gap_chained does not exist yet.
+    zwift_stats::apply_gap_chained(&mut ad_c, &watching, Some(&ad_b), &env);
+    assert!(ad_c.gap.is_some(), "S12-7: incremental gap must be set for ad_c via adjacent ad_b");
+    assert!(ad_c.is_gap_est,    "S12-7: incremental gap must be marked estimated");
+}
+
 // Two consecutive failures update the EMA, causing the estimate to change.
 #[test]
 fn estimated_gap_updates_on_subsequent_failures() {

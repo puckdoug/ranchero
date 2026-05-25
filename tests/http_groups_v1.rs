@@ -33,6 +33,29 @@ async fn groups_v1_returns_json_array() {
     assert!(body.is_array(), "groups must return a JSON array");
 }
 
+// S12-4: each group object must carry a top-level gap field.
+#[actix_web::test]
+async fn groups_non_empty_when_group_id_set() {
+    let mut registry = AthleteRegistry::new();
+    { let ad = registry.upsert(1001, 5, 0, 0.0, 0.0); ad.group_id = Some(1); ad.gap = Some(0.0); }
+    { let ad = registry.upsert(1002, 5, 0, 0.0, 0.0); ad.group_id = Some(1); ad.gap = Some(0.3); }
+    registry.touch_group(1, 0.0);
+    let state = web::Data::new(Arc::new(
+        WebState::with_registry(registry, Some(1001), None)
+    ));
+    let app = test::init_service(
+        App::new().app_data(state).configure(configure_api)
+    ).await;
+    let req = test::TestRequest::get().uri("/api/groups/v1").to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let groups = body.as_array().expect("groups must return an array");
+    assert!(!groups.is_empty(), "S12-4: groups must be non-empty when group_id is set");
+    let group = &groups[0];
+    assert!(group["gap"].is_number(),
+        "S12-4: each group must carry a gap field; got {group}");
+}
+
 #[actix_web::test]
 async fn groups_v1_each_group_has_athletes_array() {
     let mut registry = AthleteRegistry::new();

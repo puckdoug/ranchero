@@ -16,6 +16,27 @@ fn make_entry(athlete_id: u32, gap: f64, draft: f64) -> NearbyEntry {
     }
 }
 
+// S12-1: assign_group_ids propagates group IDs back into the registry.
+#[test]
+fn compute_groups_sets_group_id() {
+    let entries = vec![
+        NearbyEntry { athlete_id: 10, gap: 0.0, draft: 10.0, weight: None, power: 200.0, heartrate: None, speed: 10.0, is_gap_est: false },
+        NearbyEntry { athlete_id: 20, gap: 0.3, draft: 5.0,  weight: None, power: 180.0, heartrate: None, speed: 10.0, is_gap_est: false },
+    ];
+    let mut prior = HashMap::new();
+    let mut next_id = 0u32;
+    let groups = compute_groups(&entries, 0, &mut prior, &mut next_id, 0.0);
+    let mut registry = zwift_stats::AthleteRegistry::new();
+    registry.upsert(10, 1, 0, 0.0, 0.0);
+    registry.upsert(20, 1, 0, 0.0, 0.0);
+    // S12-1: compile-fail — assign_group_ids does not exist yet.
+    zwift_stats::assign_group_ids(&groups, &entries, &mut registry);
+    assert!(
+        registry.get(10).expect("athlete 10").group_id.is_some(),
+        "S12-1: athlete in a group must have group_id set",
+    );
+}
+
 // 15.22-T: compute_groups — clumping by gap threshold
 
 #[test]

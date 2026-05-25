@@ -85,7 +85,7 @@ tests are still failing.
   - [x] ① Tests (red)
   - [x] ② Implementation (green)
 - **Step 12** — 1 Hz nearby/groups processor + event sources + gap estimation
-  - [ ] ① Tests (red)
+  - [x] ① Tests (red)
   - [ ] ② Implementation (green)
 - **Step 13** — Event chain: proto tags 29/34 + `getEvent` + subgroup cache + detection
   - [ ] ① Tests (red)

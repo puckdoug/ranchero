@@ -40,6 +40,31 @@ async fn nearby_v1_returns_all_registered_athletes() {
     }
 }
 
+// S12-3: nearby must be returned sorted by gap ascending.
+#[actix_web::test]
+async fn nearby_sorted_by_gap() {
+    let mut registry = AthleteRegistry::new();
+    { let ad = registry.upsert(1001, 5, 0, 0.0, 0.0); ad.gap = Some(10.0); }
+    { let ad = registry.upsert(1002, 5, 0, 0.0, 0.0); ad.gap = Some(2.0); }
+    { let ad = registry.upsert(1003, 5, 0, 0.0, 0.0); ad.gap = Some(5.0); }
+    let state = web::Data::new(Arc::new(
+        WebState::with_registry(registry, Some(1001), None)
+    ));
+    let app = test::init_service(
+        App::new().app_data(state).configure(configure_api)
+    ).await;
+    let req = test::TestRequest::get().uri("/api/nearby/v1").to_request();
+    let resp = test::call_service(&app, req).await;
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    let arr = body.as_array().expect("nearby must return an array");
+    assert_eq!(arr.len(), 3);
+    let gaps: Vec<f64> = arr.iter()
+        .map(|e| e["gap"].as_f64().expect("gap must be a number"))
+        .collect();
+    assert_eq!(gaps, vec![2.0, 5.0, 10.0],
+        "S12-3: nearby must be sorted by gap ascending; got {gaps:?}");
+}
+
 #[actix_web::test]
 async fn nearby_v1_returns_empty_array_when_no_athletes() {
     let registry = AthleteRegistry::new();

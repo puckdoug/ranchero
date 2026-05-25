@@ -72,6 +72,62 @@ async fn ws_recv(ws: &mut WsStream) -> serde_json::Value {
     }
 }
 
+// S12-6: a "nearby" subscription must deliver a sorted array, not a single-athlete object.
+#[tokio::test]
+#[ignore = "slow: real socket"]
+async fn nearby_ws_emits_sorted_array_not_single_athlete() {
+    let (tx, _) = broadcast::channel::<GameEvent>(16);
+
+    let mut registry = AthleteRegistry::new();
+    registry.upsert(1001, 5, 0, 0.0, 0.0);
+    registry.upsert(1002, 5, 0, 0.0, 0.0);
+
+    let state = Arc::new(
+        WebState::with_registry(registry, Some(1001), Some(1001))
+            .and_game_events(tx.clone()),
+    );
+
+    let cfg      = test_config();
+    let shutdown = Arc::new(Notify::new());
+    let handle   = start(&cfg, state, shutdown.clone()).await.expect("server must start");
+    let url      = format!("ws://{}/api/ws/events", handle.local_addr());
+    let mut ws   = connect_async(&url).await.expect("ws connect").0;
+
+    ws_send(&mut ws, json!({
+        "type": "request",
+        "uid":  1,
+        "data": { "method": "subscribe", "arg": { "event": "nearby", "source": "stats", "subId": 9 } }
+    })).await;
+
+    let sub_resp = ws_recv(&mut ws).await;
+    assert_eq!(sub_resp["success"], true, "subscribe must succeed; got {sub_resp}");
+
+    tx.send(GameEvent::PlayerState {
+        athlete_id:    1001,
+        power_w:       200,
+        cadence_u_hz:  5000,
+        speed_mm_h:    36_000_000,
+        world_time_ms: 1_000_000,
+        world:         0,
+        sport:         0,
+        distance:      0,
+        z:             0.0,
+        draft:         0,
+        heartrate:     0,
+    }).expect("broadcast send must succeed");
+
+    let event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        ws_recv(&mut ws),
+    ).await.expect("event frame must arrive within 2 s");
+
+    assert!(event["data"].is_array(),
+        "S12-6: nearby subscription must deliver an array; got {event}");
+
+    shutdown.notify_one();
+    handle.stop().await;
+}
+
 #[tokio::test]
 #[ignore = "slow: real socket"]
 async fn ws_subscribe_receives_event_then_unsubscribe_stops_stream() {

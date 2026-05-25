@@ -423,6 +423,26 @@ fn is_v2_event(event: &str) -> bool {
     event.ends_with("/v2")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::web::state::WebState;
+
+    // S12-5: "nearby" and "groups" events must not match individual athlete IDs.
+    #[test]
+    fn event_matches_athlete_rejects_nearby_groups() {
+        let state = WebState::new();
+        assert!(
+            !event_matches_athlete("nearby", 42, &state),
+            "S12-5: 'nearby' must not match individual athlete IDs",
+        );
+        assert!(
+            !event_matches_athlete("groups", 42, &state),
+            "S12-5: 'groups' must not match individual athlete IDs",
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // v2 fanout task
 // ---------------------------------------------------------------------------
