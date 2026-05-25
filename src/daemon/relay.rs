@@ -5612,6 +5612,123 @@ mod tests {
         );
     }
 
+    // ── Step 10 tests ──────────────────────────────────────────────────────────
+
+    /// S10-1: a `WorldAttribute` with `wa_type = WAT_RIDE_ON` and a
+    /// protobuf-encoded `RideOn` payload must decode to `GameEvent::RideOn`.
+    #[test]
+    fn decodes_rideon_world_update() {
+        use prost::Message as _;
+        let payload = zwift_proto::RideOn {
+            player_id:    100,
+            to_player_id: 200,
+            first_name:   "Alice".to_string(),
+            last_name:    "Smith".to_string(),
+            country_code: 1,
+        }
+        .encode_to_vec();
+
+        let wa = zwift_proto::WorldAttribute {
+            wa_type:  Some(zwift_proto::WaType::WatRideOn as i32),
+            payload:  Some(payload),
+            ..Default::default()
+        };
+
+        let event = decode_world_update(&wa);
+        assert!(
+            matches!(event, Some(GameEvent::RideOn { .. })),
+            "S10-1: WAT_RIDE_ON must produce GameEvent::RideOn; got {event:?}",
+        );
+        if let Some(GameEvent::RideOn { from_player_id, to_player_id, first_name, last_name, .. }) = event {
+            assert_eq!(from_player_id, 100, "S10-1: from_player_id");
+            assert_eq!(to_player_id,   200, "S10-1: to_player_id");
+            assert_eq!(first_name, "Alice", "S10-1: first_name");
+            assert_eq!(last_name,  "Smith", "S10-1: last_name");
+        }
+    }
+
+    /// S10-2: a `WorldAttribute` with `wa_type = WAT_SPA` and a
+    /// protobuf-encoded `SocialPlayerAction` payload must decode to
+    /// `GameEvent::Chat`.
+    #[test]
+    fn decodes_chat_world_update() {
+        use prost::Message as _;
+        let payload = zwift_proto::SocialPlayerAction {
+            player_id:  Some(42),
+            message:    Some("Hello".to_string()),
+            first_name: Some("Bob".to_string()),
+            last_name:  Some("Jones".to_string()),
+            ..Default::default()
+        }
+        .encode_to_vec();
+
+        let wa = zwift_proto::WorldAttribute {
+            wa_type: Some(zwift_proto::WaType::WatSpa as i32),
+            payload: Some(payload),
+            ..Default::default()
+        };
+
+        let event = decode_world_update(&wa);
+        assert!(
+            matches!(event, Some(GameEvent::Chat { .. })),
+            "S10-2: WAT_SPA must produce GameEvent::Chat; got {event:?}",
+        );
+        if let Some(GameEvent::Chat { player_id, message, first_name, .. }) = event {
+            assert_eq!(player_id,   42,                       "S10-2: player_id");
+            assert_eq!(message,     Some("Hello".to_string()), "S10-2: message");
+            assert_eq!(first_name,  Some("Bob".to_string()),   "S10-2: first_name");
+        }
+    }
+
+    /// S10-3: a `WorldAttribute` with `wa_type = WAT_SR` (105) and a
+    /// protobuf-encoded `SegmentResult` payload must decode to
+    /// `GameEvent::SegmentResult`.
+    #[test]
+    fn decodes_segment_result_world_update() {
+        use prost::Message as _;
+        let payload = zwift_proto::SegmentResult {
+            player_id:  99,
+            elapsed_ms: 12345,
+            first_name: "C".to_string(),
+            last_name:  "D".to_string(),
+            segment_id: Some(-7),
+            ..Default::default()
+        }
+        .encode_to_vec();
+
+        let wa = zwift_proto::WorldAttribute {
+            wa_type: Some(zwift_proto::WaType::WatSr as i32),
+            payload: Some(payload),
+            ..Default::default()
+        };
+
+        let event = decode_world_update(&wa);
+        assert!(
+            matches!(event, Some(GameEvent::SegmentResult { .. })),
+            "S10-3: WAT_SR (105) must produce GameEvent::SegmentResult; got {event:?}",
+        );
+        if let Some(GameEvent::SegmentResult { player_id, elapsed_ms, segment_id, .. }) = event {
+            assert_eq!(player_id,  99,    "S10-3: player_id");
+            assert_eq!(elapsed_ms, 12345, "S10-3: elapsed_ms");
+            assert_eq!(segment_id, Some(-7), "S10-3: segment_id");
+        }
+    }
+
+    /// S10-4: a `WorldAttribute` with no recognisable `wa_type` must
+    /// silently return `None` without panicking.
+    #[test]
+    fn unknown_world_update_is_ignored() {
+        let wa = zwift_proto::WorldAttribute {
+            wa_type: Some(9999),
+            payload: Some(vec![0xde, 0xad, 0xbe, 0xef]),
+            ..Default::default()
+        };
+        let event = decode_world_update(&wa);
+        assert!(event.is_none(), "S10-4: unknown wa_type must return None; got {event:?}");
+    }
+
+    // ── end Step 10 tests ──────────────────────────────────────────────────────
+
     /// S7-4: distance must be measured to the bound corner `(xBound, yBound)`,
     /// matching sauce `zwift.mjs:2288-2290`. Ranchero currently uses the
     /// bound centre. With `use_first_in_bounds=false`:

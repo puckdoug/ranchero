@@ -79,7 +79,7 @@ tests are still failing.
   - [x] ① Tests (red)
   - [x] ② Implementation (green)
 - **Step 10** — Relay: WorldUpdate decode + new `GameEvent` variants
-  - [ ] ① Tests (red)
+  - [x] ① Tests (red)
   - [ ] ② Implementation (green)
 - **Step 11** — Relay: Ghost drop, heartbeat content, multipleLogins, refresher self/429
   - [ ] ① Tests (red)
