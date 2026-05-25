@@ -1177,6 +1177,32 @@ pub enum GameEvent {
         from: Option<std::net::SocketAddr>,
         to: std::net::SocketAddr,
     },
+    /// Emitted when a ride-on (thumbs-up) arrives from another rider.
+    RideOn {
+        from_player_id: i64,
+        to_player_id:   i64,
+        first_name:     String,
+        last_name:      String,
+        country_code:   i32,
+    },
+    /// Emitted when a chat message or social action (SocialPlayerAction) arrives.
+    Chat {
+        player_id:      i64,
+        to_player_id:   Option<i64>,
+        message:        Option<String>,
+        first_name:     Option<String>,
+        last_name:      Option<String>,
+        country_code:   Option<i32>,
+        event_subgroup: Option<i64>,
+    },
+    /// Emitted when a segment-result (finish-line crossing) arrives.
+    SegmentResult {
+        player_id:  u64,
+        elapsed_ms: u64,
+        segment_id: Option<i64>,
+        first_name: String,
+        last_name:  String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3341,6 +3367,55 @@ async fn resume_udp<Udp>(
     drop(tcp_sender);
 }
 
+/// Decode a single `WorldAttribute` into a `GameEvent`, mirroring the
+/// sauce4zwift dispatch at `zwift.mjs:2164-2187`.
+///
+/// Types `< 100` are protobuf-encoded; types `>= 100` are also decoded
+/// via protobuf in this codebase (the "binary decoder" in sauce is a thin
+/// wrapper around the same proto schema). Unknown types silently return
+/// `None`.
+fn decode_world_update(wa: &zwift_proto::WorldAttribute) -> Option<GameEvent> {
+    use prost::Message as _;
+    let wa_type = wa.wa_type?;
+    let payload = wa.payload.as_ref()?;
+    let wt = zwift_proto::WaType::try_from(wa_type).ok()?;
+    match wt {
+        zwift_proto::WaType::WatRideOn => {
+            let r = zwift_proto::RideOn::decode(payload.as_slice()).ok()?;
+            Some(GameEvent::RideOn {
+                from_player_id: r.player_id,
+                to_player_id:   r.to_player_id,
+                first_name:     r.first_name,
+                last_name:      r.last_name,
+                country_code:   r.country_code,
+            })
+        }
+        zwift_proto::WaType::WatSpa => {
+            let s = zwift_proto::SocialPlayerAction::decode(payload.as_slice()).ok()?;
+            Some(GameEvent::Chat {
+                player_id:      s.player_id.unwrap_or(0),
+                to_player_id:   s.to_player_id,
+                message:        s.message,
+                first_name:     s.first_name,
+                last_name:      s.last_name,
+                country_code:   s.country_code,
+                event_subgroup: s.event_subgroup,
+            })
+        }
+        zwift_proto::WaType::WatSr => {
+            let r = zwift_proto::SegmentResult::decode(payload.as_slice()).ok()?;
+            Some(GameEvent::SegmentResult {
+                player_id:  r.player_id,
+                elapsed_ms: r.elapsed_ms,
+                segment_id: r.segment_id,
+                first_name: r.first_name,
+                last_name:  r.last_name,
+            })
+        }
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn recv_loop<T>(
     channel: Arc<zwift_relay::TcpChannel<T>>,
@@ -3469,7 +3544,8 @@ where
                             }
                         }
                         // Advance last_world_update_ts to the highest
-                        // WorldAttribute.timestamp in this batch (§L3 / §N6).
+                        // WorldAttribute.timestamp in this batch (§L3 / §N6),
+                        // and emit GameEvents for decoded WorldAttribute payloads.
                         let mut found_ts = false;
                         for wa in &stc.updates {
                             if let Some(ts) = wa.timestamp {
@@ -3478,6 +3554,9 @@ where
                                     std::sync::atomic::Ordering::Relaxed,
                                 );
                                 found_ts = true;
+                            }
+                            if let Some(event) = decode_world_update(wa) {
+                                let _ = inner.game_events_tx.send(event);
                             }
                         }
                         if found_ts {
@@ -3623,7 +3702,8 @@ where
                             }
                         }
                         // Advance last_world_update_ts for any WorldAttribute
-                        // updates carried in this UDP batch (same as TCP §L3).
+                        // updates carried in this UDP batch (same as TCP §L3),
+                        // and emit GameEvents for decoded WorldAttribute payloads.
                         let mut found_ts = false;
                         for wa in &stc.updates {
                             if let Some(ts) = wa.timestamp {
@@ -3632,6 +3712,9 @@ where
                                     std::sync::atomic::Ordering::Relaxed,
                                 );
                                 found_ts = true;
+                            }
+                            if let Some(event) = decode_world_update(wa) {
+                                let _ = inner.game_events_tx.send(event);
                             }
                         }
                         if found_ts {
