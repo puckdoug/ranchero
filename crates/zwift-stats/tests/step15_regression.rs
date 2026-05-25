@@ -160,6 +160,7 @@ fn step15_regression() {
             all_tags: s.all_tags.clone(),
             end_ts: s.end_ts,
             end_distance: s.end_distance,
+            ..Default::default()
         }))
         .collect();
 

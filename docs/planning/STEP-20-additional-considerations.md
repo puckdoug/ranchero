@@ -89,7 +89,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 13** — Event chain: proto tags 29/34 + `getEvent` + subgroup cache + detection
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 14** — Live event streams: chat, rideon, game-state, watching-athlete-change
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

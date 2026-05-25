@@ -86,7 +86,10 @@ impl PlayerStateView for ProtoView<'_> {
     }
 
     fn event_subgroup_id(&self) -> u32 {
-        0
+        // tag 29: zwift-offline labels this field `groupId`; sauce4zwift reads it
+        // as `eventSubgroupId` (zwift.proto line 33).  The sauce reading is correct
+        // for event detection — the zwift-offline label is misleading.
+        self.0.group_id.unwrap_or(0).max(0) as u32
     }
 
     fn group_id(&self) -> u32 {
@@ -102,7 +105,10 @@ impl PlayerStateView for ProtoView<'_> {
     }
 
     fn event_distance(&self) -> f64 {
-        0.0
+        // tag 34: zwift-offline labels this field `dist_lat`; sauce4zwift reads it
+        // as `_eventDistance` in centimetres and divides by 100 to get metres
+        // (zwift.proto line 38, processPlayerStateMessage line 320).
+        self.0.dist_lat.unwrap_or(0.0) as f64 / 100.0
     }
 
     fn speed(&self) -> f64 {

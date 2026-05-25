@@ -17,6 +17,10 @@ pub struct EventSubgroup {
     pub all_tags: Vec<String>,
     pub end_ts: u64,
     pub end_distance: f64,
+    /// Athlete ids (from EventSubgroupProtobuf.invited_leaders) who lead the event.
+    pub invited_leaders: Vec<u64>,
+    /// Athlete ids (from EventSubgroupProtobuf.invited_sweepers) who sweep the event.
+    pub invited_sweepers: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

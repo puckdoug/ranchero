@@ -41,8 +41,7 @@ fn make_subgroup_with_tags(id: u32, tags: Vec<&str>) -> EventSubgroup {
         id,
         course_id: 1,
         all_tags: tags.into_iter().map(str::to_owned).collect(),
-        end_ts: 0,
-        end_distance: 0.0,
+        ..Default::default()
     }
 }
 

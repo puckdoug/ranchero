@@ -109,11 +109,10 @@ async fn self_alias_resolves_to_watched() {
 
     let mut ad = AthleteData::new(99, 42, 1, 0.0, 10.0);
     let sg = EventSubgroup {
-        id:            7,
-        course_id:     1,
-        all_tags:      vec!["hideftp".to_owned()],
-        end_ts:        0,
-        end_distance:  0.0,
+        id:        7,
+        course_id: 1,
+        all_tags:  vec!["hideftp".to_owned()],
+        ..Default::default()
     };
     let mut sgs = HashMap::new();
     sgs.insert(7u32, sg);

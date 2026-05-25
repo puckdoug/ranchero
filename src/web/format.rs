@@ -408,6 +408,52 @@ fn format_state(state: &MostRecentState) -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// Event-info helper (_getEventOrRouteInfo, stats.mjs:4293)
+// ---------------------------------------------------------------------------
+
+struct EventInfo {
+    event_leader:     Option<bool>,
+    event_sweeper:    Option<bool>,
+    remaining:        Option<f64>,
+    remaining_metric: Option<String>,
+    remaining_type:   Option<String>,
+    remaining_end:    Option<f64>,
+}
+
+/// Compute the event-context fields spread by sauce's `_getEventOrRouteInfo`.
+///
+/// Returns `None` when the athlete has no active event subgroup.
+fn event_info(athlete: &AthleteData) -> Option<EventInfo> {
+    let sg = athlete.event_subgroup.as_ref()?;
+    let id = athlete.athlete_id as u64;
+    let event_leader  = sg.invited_leaders.contains(&id).then_some(true);
+    let event_sweeper = sg.invited_sweepers.contains(&id).then_some(true);
+
+    let (remaining, remaining_metric, remaining_end) = if sg.end_distance > 0.0 {
+        let event_dist = athlete.most_recent_state
+            .as_ref()
+            .map(|s: &MostRecentState| s.event_distance)
+            .unwrap_or(0.0);
+        (
+            Some(sg.end_distance - event_dist),
+            Some("distance".to_string()),
+            Some(sg.end_distance),
+        )
+    } else {
+        (None, None, None)
+    };
+
+    Some(EventInfo {
+        event_leader,
+        event_sweeper,
+        remaining,
+        remaining_metric,
+        remaining_type: remaining.map(|_| "event".to_string()),
+        remaining_end,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // v1 athlete record
 // ---------------------------------------------------------------------------
 
@@ -523,6 +569,8 @@ pub fn format_athlete_data_v1(
         Some(json!(zones))
     };
 
+    let ei = event_info(athlete);
+
     let record = AthleteDataV1 {
         created_server_time: athlete.wt_offset as i64 + ZWIFT_EPOCH_MS,
         created:             athlete.created,
@@ -552,13 +600,12 @@ pub fn format_athlete_data_v1(
         is_gap_est:          athlete.is_gap_est.then_some(true),
         w_bal,
         time_in_power_zones,
-        // _getEventOrRouteInfo spread: not yet wired (requires route/event metadata)
-        event_leader:     None,
-        event_sweeper:    None,
-        remaining:        None,
-        remaining_metric: None,
-        remaining_type:   None,
-        remaining_end:    None,
+        event_leader:     ei.as_ref().and_then(|e| e.event_leader),
+        event_sweeper:    ei.as_ref().and_then(|e| e.event_sweeper),
+        remaining:        ei.as_ref().and_then(|e| e.remaining),
+        remaining_metric: ei.as_ref().and_then(|e| e.remaining_metric.clone()),
+        remaining_type:   ei.as_ref().and_then(|e| e.remaining_type.clone()),
+        remaining_end:    ei.as_ref().and_then(|e| e.remaining_end),
     };
 
     serde_json::to_value(record).expect("AthleteDataV1 is always serializable")
@@ -630,7 +677,7 @@ struct AthleteDataV2Base {
 /// Decision D1: the JS bug at `stats.mjs:4376` writes the `lastLap` resource
 /// value into `data.lap`, overwriting the lap key.  Ranchero deviates:
 /// `lastLap` writes to `data.lastLap`.
-pub(crate) fn format_athlete_v2(
+pub fn format_athlete_v2(
     athlete:         &AthleteData,
     resources:       &[String],
     watching_id:     Option<u32>,
@@ -646,6 +693,8 @@ pub(crate) fn format_athlete_v2(
     } else {
         Some(json!(athlete.w_bal.value()))
     };
+
+    let ei = event_info(athlete);
 
     let base = AthleteDataV2Base {
         version:            2,
@@ -666,12 +715,12 @@ pub(crate) fn format_athlete_v2(
         gap_distance:       athlete.gap_distance,
         is_gap_est:         athlete.is_gap_est.then_some(true),
         w_bal,
-        event_leader:       None,
-        event_sweeper:      None,
-        remaining:          None,
-        remaining_metric:   None,
-        remaining_type:     None,
-        remaining_end:      None,
+        event_leader:       ei.as_ref().and_then(|e| e.event_leader),
+        event_sweeper:      ei.as_ref().and_then(|e| e.event_sweeper),
+        remaining:          ei.as_ref().and_then(|e| e.remaining),
+        remaining_metric:   ei.as_ref().and_then(|e| e.remaining_metric.clone()),
+        remaining_type:     ei.as_ref().and_then(|e| e.remaining_type.clone()),
+        remaining_end:      ei.as_ref().and_then(|e| e.remaining_end),
     };
 
     let mut obj = match serde_json::to_value(base)

@@ -26,9 +26,7 @@ fn make_subgroup(id: u32) -> EventSubgroup {
     EventSubgroup {
         id,
         course_id: 1,
-        all_tags: vec![],
-        end_ts: 0,
-        end_distance: 0.0,
+        ..Default::default()
     }
 }
 

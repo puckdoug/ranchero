@@ -549,6 +549,28 @@ impl ZwiftAuth {
             .ok_or(Error::NotAuthenticated)
     }
 
+    /// Fetch the full event record for `id` from `GET /api/events/{id}`
+    /// (protobuf-lite `Event`). Mirrors sauce4zwift's `getEvent`
+    /// (`zwift.mjs:808`). The returned `Event` contains a `category` vec of
+    /// `EventSubgroupProtobuf` entries; callers extract and cache the
+    /// subgroups they need. A non-2xx response is returned as `Err`.
+    pub async fn get_event(&self, id: i64) -> Result<zwift_proto::Event> {
+        use prost::Message as _;
+
+        let urn = format!("/api/events/{id}");
+        let resp = self.fetch_pb(&urn).await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        zwift_proto::Event::decode(&bytes[..])
+            .map_err(|e| Error::ProtobufDecode(e.to_string()))
+    }
+
     /// Fetch the current `PlayerState` for `athlete_id` from
     /// `GET /relay/worlds/1/players/{id}` (protobuf-lite). Mirrors
     /// sauce4zwift's `getPlayerState` (`zwift.mjs:613`); a 404
