@@ -415,7 +415,8 @@ fn event_matches_athlete(event: &str, athlete_id: i64, state: &WebState) -> bool
             return athlete_id == id;
         }
     }
-    true
+    // "nearby" and "groups" are not per-athlete events.
+    false
 }
 
 /// Returns `true` when `event` is a v2 event path (ends with `/v2`).

@@ -247,13 +247,19 @@ async fn streams_v1_handler(
 async fn nearby_v1_handler(state: web::Data<Arc<WebState>>) -> HttpResponse {
     let now = local_now();
     let registry = state.registry.read().unwrap();
-    let body: Vec<serde_json::Value> = registry
+    let mut entries: Vec<(&zwift_stats::AthleteData, serde_json::Value)> = registry
         .iter()
         .map(|(_, a)| {
             let ts_ms = a.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
-            format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms)
+            (a, format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms))
         })
         .collect();
+    entries.sort_by(|(a, _), (b, _)| {
+        let ga = a.gap.unwrap_or(f64::MAX);
+        let gb = b.gap.unwrap_or(f64::MAX);
+        ga.partial_cmp(&gb).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let body: Vec<serde_json::Value> = entries.into_iter().map(|(_, v)| v).collect();
     HttpResponse::Ok().json(body)
 }
 
@@ -298,15 +304,29 @@ fn group_athletes<F>(registry: &zwift_stats::AthleteRegistry, fmt: F) -> Vec<ser
 where
     F: Fn(&AthleteData) -> serde_json::Value,
 {
-    let mut by_group: HashMap<u32, Vec<serde_json::Value>> = HashMap::new();
+    let mut by_group: HashMap<u32, (Vec<serde_json::Value>, Option<f64>)> = HashMap::new();
     for (_, athlete) in registry.iter() {
         if let Some(gid) = athlete.group_id {
-            by_group.entry(gid).or_default().push(fmt(athlete));
+            let entry = by_group.entry(gid).or_default();
+            entry.0.push(fmt(athlete));
+            // Use the minimum gap (closest to the watcher) as the group gap.
+            if let Some(g) = athlete.gap {
+                entry.1 = Some(match entry.1 {
+                    Some(current) => current.min(g.abs()),
+                    None => g.abs(),
+                });
+            }
         }
     }
     by_group
         .into_values()
-        .map(|athletes| json!({ "athletes": athletes }))
+        .map(|(athletes, gap)| {
+            let mut obj = json!({ "athletes": athletes });
+            if let Some(g) = gap {
+                obj["gap"] = json!(g);
+            }
+            obj
+        })
         .collect()
 }
 

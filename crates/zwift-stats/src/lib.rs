@@ -45,13 +45,13 @@ pub use collector::{
 };
 pub use data_bucket::DataBucket;
 pub use athlete::{AthleteData, MostRecentState, AthleteRegistry, GroupMeta, GcReport, PlayerStateView, EventSubgroup};
-pub use groups::{NearbyEntry, Group, compute_groups};
+pub use groups::{NearbyEntry, Group, compute_groups, assign_group_ids};
 pub use periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS, GC_TICK_INTERVAL_SECS, SMOOTH_GRADE_WINDOW};
 pub use wbal::WBalAccumulator;
 pub use slice::DataSlice;
 pub use streams::LatLng;
 pub use road_history::{RoadHistory, RoadKey, RoadGeometry, RoadComparison, compare_road_positions};
-pub use gap::apply_gap;
+pub use gap::{apply_gap, apply_gaps_for_registry, apply_gap_chained};
 pub use events::{EventBehavior, EventStateOutcome, apply_event_state};
 pub use laps::{AutoLapConfig, AutoLapMetric, start_athlete_lap, auto_lap_check};
 pub use segments::{Segment, SegmentLookup, active_segment_check, stop_segment};

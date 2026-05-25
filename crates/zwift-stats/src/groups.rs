@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
-use crate::athlete::GroupMeta;
+use crate::athlete::{AthleteRegistry, GroupMeta};
 use crate::periods::{GROUP_GAP_THRESHOLD_S, GROUP_GAP_THRESHOLD_NO_DRAFT_S, JACCARD_MATCH_THRESHOLD};
 
 #[derive(Debug, Clone)]
@@ -32,6 +32,28 @@ pub struct Group {
     pub speed: f64,
     pub heartrate: Option<f64>,
     pub is_gap_est: bool,
+}
+
+/// Writes the group ID from each `Group` back into the `AthleteRegistry`.
+/// Athletes that belong to a singleton (no group id) have their `group_id` cleared.
+pub fn assign_group_ids(
+    groups: &[Group],
+    nearby: &[NearbyEntry],
+    registry: &mut AthleteRegistry,
+) {
+    let mut member_to_group: HashMap<u32, u32> = HashMap::new();
+    for group in groups {
+        if let Some(gid) = group.id {
+            for &athlete_id in &group.members {
+                member_to_group.insert(athlete_id, gid);
+            }
+        }
+    }
+    for entry in nearby {
+        if let Some(ad) = registry.get_mut(entry.athlete_id) {
+            ad.group_id = member_to_group.get(&entry.athlete_id).copied();
+        }
+    }
 }
 
 pub fn compute_groups(

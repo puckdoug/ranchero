@@ -1258,6 +1258,13 @@ pub enum GameEvent {
         first_name: String,
         last_name:  String,
     },
+    /// Emitted when `ServerToClient.ev_subgroup_ps` (field 23) is present.
+    /// Carries the watched athlete's position and total participant count in
+    /// the current event subgroup.
+    EvSubgroupPlacements {
+        position:     i32,
+        total_riders: i32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3668,6 +3675,13 @@ where
                                 target: "ranchero::relay",
                                 "relay.tcp.simultaneous_login",
                             );
+                        }
+                        // Emit event subgroup placement when the server provides it.
+                        if let Some(esp) = stc.ev_subgroup_ps {
+                            let _ = inner.game_events_tx.send(GameEvent::EvSubgroupPlacements {
+                                position:     esp.position.unwrap_or(0),
+                                total_riders: esp.event_total_riders.unwrap_or(0),
+                            });
                         }
                         // §N8: log the server's expunge reason when present.
                         if let Some(reason) = stc.expunge_reason {

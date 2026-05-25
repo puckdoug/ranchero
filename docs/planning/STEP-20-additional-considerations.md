@@ -19,7 +19,7 @@ porting effort.
 This section turns the work that the 2026-05-24 answers committed to (items
 20.21–20.28 plus the sub-items they activated in 20.17 / 20.19 / 20.20) into
 ordered, test-first steps. The parking-lot items 20.1–20.20 stay parked: they are
-conditional deferrals with their own "revisit when …" triggers and are *not* part
+conditional deferrals with their own "revisit when …" triggers and are _not_ part
 of this plan.
 
 **Out of scope by decision** (do not build): write-back to Zwift — the write RPCs
@@ -86,7 +86,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 12** — 1 Hz nearby/groups processor + event sources + gap estimation
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 13** — Event chain: proto tags 29/34 + `getEvent` + subgroup cache + detection
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)
@@ -118,6 +118,7 @@ rest of the plan a real source for athlete identity, name, and FTP.
 **Depends on.** Nothing.
 
 **① Tests first (red)** — `crates/zwift-api/tests/` (wiremock, fast):
+
 - `get_profile_parses_ftp_and_name`: mock `GET /api/profiles/{id}`; assert the
   parsed `Profile` exposes `id`, `first_name`, `last_name`,
   `ftp` (from `functional_threshold_power`), `weight`, and the privacy flag.
@@ -128,6 +129,7 @@ rest of the plan a real source for athlete identity, name, and FTP.
   result.
 
 **② Implementation (green).**
+
 - Extend `Profile` (`crates/zwift-api/src/lib.rs:113`) with `first_name`,
   `last_name`, `ftp: Option<f64>`, `weight: Option<f64>`, and the privacy flag;
   keep it POD with `pub` fields.
@@ -148,6 +150,7 @@ schema), 20.20 item 1 (gaps G1/G2), 20.17 item 1 (write side), 20.28 item 1.
 **Depends on.** Step 1.
 
 **① Tests first (red).**
+
 - `crates/zwift-store/tests/`: `athletes_db_roundtrips_json_blob` — migrate to
   `athletes(id INTEGER PRIMARY KEY, data TEXT)`, upsert a full athlete JSON, and
   read it back intact including `marked`, `following`, `gender`, privacy.
@@ -160,6 +163,7 @@ schema), 20.20 item 1 (gaps G1/G2), 20.17 item 1 (write side), 20.28 item 1.
 - `profile_cache_serves_live_then_falls_back_to_sqlite`.
 
 **② Implementation (green).**
+
 - Replace the fixed-column `athletes` schema with the JSON-blob `data TEXT`
   schema in `crates/zwift-store`; `AthletesDb::upsert/get/touch` operate on the
   serialized athlete; add a `marked()` query.
@@ -180,6 +184,7 @@ work.
 **Depends on.** Nothing (small; placed early because self-only fields need it).
 
 **① Tests first (red).**
+
 - `web_state_self_id_equals_watched` — building `WebState` from a config with
   `watched_athlete_id = N` yields `self_athlete_id == Some(N)`.
 - `self_alias_resolves_to_watched` — `GET /athlete/self` returns the watched
@@ -187,6 +192,7 @@ work.
   (not the `0` fallback).
 
 **② Implementation (green).**
+
 - In `src/daemon/runtime.rs:305-306`, set
   `s.self_athlete_id = cfg.watched_athlete_id.map(|id| id as u32);` and remove
   `TODO 17.36-I`.
@@ -206,6 +212,7 @@ stale guard), QF3, the settled `road_time` finding.
 
 **① Tests first (red)** — `crates/zwift-stats/tests/` and the `src/web`
 proto_to_stats tests:
+
 - `records_most_recent_state` — after one ingest, `ad.most_recent_state` is
   `Some(state)` and the v1/v2 payload `state` is non-null.
 - `records_streams` — distance/altitude/latlng/wbal stream vectors grow by one
@@ -218,6 +225,7 @@ proto_to_stats tests:
   last is dropped and rolling sums are unchanged (`stats.mjs:3146`).
 
 **② Implementation (green).**
+
 - In `route_player_state` (`src/web/proto_to_stats.rs`): set `most_recent_state`,
   call `record_streams`, keep and publish the smoothed grade, and add the
   `elapsed <= 0` guard before ingest.
@@ -236,6 +244,7 @@ mechanism" finding.
 **Depends on.** Step 4.
 
 **① Tests first (red)** — `crates/zwift-stats/tests/`:
+
 - `data_collector_resize_grows_window` — a new growth method extends capacity and
   preserves existing samples.
 - `data_slice_grows_after_new_from` — `DataSlice::new_from` (`slice.rs:22`) then
@@ -248,6 +257,7 @@ mechanism" finding.
   time buckets and `workKj`/`followKj`/`soloKj` accumulate (`stats.mjs:3397-3463`).
 
 **② Implementation (green).**
+
 - Add a growth method to `DataCollector` (`crates/zwift-stats/src/collector.rs`)
   and make `DataSlice` growable.
 - In `route_player_state`: call `road_history.record`, `auto_lap_check`,
@@ -263,18 +273,20 @@ profile FTP.
 **Depends on.** Step 2 (profile FTP), Step 4 (recording loop).
 
 **① Tests first (red)** — `crates/zwift-stats/tests/`:
+
 - `wbal_configured_from_profile` — with `cp = ftp` and `w_prime = 20000`,
   `WBalAccumulator` gives a non-null series that depletes above CP and recovers
   below (sauce `stats.mjs:2864-2867`).
 - `wbal_defaults_when_no_cp` — missing CP falls back to FTP; missing W′ falls back
   to 20000 (`wPrimeDefault`, `stats.mjs:15`).
 - `zones_configured_from_ftp` — `ZonesAccumulator::configure(ftp,
-  getPowerZones(ftp))` then accumulation fills `timeInPowerZones`; a null FTP
+getPowerZones(ftp))` then accumulation fills `timeInPowerZones`; a null FTP
   gives empty zones (parity).
 - `get_power_zones_matches_coggan` — the ported `getPowerZones(ftp)` returns the
   expected boundaries (sauce `stats.mjs:1223-1241`).
 
 **② Implementation (green).**
+
 - Port `getPowerZones(ftp)` (Coggan zones).
 - In `route_player_state`: on the first state and on FTP change, call
   `wBal.configure(cp, w_prime)` (CP = FTP fallback, W′ = 20000) and
@@ -291,6 +303,7 @@ server selection, and fix the selection fall-through.
 
 **① Tests first (red)** — relay tests (mark daemon-spawning ones `#[ignore]`
 `slow:`):
+
 - `watched_position_updates_from_stream` — successive PlayerStates update
   `WatchedAthleteState` `(x, y, course)` (today seeded `(0,0)`/course 0;
   `observe_watched_player_state` / `switch_watched_athlete` are `#[cfg(test)]`,
@@ -304,6 +317,7 @@ server selection, and fix the selection fall-through.
   bounds test and the distance reference (centre vs corner) with upstream (QF1).
 
 **② Implementation (green).**
+
 - Promote `observe_watched_player_state` / `switch_watched_athlete` out of
   `#[cfg(test)]` and call them from the recv loop / state-refresher.
 - Fix `find_best_udp_server`: return `None` when nothing is in bounds under
@@ -318,6 +332,7 @@ server selection, and fix the selection fall-through.
 **Depends on.** Step 7 (UDP channel pointed at the right server).
 
 **① Tests first (red)** — relay tests plus a capture fixture:
+
 - `udp_inbound_player_states_reach_bridge` — injecting a UDP `ServerToClient`
   with player states emits `GameEvent::PlayerState`(s) (today the UDP recv arm is
   a no-op, `relay.rs:3448`).
@@ -325,6 +340,7 @@ server selection, and fix the selection fall-through.
   path (extract the helper from 20.2 if convenient).
 
 **② Implementation (green).**
+
 - Replace the no-op `ChannelEvent::Inbound(_stc)` UDP arm (`relay.rs:3448`) with
   the same processing the TCP inbound branch uses: decode, then route player
   states and world updates to `game_events_tx`.
@@ -338,12 +354,14 @@ server selection, and fix the selection fall-through.
 **Depends on.** Step 8.
 
 **① Tests first (red)** — relay tests (`#[ignore]` `slow:` if daemon-spawning):
+
 - `tcp_reconnect_reestablishes_udp` — after a simulated TCP drop and reconnect, a
   new UDP channel and heartbeat open and `watched_id`/`game_events_tx` are
   retained (today discarded, `relay.rs:3056-3061`; `resume_udp` is single-shot).
 - `udp_survives_multiple_reconnects` — two reconnects, UDP still flowing.
 
 **② Implementation (green).**
+
 - In `connection_manager` (`relay.rs:2851`): on reconnect, re-open UDP and the
   heartbeat, carrying `watched_id` / `game_events_tx`; make `resume_udp`
   reusable.
@@ -358,12 +376,14 @@ SegmentResult half of Step 15.
 **Depends on.** Step 8.
 
 **① Tests first (red)** — relay/proto tests with crafted WorldUpdate payloads:
+
 - `decodes_rideon_world_update` → a `GameEvent::RideOn { … }`.
 - `decodes_chat_world_update` (SocialAction) → a `GameEvent::Chat { … }`.
 - `decodes_segment_result_world_update` — payloadType 105 → a SegmentResult event.
 - `unknown_world_update_is_ignored` — an unknown type does not panic.
 
 **② Implementation (green).**
+
 - Port sauce's WorldUpdate dispatch (`zwift.mjs:2164-2187`): `< 100` by nested
   protobuf name (RideOn, SocialAction, PlayerLeftWorld, PlayerRegisteredForEvent,
   NotableMoment, …), `≥ 100` via binary decoders (SegmentResult = 105).
@@ -381,6 +401,7 @@ SegmentResult half of Step 15.
 **Depends on.** Step 7 (position), Step 3 (self id for the self-poll).
 
 **① Tests first (red)** — relay/stats tests:
+
 - `drops_player_state_when_ghost_powerup` — a state whose decoded `activePowerUp`
   (low 4 bits of `aux3`, proto field 20) is NINJA/Ghost (enum 6) is dropped
   (sauce `zwift.mjs:2194`).
@@ -393,6 +414,7 @@ SegmentResult half of Step 15.
   `refresher_suppresses_429_logging` (sauce `_refreshStates`, `zwift.mjs:1998`).
 
 **② Implementation (green).**
+
 - Decode `activePowerUp`; drop NINJA/Ghost states at ingest.
 - Extend `HeartbeatScheduler::next_state` with portal/roadId/eventSubgroup.
 - Detect `multipleLogins` and warn.
@@ -411,6 +433,7 @@ the event-name routing bug.
 **Depends on.** Steps 4/5 (`most_recent_state` + road history).
 
 **① Tests first (red)** — stats and web/subs tests:
+
 - `compute_groups_sets_group_id` and `apply_gap_sets_gap_fields` (today `None`).
 - `nearby_sorted_by_gap` — `/nearby/*` returns riders sorted by gap, not HashMap
   order (`http/mod.rs:247`).
@@ -425,6 +448,7 @@ the event-name routing bug.
   `eventPosition` / `eventParticipants`.
 
 **② Implementation (green).**
+
 - Add a 1 Hz tick task in `src/web/state.rs` (sibling to `gc_tick_loop:95`)
   running `compute_groups` + nearby, setting gap/group/event-rank, and emitting
   `nearby` / `groups` / `nearby/v2` / `groups/v2`.
@@ -443,6 +467,7 @@ spread of G4).
 **Depends on.** Step 1 (REST), Step 4 (recording), Step 12 (event rank, optional).
 
 **① Tests first (red).**
+
 - Capture verification (QB1): decode proto tags 29 and 34 from a sanitised
   capture and assert they carry the event-subgroup id and the event distance
   (cm), confirming the sauce reading over the zwift-offline labels. If the
@@ -457,6 +482,7 @@ spread of G4).
   present on a cache hit, absent on a miss (parity).
 
 **② Implementation (green).**
+
 - Reinterpret vendored proto tags 29/34 (`udp-node-msgs.proto:151,156`) per QB1:
   rename with a comment recording the deviation (precedent: `draft = 10`, line
   122); wire the `ProtoView` accessors.
@@ -475,6 +501,7 @@ source.
 **Depends on.** Step 10 (WorldUpdate variants), Step 3 (self/watching).
 
 **① Tests first (red)** — web/subs tests:
+
 - `chat_stream_emits_on_world_update` and `rideon_stream_emits_on_world_update`
   (from the Step 10 variants; sauce `stats.mjs:2650,2591`).
 - `game_state_stream_and_field` — a `game-state` producer plus the `gameState`
@@ -486,6 +513,7 @@ source.
   `getSetting` / `setSetting` in Step 16.
 
 **② Implementation (green).**
+
 - Add subs producers for `chat`, `rideon`, `game-state`, and
   `watching-athlete-change`; add a game-state object; register the `app` source.
 
@@ -501,6 +529,7 @@ detect active segments.
 segment geometry from Step 18 — the fetchers/cache can land first.
 
 **① Tests first (red).**
+
 - `get_segment_results_parses` / `get_live_segment_leaders_parses` /
   `get_live_segment_leaderboard_parses` — wiremock (sauce `zwift.mjs:633-645`).
 - `segments_db_evict_expired_called_on_schedule` — a scheduled task calls
@@ -510,6 +539,7 @@ segment geometry from Step 18 — the fetchers/cache can land first.
   (`stats.mjs:3077`); gated on Step 18 geometry.
 
 **② Implementation (green).**
+
 - Add the three fetchers; write results into `segments.sqlite`; schedule
   `evict_expired`.
 - Wire `active_segment_check` into `route_player_state` once Step 18's segment
@@ -526,6 +556,7 @@ per QA1).
 **Depends on.** Steps 2, 12, 13, 15 (data to return).
 
 **① Tests first (red)** — `src/web/rpc.rs` tests:
+
 - One test per handler group asserting a registered handler returns the expected
   shape: athlete getters (`getAthlete`, `getAthletes`, `getAthleteData`,
   `getAthletesData`, `getAthleteLaps`, `getAthleteSegments`, `getAthleteStreams`,
@@ -540,6 +571,7 @@ per QA1).
   etc. are absent (QA1).
 
 **② Implementation (green).**
+
 - Register the handlers in `RpcRegistry::new` (`src/web/rpc.rs:17`), each
   delegating to the data sources built in earlier steps.
 
@@ -553,6 +585,7 @@ design; tests pass.
 **Depends on.** Step 13 (event/route info plumbing).
 
 **① Tests first (red)** — new `crates/zwift-routes/tests/`:
+
 - `route_lookup_by_id` — a known route resolves to its distance/segments.
 - `compute_route_distance` — `_computeRouteDistance` (`stats.mjs:3197`) returns
   the expected metres for a sample position.
@@ -561,6 +594,7 @@ design; tests pass.
   hardcoded `None`).
 
 **② Implementation (green).**
+
 - Create `crates/zwift-routes` (route + curve tables from `shared/routes.mjs` +
   `shared/curves.mjs`, spec §7.2 / §7.8).
 - Port `_computeRouteDistance` and the route branch of `_getEventOrRouteInfo`;
@@ -577,6 +611,7 @@ altitude/lat/lng/x/y/roadCompletion/progress.
 **Depends on.** Step 4 (state recording).
 
 **① Tests first (red).**
+
 - `altitude_adjusted_by_world_meta` —
   `(z - seaLevel + eleOffset) / 100 * physicsSlopeScale` (today raw `z / 100`).
 - `latlng_projected` — `state.lat` / `state.lng` are real (today `0.0`), emitted
@@ -585,6 +620,7 @@ altitude/lat/lng/x/y/roadCompletion/progress.
 - `get_game_info_parses` — wiremock `/api/game_info` (sauce `zwift.mjs:681`).
 
 **② Implementation (green).**
+
 - Vendor the world-meta tables; implement the altitude adjustment and projection
   in `src/web/proto_to_stats.rs` / `src/web/proto_view.rs` (replace the TODOs);
   keep `lat` / `lng` as scalars.
@@ -601,6 +637,7 @@ end-to-end, do the vestigial-variant cleanup, and optionally enrich
 **Depends on.** Steps 2 and 15 (the writers).
 
 **① Tests first (red).**
+
 - `stores_read_and_written_in_production` — a daemon run (or an integration
   harness) shows `upsert` / `get` / `put` / `evict_expired` called outside tests
   (today bound as `_stores`, `src/daemon/stores.rs` / `run_daemon`).
@@ -610,6 +647,7 @@ end-to-end, do the vestigial-variant cleanup, and optionally enrich
   and per-table row counts (20.17 item 3).
 
 **② Implementation (green).**
+
 - Ensure the earlier steps' readers/writers use the opened DBs (so `_stores` is no
   longer inert); add the end-to-end assertion.
 - Reduce `GameEvent::PlayerState` to `{ athlete_id }` (re-touch the ~6 test files
@@ -1109,7 +1147,7 @@ runtime but the underlying behaviour is not actually executed:
   emits `relay.udp.channel.grace_shutdown` and broadcasts
   `GameEvent::PoolSwap`, but the body of the spawned 60-second
   grace task contains a literal `// Placeholder: actual channel
-  transfer is implemented in L6` comment. The new channel is
+transfer is implemented in L6` comment. The new channel is
   not actually opened; the old channel is not actually closed.
 
 **Current resolution.** The trace events fire and the symbols
@@ -1173,14 +1211,14 @@ header omission into a hard-to-investigate failure:
 - The `Error::AuthFailedBadSchema` message
   (`crates/zwift-api/src/lib.rs:73-74`) renders as
   `"authentication failed: unexpected response shape: expected
-  value at line 1 column 1"` once the serde error is appended.
+value at line 1 column 1"` once the serde error is appended.
   The serde "line 1 column 1" string buries the actionable
   signal (which is "the body is not JSON at all").
 
 **Current resolution.** Both diagnostic improvements were noted
 during STEP-12.17 but kept out of the in-plan fix on the principle
 that the immediate fix (adding the missing header) is the smallest
-change that makes the smoke pass. The diagnostics make the *next*
+change that makes the smoke pass. The diagnostics make the _next_
 failure of the same class self-diagnosing; the smoke does not need
 them today.
 
@@ -1301,7 +1339,7 @@ six sauce4zwift web-server features that ranchero deliberately does not build
 in the initial web-server step. None pointed to a concrete later step; this
 entry is the parking lot for all six so a future reader finds them without
 re-reading STEP 17. (The formatter-dependent routes and the v2 deep
-resource filter from that same section are *not* here — they have a concrete
+resource filter from that same section are _not_ here — they have a concrete
 home in STEP 18 and are recorded there.)
 
 1. **Per-message WebSocket compression.** Ranchero encodes the full frame on
@@ -1373,6 +1411,7 @@ subsystem.
    `format_state` (full parity) or keep the scalars as a documented API
    extension. See `docs/planning/STEP-18-parity-ledger.md` (`_formatState`
    table) and STEP 19's widget-compatibility note.
+
 3. **`self_athlete_id` sourcing in `WebState`.** `run_daemon` cannot yet
    determine the logged-in athlete's own id at boot, so `self_athlete_id` is
    `None` (inline `TODO 17.36-I`). The `self` aliases in the athlete
@@ -1472,7 +1511,7 @@ The shape of the finding is consistent: the supporting libraries
 (`zwift-stats` primitives, the `src/web/format.rs` formatters, the codec, the
 v2 query-reduction engine) are faithful to sauce4zwift and well-tested in
 isolation, which is why STEP 18 and STEP 19 passed. What is missing is the
-production *wiring* that drives those libraries end-to-end: the per-tick
+production _wiring_ that drives those libraries end-to-end: the per-tick
 recording pipeline, the 1 Hz nearby/groups processor, the RPC handler
 registrations, the live event-stream producers, the UDP inbound consumption,
 the WorldUpdate decoders, and the profile/event/segment REST fetchers. Each
@@ -1499,18 +1538,18 @@ are reached only from tests.
 **Current resolution.** The library exists; the wiring does not.
 Consequences in published payloads:
 
-| Missing wiring | sauce4zwift source | Published-field impact |
-|---|---|---|
-| `ad.most_recent_state = state` | `_recordAthleteStats` `stats.mjs:3493` | `state` object always `null` in v1/v2 athlete records; deprives gap/group/segment of current position |
-| streams recording (`record_streams`) | `_recordAthleteStats` | `streams/*` (distance/altitude/latlng/wbal) empty |
-| road-history recording (`road_history.record`) | `_recordAthleteRoadHistory` `stats.mjs:3103` | gap and segment-completion have no road data |
-| work/follow/solo/coffee time + kJ split | `_recordAthleteStats` `stats.mjs:3397-3463` | `workTime`/`followTime`/`soloTime`/`coffeeTime`/`workKj`/`followKj`/`soloKj` always 0 |
-| W' and zones `configure` + accumulate | `_updateAthleteDataFromDatabase` `stats.mjs:2863` | `wBal` always `null`; `timeInPowerZones` always empty (also needs an FTP/CP source — see 20.26) |
-| slice growth (a `resize`-equivalent) | `stats.mjs:3471-3491` | `lap`/`lastLap`/`laps`/`segments`/`events` bucket stats always empty; `lapCount` works |
-| auto-lap detection (`auto_lap_check`) | `_autoLapCheck` `stats.mjs:3092` | no automatic laps |
-| active-segment detection (`active_segment_check`) | `_activeSegmentCheck` `stats.mjs:3077` | `segments[]` always empty |
-| grade publication | `_preprocessState` | `state.grade` never published (computed then discarded) |
-| stale/duplicate-state guard | `_preprocessState` `stats.mjs:3146` (rejects `elapsed<0`/`==0`) | out-of-order/duplicate packets are ingested unconditionally; risk to rolling-window sums |
+| Missing wiring                                    | sauce4zwift source                                              | Published-field impact                                                                                |
+| ------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `ad.most_recent_state = state`                    | `_recordAthleteStats` `stats.mjs:3493`                          | `state` object always `null` in v1/v2 athlete records; deprives gap/group/segment of current position |
+| streams recording (`record_streams`)              | `_recordAthleteStats`                                           | `streams/*` (distance/altitude/latlng/wbal) empty                                                     |
+| road-history recording (`road_history.record`)    | `_recordAthleteRoadHistory` `stats.mjs:3103`                    | gap and segment-completion have no road data                                                          |
+| work/follow/solo/coffee time + kJ split           | `_recordAthleteStats` `stats.mjs:3397-3463`                     | `workTime`/`followTime`/`soloTime`/`coffeeTime`/`workKj`/`followKj`/`soloKj` always 0                 |
+| W' and zones `configure` + accumulate             | `_updateAthleteDataFromDatabase` `stats.mjs:2863`               | `wBal` always `null`; `timeInPowerZones` always empty (also needs an FTP/CP source — see 20.26)       |
+| slice growth (a `resize`-equivalent)              | `stats.mjs:3471-3491`                                           | `lap`/`lastLap`/`laps`/`segments`/`events` bucket stats always empty; `lapCount` works                |
+| auto-lap detection (`auto_lap_check`)             | `_autoLapCheck` `stats.mjs:3092`                                | no automatic laps                                                                                     |
+| active-segment detection (`active_segment_check`) | `_activeSegmentCheck` `stats.mjs:3077`                          | `segments[]` always empty                                                                             |
+| grade publication                                 | `_preprocessState`                                              | `state.grade` never published (computed then discarded)                                               |
+| stale/duplicate-state guard                       | `_preprocessState` `stats.mjs:3146` (rejects `elapsed<0`/`==0`) | out-of-order/duplicate packets are ingested unconditionally; risk to rolling-window sums              |
 
 Two structural notes. `DataSlice::new_from` calls `clone_reset()`, producing
 an empty bucket, and `DataCollector` has no `resize` method — so even when a
@@ -1543,7 +1582,7 @@ periodic web-layer task is `gc_tick_loop` in `src/web/state.rs:95`.
 
 1. **No periodic processor.** `gap`/`gapDistance`/`isGapEst` are always
    `None`; `group_id` is always `None`. The HTTP `/nearby/*` and `/groups/*`
-   routes compute on-demand from the registry, so they return *something*, but
+   routes compute on-demand from the registry, so they return _something_, but
    nearby is unsorted (HashMap order, `src/web/http/mod.rs:247`) with no gap
    filtering, and groups group by `group_id` which is always `None`, so groups
    always come back empty (`src/web/http/mod.rs:297`).
@@ -1650,7 +1689,7 @@ forms, via `bridge_player_state_event` → `GameEvent::PlayerState`).
 - **`game-state` / `watching-athlete-change`.** No producer. `watching_id` is
   set once at boot (`src/daemon/runtime.rs:305`) and never changes, so no
   watched-athlete-change event ever fires; there is no game-state object. This
-  is adjacent to 20.20 item 2 (the `gameState` *formatter field* and the
+  is adjacent to 20.20 item 2 (the `gameState` _formatter field_ and the
   stubbed `gameConnection` subscription source) but distinct: those are the
   field and the source registration, not these two emitter streams.
 - **Subscription sources.** `create_delegation` (`src/web/subs/mod.rs`)
@@ -1745,18 +1784,18 @@ land with them. Items 5–7 are smaller and can ride along.
 sauce4zwift's `ZwiftAPI`. ranchero implements OAuth (login/refresh, with 50%
 preemptive refresh and 401 inline retry — verified at parity), `get_profile_me`,
 `get_player_state`, `logout`, `leave`. The live-data fetchers below are absent.
-These are the *producers* that several already-parked caches assume exist.
+These are the _producers_ that several already-parked caches assume exist.
 
 **Current resolution.**
 
-| Missing method | sauce4zwift | Consumer / why it matters |
-|---|---|---|
-| `getProfiles` (batch, protobuf `/api/profiles`) | `zwift.mjs:559`, driven on every state via `_maybeUpdateAthleteFromServer` `stats.mjs:3080` | The producer beneath 20.20 item 1 (read cache → `athlete` field, name/FTP), 20.17 item 1 (write to `athletes.sqlite`), and the W'/zone configure in 20.21. Without it `athlete:null` and `tss:null` permanently. **Highest impact.** |
-| `getEvent` (protobuf `/api/events/{id}`) | `zwift.mjs:808`, via `getEventSubgroup` `stats.mjs:1332` | The producer beneath 20.19 item 4 (event-subgroup cache); without it `eventLeader`/`eventSweeper`/`remaining*` stay absent and event detection (20.27) has no metadata. |
-| `getSegmentResults` (`/api/segment-results`) + `getLiveSegmentLeaders` + `getLiveSegmentLeaderboard` | `zwift.mjs:633-645` | The only writers `segments.sqlite` was built for. 20.17 item 2 names only the evictor. Note sauce caches leaderboards in memory (2 s TTL), so ranchero's `segments.sqlite` is a ranchero-original design, not a sauce parity requirement. |
-| `getProfile` (single, `/api/profiles/{id}`) | `zwift.mjs:541` | Backs the on-demand `getAthlete` RPC (20.23). |
-| `getActivities` (`/api/profiles/{id}/activities`) | `zwift.mjs:599` | Backs activity-list RPCs. Lower priority. |
-| `getGameInfo` (`/api/game_info`) | `zwift.mjs:681` | World/segment metadata sync; relates to the world-meta vendoring in 20.27 / 20.19 item 2. |
+| Missing method                                                                                       | sauce4zwift                                                                                 | Consumer / why it matters                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getProfiles` (batch, protobuf `/api/profiles`)                                                      | `zwift.mjs:559`, driven on every state via `_maybeUpdateAthleteFromServer` `stats.mjs:3080` | The producer beneath 20.20 item 1 (read cache → `athlete` field, name/FTP), 20.17 item 1 (write to `athletes.sqlite`), and the W'/zone configure in 20.21. Without it `athlete:null` and `tss:null` permanently. **Highest impact.**      |
+| `getEvent` (protobuf `/api/events/{id}`)                                                             | `zwift.mjs:808`, via `getEventSubgroup` `stats.mjs:1332`                                    | The producer beneath 20.19 item 4 (event-subgroup cache); without it `eventLeader`/`eventSweeper`/`remaining*` stay absent and event detection (20.27) has no metadata.                                                                   |
+| `getSegmentResults` (`/api/segment-results`) + `getLiveSegmentLeaders` + `getLiveSegmentLeaderboard` | `zwift.mjs:633-645`                                                                         | The only writers `segments.sqlite` was built for. 20.17 item 2 names only the evictor. Note sauce caches leaderboards in memory (2 s TTL), so ranchero's `segments.sqlite` is a ranchero-original design, not a sauce parity requirement. |
+| `getProfile` (single, `/api/profiles/{id}`)                                                          | `zwift.mjs:541`                                                                             | Backs the on-demand `getAthlete` RPC (20.23).                                                                                                                                                                                             |
+| `getActivities` (`/api/profiles/{id}/activities`)                                                    | `zwift.mjs:599`                                                                             | Backs activity-list RPCs. Lower priority.                                                                                                                                                                                                 |
+| `getGameInfo` (`/api/game_info`)                                                                     | `zwift.mjs:681`                                                                             | World/segment metadata sync; relates to the world-meta vendoring in 20.27 / 20.19 item 2.                                                                                                                                                 |
 
 **Why this might come back.** `getProfiles` and `getEvent` are blocking
 dependencies for whole clusters of already-parked work (20.17/20.19/20.20/20.21).
@@ -1777,7 +1816,7 @@ dead because the data they read was never vendored.
 **Current resolution.**
 
 1. **`eventSubgroupId` / `eventDistance` proto fields missing.**
-   `apply_event_state` *is* called in production (`proto_to_stats.rs:104`), but
+   `apply_event_state` _is_ called in production (`proto_to_stats.rs:104`), but
    `ProtoView::event_subgroup_id()` is hardcoded to `0` and `event_distance()`
    to `0.0` because the vendored `udp-node-msgs.proto` `PlayerState` does not
    expose them under those names — see QB1: wire tags 29 and 34 exist but are
@@ -1785,11 +1824,11 @@ dead because the data they read was never vendored.
    `eventSubgroupId` / `_eventDistance`. So `apply_event_state` always sees
    `0` and returns `Idle`; events are never detected from telemetry, and
    event end-by-distance / event privacy flags never fire. Distinct from
-   20.19 item 4, which covers the event-subgroup metadata *cache*, not the
-   missing *proto fields* that feed it. Needs a decision on extending the
+   20.19 item 4, which covers the event-subgroup metadata _cache_, not the
+   missing _proto fields_ that feed it. Needs a decision on extending the
    vendored proto2 schema.
 2. **`EventSubgroupPlacements` not processed.** Proto field `ev_subgroup_ps =
-   23` exists but is unused; `eventPosition`/`eventParticipants` never written
+23` exists but is unused; `eventPosition`/`eventParticipants` never written
    (see also 20.22).
 3. **Route tables / `zwift-routes` crate absent.** Spec §7.2 lists
    `zwift-routes` ("on demand") and §7.8 makes segment/route detection depend
@@ -1826,7 +1865,7 @@ definitions in `stats.mjs`. Beyond the deferrals already in 20.17:
    stores each athlete as a JSON blob (`athletes(id INTEGER PK, data TEXT)`)
    and queries it with `json_each(data, '$.marked')` to load marked athletes
    (`stats.mjs:2440-2447`). ranchero uses fixed columns (`fname, lname, ftp,
-   weight, badges, last_seen`), which cannot represent `marked`, `following`,
+weight, badges, last_seen`), which cannot represent `marked`, `following`,
    `gender`, `type`, `avatar`, privacy flags, power-source, etc. The
    marked-athletes user feature has no column at all. 20.17 item 1 assumes the
    existing schema is adequate; for sauce parity it is not.
@@ -1900,7 +1939,7 @@ a read-only live-data core, but 20.23 lists roughly ten write actions
 `updateAthlete`, `removeFollower`, event sign-ups) and 20.26 implies write
 fetchers. If write-back is out of scope, these should be removed from the
 missing-handler list rather than deferred, so they stop reading as gaps.
-*Controls:* the write half of 20.23 and any write methods in 20.26.
+_Controls:_ the write half of 20.23 and any write methods in 20.26.
 → **Answer (2026-05-24): No — ranchero does not write back to Zwift.** The write
 actions above are out of scope; remove them from the 20.23 missing-handler
 inventory rather than listing them as deferred, and drop any write fetchers from
@@ -1912,13 +1951,13 @@ inventory rather than listing them as deferred, and drop any write fetchers from
 (20.28). sauce keeps leaderboards in a 2-second in-memory cache, so
 `segments.sqlite` is a ranchero-original design with no parity justification. If
 leaderboards are out of scope, should `segments.sqlite` be removed rather than
-wired? *Controls:* the 20.26 segment row, 20.17 item 2, the 20.28 segment store.
+wired? _Controls:_ the 20.26 segment row, 20.17 item 2, the 20.28 segment store.
 → **Answer (2026-05-24): Keep them.** Segment leaderboards stay in scope, so the
 segment fetchers (20.26), the 20.17 item 2 evictor, and `segments.sqlite` (20.28)
 are all retained and wired.
 
-**QA3 — How deep does event support go for v1?** *(question expanded 2026-05-24
-after it was unclear.)* In Zwift an "event" is a structured group activity a
+**QA3 — How deep does event support go for v1?** _(question expanded 2026-05-24
+after it was unclear.)_ In Zwift an "event" is a structured group activity a
 rider signs up for — a race, group ride, or workout — organised into sub-groups
 (the A/B/C/D categories). When the watched athlete is in an event, sauce4zwift
 surfaces event-relative context in the published payload: the sub-group the rider
@@ -1927,13 +1966,13 @@ event, the rider's position and the participant count within the event, and
 event-relative ranking. Producing any of that needs the full chain below, which
 is why this single answer governs so much downstream work:
 
-  telemetry must carry the event-subgroup id (QB1) → the daemon fetches the event
-  metadata (`getEvent`, 20.26) → caches the subgroup→event mapping (20.19 item 4,
-  optionally persisted as 20.28 item 2) → the formatters spread the resulting
-  fields (`eventLeader`, `eventSweeper`, `remaining*`, `eventPosition`,
-  `eventParticipants`).
+telemetry must carry the event-subgroup id (QB1) → the daemon fetches the event
+metadata (`getEvent`, 20.26) → caches the subgroup→event mapping (20.19 item 4,
+optionally persisted as 20.28 item 2) → the formatters spread the resulting
+fields (`eventLeader`, `eventSweeper`, `remaining*`, `eventPosition`,
+`eventParticipants`).
 
-The decision is whether that whole chain is a v1 goal. *Controls:* 20.19 item 4,
+The decision is whether that whole chain is a v1 goal. _Controls:_ 20.19 item 4,
 the event handlers in 20.23, and parts of 20.26 / 20.27 / 20.28.
 → **Answer (2026-05-24): Required — event support is a v1 goal, not optional.**
 Viewing data during an event is the main use of sauce4zwift, so the daemon must
@@ -1949,7 +1988,7 @@ transient startup state, never an acceptable shipped state.
 requires a whole crate (route and curve tables, spec §7.2 / §7.8) before
 `routeDistance`, route percentage, and route `remaining*` can be computed; the
 spec lists the crate as "on demand". Do we schedule that data-vendoring work
-now, or leave the route fields permanently absent? *Controls:* 20.27 item 3 and
+now, or leave the route fields permanently absent? _Controls:_ 20.27 item 3 and
 the route half of `_getEventOrRouteInfo`.
 → **Answer (2026-05-24): Yes.** The `zwift-routes` crate is a v1 goal; schedule
 20.27 item 3 as a deliberate data-vendoring step, which unblocks `routeDistance`,
@@ -1961,16 +2000,16 @@ route percentage, and the route `remaining*` fields.
 (20.27 item 1, the cheap unblock for the whole event chain.)
 → **Research finding (2026-05-24) — the premise was wrong; the fields are not
 missing, they are differently labelled.** The two reverse-engineered schemas
-disagree about the *same* wire tags:
+disagree about the _same_ wire tags:
 
-| Wire tag | zwift-offline (vendored) | sauce4zwift (`zwift.proto`) |
-|---|---|---|
-| 29 | `int64 groupId` (`udp-node-msgs.proto:151`) | `int32 eventSubgroupId` (`zwift.proto:33`) |
-| 34 | `float dist_lat` (`udp-node-msgs.proto:156`) | `float _eventDistance` // cm (`zwift.proto:38`) |
+| Wire tag | zwift-offline (vendored)                     | sauce4zwift (`zwift.proto`)                     |
+| -------- | -------------------------------------------- | ----------------------------------------------- |
+| 29       | `int64 groupId` (`udp-node-msgs.proto:151`)  | `int32 eventSubgroupId` (`zwift.proto:33`)      |
+| 34       | `float dist_lat` (`udp-node-msgs.proto:156`) | `float _eventDistance` // cm (`zwift.proto:38`) |
 
 Both tags already exist in the vendored proto. Tag 29 is a varint in both
 readings; tag 34 is a float in both. So this is not an "add a field" change — it
-is a decision about *which interpretation of tags 29 and 34 is correct*, and that
+is a decision about _which interpretation of tags 29 and 34 is correct_, and that
 needs a real capture to settle (does tag 29 carry a group id or a sub-group id;
 does tag 34 carry lateral distance or event distance in cm). There is precedent
 for preferring sauce's reading where it actively uses a field: the vendored proto
@@ -1979,7 +2018,7 @@ zoffline annotation … is rejected"). The remaining work is to verify against a
 capture, then rename/reinterpret the vendored fields (with a comment recording
 the deviation) rather than adding new ones. **This also corrects the wording in
 20.27 item 1**, which says the PlayerState "has no such field"; it has the tags
-under other names. *Controls:* all event detection from telemetry; still needs
+under other names. _Controls:_ all event detection from telemetry; still needs
 the capture check.
 
 ### C. Data sources and identity
@@ -1989,13 +2028,13 @@ the capture check.
 account's id from `get_profile_me`, while the monitor account only receives the
 stream? And when no watched athlete is configured, should `watching_id` default
 to self? The `self` endpoint aliases and the `apply_event_state` self-comparison
-are degraded until this identity model is written down. *Controls:* 20.19 item 3,
+are degraded until this identity model is written down. _Controls:_ 20.19 item 3,
 part of 20.25 item 7.
 → **Answer (corrected 2026-05-24): "self" is the watched athlete, sourced from
 `cfg.watched_athlete_id`; the monitor/watcher account is never self.** Confirmed
 against the code: the daemon logs into the relay with the **monitor** account
 (`src/daemon/relay.rs:1595-1608`), so `auth.athlete_id()` is the monitor's id — a
-pure relay conduit, *not a rider*. The rider whose overlay is served — "self" —
+pure relay conduit, _not a rider_. The rider whose overlay is served — "self" —
 is the watched athlete, which the runtime already holds as `cfg.watched_athlete_id`
 and which is mandatory (`relay.rs:1637-1639`); the code comment at
 `relay.rs:1631-1633` draws exactly this distinction. So `self_athlete_id` should
@@ -2012,7 +2051,7 @@ read-through both?** (20.20 item 1 / 20.26 / 20.17 item 1.) `getProfiles` is the
 producer; `athletes.sqlite` is the store. Do the formatters read a `WebState`
 cache filled from `getProfiles`, backed by SQLite, or only one of those? This
 also decides whether the write-side persistence (20.17 item 1) is implemented in
-the same step. *Controls:* 20.20 item 1, 20.17 item 1.
+the same step. _Controls:_ 20.20 item 1, 20.17 item 1.
 → **Answer (2026-05-24): read-through, live stream authoritative.** The Zwift
 data stream is always the authoritative, live, current source; `athletes.sqlite`
 is the cache. So the formatters read live profile data (refreshed from
@@ -2023,7 +2062,7 @@ is consulted only as a fallback before live data is available. This pairs the
 **QC3 — What feeds W′-balance and power-zone configuration: FTP only, or CP and
 W′?** (20.21, dependent on 20.26.) `WBalAccumulator` /
 `ZonesAccumulator::configure` need the numbers sauce draws in
-`_updateAthleteDataFromDatabase`. *Controls:* the W′ and zone portions of 20.21.
+`_updateAthleteDataFromDatabase`. _Controls:_ the W′ and zone portions of 20.21.
 → **Research finding (2026-05-24): the Zwift profile carries FTP only.** From
 sauce's `_updateAthleteDataFromDatabase` (`stats.mjs:2864-2871`):
 `cp = athlete.cp || athlete.ftp`, `wPrime = athlete.wPrime || 20000`
@@ -2046,7 +2085,7 @@ it must be extended to parse FTP before either QC2 or QC3 can be wired.
 `following`, `gender`, privacy flags, and the like, and sauce queries
 `json_each(data, '$.marked')`. The recommendation is the JSON-blob schema to
 match sauce and avoid a second migration; decide before the 20.17 item 1 writer
-is built. *Controls:* 20.28 item 1, 20.17 item 1, the marked/followed-athlete
+is built. _Controls:_ 20.28 item 1, 20.17 item 1, the marked/followed-athlete
 features.
 → **Answer (2026-05-24): Agreed.** Adopt the JSON-blob `data TEXT` schema and
 build the 20.17 item 1 writer against it.
@@ -2057,14 +2096,14 @@ across restarts?** (20.28 item 2.)
 this?"** Answer: `event_subgroups.sqlite` would persist subgroup→event mappings,
 so that after a daemon restart a player-state that references an `eventSubgroupId`
 can be resolved to its event metadata (leaders, distance, route) without
-re-fetching. The only scenario it actually helps is a restart *while a rider is
-mid-event*: with the cache, event context is available immediately; without it,
+re-fetching. The only scenario it actually helps is a restart _while a rider is
+mid-event_: with the cache, event context is available immediately; without it,
 the daemon re-fetches the mapping from the Zwift API on the next state. For a
 single-user live daemon a mid-event restart is rare, and the in-memory cache
 (20.19 item 4) can simply be repopulated from the API on demand.
 **Recommendation: do not add the fourth DB for v1** — keep event subgroups in
 memory and repopulate after restart; revisit only if mid-event restart
-resilience is explicitly wanted. *Controls:* 20.28 item 2.
+resilience is explicitly wanted. _Controls:_ 20.28 item 2.
 → **Answer (2026-05-24): Confirmed — do not create this DB.** A cache restored
 from disk after a restart would be unsafe to trust: during the downtime the event
 data may have changed, so it must be re-read from the Zwift API regardless. The
@@ -2074,42 +2113,43 @@ event subgroups in memory only and always re-read after restart.
 ### E. Output shape and parity deviations
 
 **QE1 — `latlng: [lat, lng]` array (full parity) or separate `lat` / `lng`
-scalars (documented extension)?** (20.19 item 2.) *(value of each, added
-2026-05-24, since the trade-off was not stated.)* sauce4zwift emits the rider's
+scalars (documented extension)?** (20.19 item 2.) _(value of each, added
+2026-05-24, since the trade-off was not stated.)_ sauce4zwift emits the rider's
 position as a single two-element array, `latlng: [lat, lng]`. ranchero currently
 computes the two numbers separately and would emit `lat` and `lng` as separate
 scalar fields.
-  - **Value of matching the array:** unmodified sauce4zwift overlay widgets read
-    `state.latlng` as a two-element array, so emitting the array means those
-    widgets work without changes — which is the entire point of the field-for-
-    field parity in STEP 18/19. Cost: ranchero must repack its two scalars into
-    an array in `format_state`.
-  - **Value of the separate scalars:** marginally simpler internally and
-    arguably cleaner JSON, but any widget expecting `latlng` breaks; it is a
-    documented API deviation that only makes sense if ranchero is *not* trying to
-    serve sauce's existing widgets.
-  - **Recommendation:** emit the `latlng` array for parity, unless serving
-    unmodified sauce widgets is explicitly a non-goal. Moot until the world-meta
-    tables are vendored (20.19 item 2). *Controls:* the `_formatState` deviation
-    in 20.19 item 2.
-→ **Answer (2026-05-24): Separate scalars.** ranchero will implement its own
-widgets; once those are proven working, the implementation is expected to diverge
-from sauce4zwift deliberately, and this is the first such divergence. Emit `lat`
-and `lng` as separate scalar fields and document the deviation. Serving
-unmodified sauce widgets is therefore *not* a binding constraint going forward —
-weigh future "parity vs. divergence" questions with that in mind.
 
-**QE2 — NINJA power-up privacy drop: match sauce or not?** *(explained
-2026-05-24.)* In Zwift, power-ups are in-game items; "NINJA" is the
+- **Value of matching the array:** unmodified sauce4zwift overlay widgets read
+  `state.latlng` as a two-element array, so emitting the array means those
+  widgets work without changes — which is the entire point of the field-for-
+  field parity in STEP 18/19. Cost: ranchero must repack its two scalars into
+  an array in `format_state`.
+- **Value of the separate scalars:** marginally simpler internally and
+  arguably cleaner JSON, but any widget expecting `latlng` breaks; it is a
+  documented API deviation that only makes sense if ranchero is _not_ trying to
+  serve sauce's existing widgets.
+- **Recommendation:** emit the `latlng` array for parity, unless serving
+  unmodified sauce widgets is explicitly a non-goal. Moot until the world-meta
+  tables are vendored (20.19 item 2). _Controls:_ the `_formatState` deviation
+  in 20.19 item 2.
+  → **Answer (2026-05-24): Separate scalars.** ranchero will implement its own
+  widgets; once those are proven working, the implementation is expected to diverge
+  from sauce4zwift deliberately, and this is the first such divergence. Emit `lat`
+  and `lng` as separate scalar fields and document the deviation. Serving
+  unmodified sauce widgets is therefore _not_ a binding constraint going forward —
+  weigh future "parity vs. divergence" questions with that in mind.
+
+**QE2 — NINJA power-up privacy drop: match sauce or not?** _(explained
+2026-05-24.)_ In Zwift, power-ups are in-game items; "NINJA" is the
 invisibility / stealth power-up that makes a rider disappear from other riders'
-screens for a period. sauce4zwift honours that by *dropping* a rider's player
+screens for a period. sauce4zwift honours that by _dropping_ a rider's player
 state while `activePowerUp === 'NINJA'` — it does not surface telemetry for a
 rider who has chosen to be invisible. The power-up type is the low 4 bits of the
 packed `aux3` field (`udp-node-msgs.proto:139`), and `NINJA` is enum value 6
 (`udp-node-msgs.proto:106`). ranchero does not decode `activePowerUp` and never
 drops these states. The question: should ranchero replicate this privacy
 behaviour (decode `activePowerUp`, drop states when it is NINJA)? It is a
-privacy/parity decision. *Controls:* a receive-side filter in 20.25.
+privacy/parity decision. _Controls:_ a receive-side filter in 20.25.
 → **Answer (2026-05-24): Yes — replicate the drop.** Not masking the data while
 the power-up is active would be a cheat: it would reveal a rider who has chosen to
 be hidden. Naming note — the in-game name for this power-up is **Ghost**; `NINJA`
@@ -2117,7 +2157,7 @@ is only the internal proto/wire enum name (value 6). Decode `activePowerUp` and
 drop the state while the Ghost/NINJA power-up is in use.
 
 **QE3 — Reduce `GameEvent::PlayerState` to `{ athlete_id }` (cleanup,
-yes/no)?** *(context added 2026-05-24.)* `GameEvent` is the internal broadcast
+yes/no)?** _(context added 2026-05-24.)_ `GameEvent` is the internal broadcast
 enum the relay layer sends to the web bridge. Its `PlayerState` variant carries
 eleven scalar fields today, but only `athlete_id` is read downstream — the stats
 fanout looks the athlete up in the registry, and the full proto travels
@@ -2127,36 +2167,37 @@ variant to `{ athlete_id }`; cost is re-touching about six test files and two
 relay tests for no functional change. **Recommendation: low-priority cleanup —
 do it opportunistically when the variant is edited for another reason** (for
 example, while adding the new `GameEvent` variants for chat/rideon in
-20.24 / 20.25). *Controls:* 20.19 item 1 only.
+20.24 / 20.25). _Controls:_ 20.19 item 1 only.
 
 ### F. Smaller match-sauce confirmations
 
 **QF1 — `find_best_udp_server` fall-through.**
 → **Research finding (2026-05-24): confirmed, plus two adjacent deviations.**
 Reading both implementations:
-  - **Confirmed (the original observation):** when `use_first_in_bounds` is set
-    but no server is in bounds, ranchero (`src/daemon/relay.rs:921-941`) falls
-    through to the nearest-centre server, whereas sauce (`zwift.mjs:2277-2299`)
-    returns `undefined` — i.e. "no swap".
-  - **Also observed — in-bounds test:** sauce checks only upper bounds
-    (`x <= xBound && y <= yBound`); ranchero checks all four
-    (`x_bound_min..=x_bound`, `y_bound_min..=y_bound`).
-  - **Also observed — distance reference:** sauce measures Euclidean distance to
-    the bound corner (`xBound - x`); ranchero measures to the bound *centre*
-    (`(x_bound_min + x_bound) / 2`).
+
+- **Confirmed (the original observation):** when `use_first_in_bounds` is set
+  but no server is in bounds, ranchero (`src/daemon/relay.rs:921-941`) falls
+  through to the nearest-centre server, whereas sauce (`zwift.mjs:2277-2299`)
+  returns `undefined` — i.e. "no swap".
+- **Also observed — in-bounds test:** sauce checks only upper bounds
+  (`x <= xBound && y <= yBound`); ranchero checks all four
+  (`x_bound_min..=x_bound`, `y_bound_min..=y_bound`).
+- **Also observed — distance reference:** sauce measures Euclidean distance to
+  the bound corner (`xBound - x`); ranchero measures to the bound _centre_
+  (`(x_bound_min + x_bound) / 2`).
   The two extra differences may be deliberate ranchero choices (ranchero added
   `x_bound_min` / `y_bound_min`, which sauce has no concept of) or drift from an
   older upstream — they should be reconciled against current upstream
   `findBestUDPServer`, not assumed to be bugs. **Recommendation:** match current
   upstream — return no-swap when nothing is in bounds — and decide deliberately
   on the bounds-test and centre-vs-corner differences. Low impact (only matters
-  when a pool exists and the rider is outside every server's bounds). *Controls:*
+  when a pool exists and the rider is outside every server's bounds). _Controls:_
   a branch in 20.25.
 
 **QF2 — State-refresher: should it also poll self, and quiet HTTP 429s?**
-*(reworded 2026-05-24.)* sauce's `_refreshStates` (`zwift.mjs:1998`) is the REST
+_(reworded 2026-05-24.)_ sauce's `_refreshStates` (`zwift.mjs:1998`) is the REST
 fallback that polls the watched rider's state between live packets. Two
-behaviours ranchero does not replicate: (1) when self ≠ watching, sauce *also*
+behaviours ranchero does not replicate: (1) when self ≠ watching, sauce _also_
 polls self's own state, so the logged-in rider's data stays fresh even while
 watching someone else; and (2) sauce suppresses log noise on HTTP 429
 (rate-limit) responses, treating them as expected backpressure rather than
@@ -2164,11 +2205,11 @@ errors — ranchero issues one `get_player_state(watched_id)` and logs all error
 alike. The question: adopt both behaviours? Both are low impact under the
 single-watched-athlete model and only matter once self-identity (QC1) and live
 watching-from-stream (20.25 item 3) are in place. **Recommendation: adopt both
-when self-identity lands; trivial additions.** *Controls:* 20.25 item 7.
+when self-identity lands; trivial additions.** _Controls:_ 20.25 item 7.
 
 **QF3 — Stale / duplicate-state guard.** (20.21.) Confirm we add sauce's
 `_preprocessState` rejection of `elapsed <= 0` to protect the rolling-window
-sums. *Controls:* the ingest guard in 20.21.
+sums. _Controls:_ the ingest guard in 20.21.
 → **Answer (2026-05-24): ok — add the guard.**
 
 ### Process
@@ -2214,7 +2255,7 @@ When a step encounters a decision that is acceptable in this version
 but worth revisiting later:
 
 - Add a numbered subsection under **Open items** (`20.N — short
-  title`).
+title`).
 - State where it came from, the current resolution, why it might come
   back, and a decision rule for when to revisit. Keep it concise:
   parking-lot entries should be readable within a minute.
