@@ -83,7 +83,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 11** — Relay: Ghost drop, heartbeat content, multipleLogins, refresher self/429
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 12** — 1 Hz nearby/groups processor + event sources + gap estimation
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

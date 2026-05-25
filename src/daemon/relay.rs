@@ -585,6 +585,7 @@ impl RuntimeInner {
 /// on the next inbound self-state. (STEP-12.14 §L1 / §L2)
 async fn run_state_refresher<A: AuthLogin>(
     auth: Arc<A>,
+    self_id: i64,
     watched_id: i64,
     inner: Arc<RuntimeInner>,
 ) {
@@ -598,6 +599,22 @@ async fn run_state_refresher<A: AuthLogin>(
 
     loop {
         tokio::time::sleep(delay).await;
+
+        // Poll self when watching someone else (sauce _refreshStates zwift.mjs:1998).
+        if self_id != watched_id {
+            match auth.get_player_state(self_id).await {
+                Ok(_) => {}
+                Err(zwift_api::Error::Status { status: 429, .. }) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        target: "ranchero::relay",
+                        error = %e,
+                        athlete_id = self_id,
+                        "relay.refresher.poll_error",
+                    );
+                }
+            }
+        }
 
         match auth.get_player_state(watched_id).await {
             Ok(Some(state)) => {
@@ -655,7 +672,19 @@ async fn run_state_refresher<A: AuthLogin>(
                     delay = (delay - (delay - MIN_DELAY) / 2).max(MIN_DELAY);
                 }
             }
-            Ok(None) | Err(_) => {
+            Ok(None) => {
+                delay = delay.mul_f64(1.15).min(MAX_DELAY);
+            }
+            Err(zwift_api::Error::Status { status: 429, .. }) => {
+                delay = delay.mul_f64(1.15).min(MAX_DELAY);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "ranchero::relay",
+                    error = %e,
+                    athlete_id = watched_id,
+                    "relay.refresher.poll_error",
+                );
                 delay = delay.mul_f64(1.15).min(MAX_DELAY);
             }
         }
@@ -753,6 +782,9 @@ pub struct HeartbeatScheduler<T: HeartbeatSink> {
     watching_rider_id: i64,
     course_id: i32,
     suspended: Arc<AtomicBool>,
+    portal: Option<bool>,
+    road_id: Option<u8>,
+    event_subgroup: Option<i64>,
 }
 
 impl<T: HeartbeatSink> HeartbeatScheduler<T> {
@@ -777,11 +809,29 @@ impl<T: HeartbeatSink> HeartbeatScheduler<T> {
             watching_rider_id,
             course_id,
             suspended,
+            portal: None,
+            road_id: None,
+            event_subgroup: None,
         }
     }
 
     pub fn with_interval(mut self, interval: std::time::Duration) -> Self {
         self.interval = interval;
+        self
+    }
+
+    pub fn with_portal(mut self, v: bool) -> Self {
+        self.portal = Some(v);
+        self
+    }
+
+    pub fn with_road_id(mut self, v: u8) -> Self {
+        self.road_id = Some(v);
+        self
+    }
+
+    pub fn with_event_subgroup(mut self, v: i64) -> Self {
+        self.event_subgroup = Some(v);
         self
     }
 
@@ -805,12 +855,17 @@ impl<T: HeartbeatSink> HeartbeatScheduler<T> {
             world_time,
             "relay.heartbeat.state",
         );
+        // road_id lives in aux3 bits [8..15]; preserve bits outside that range.
+        let aux3 = self.road_id.map(|r| (r as u32) << 8);
         zwift_proto::PlayerState {
-            id: Some(self.athlete_id),
-            just_watching: Some(true),
+            id:                Some(self.athlete_id),
+            just_watching:     Some(true),
             watching_rider_id: Some(self.watching_rider_id),
-            world: Some(self.course_id),
-            world_time: Some(world_time),
+            world:             Some(self.course_id),
+            world_time:        Some(world_time),
+            portal:            self.portal,
+            aux3,
+            group_id:          self.event_subgroup,
             ..Default::default()
         }
     }
@@ -2265,7 +2320,7 @@ impl RelayRuntime {
         let inner_for_refresher = Arc::clone(&inner);
         let state_refresher_abort = {
             let handle = tokio::spawn(async move {
-                run_state_refresher(auth_for_refresher, watched_id_i64, inner_for_refresher).await;
+                run_state_refresher(auth_for_refresher, athlete_id, watched_id_i64, inner_for_refresher).await;
             });
             let abort = handle.abort_handle();
             drop(handle);
@@ -3477,6 +3532,10 @@ where
                             .expect("watched_state mutex")
                             .athlete_id;
                         for state in &stc.states {
+                            // Drop Ghost/NINJA powerup states (aux3 low 4 bits = 6).
+                            if state.aux3.map(|a| a & 0xF == 6).unwrap_or(false) {
+                                continue;
+                            }
                             if let Some(athlete_id) = state.id {
                                 let _ = inner.game_events_tx.send(GameEvent::PlayerState {
                                     athlete_id,
@@ -3602,6 +3661,14 @@ where
                                 }
                             }
                         }
+                        // Warn when the server signals a simultaneous login on another
+                        // client (sauce zwift.mjs:2144).
+                        if stc.has_simult_login == Some(true) {
+                            tracing::warn!(
+                                target: "ranchero::relay",
+                                "relay.tcp.simultaneous_login",
+                            );
+                        }
                         // §N8: log the server's expunge reason when present.
                         if let Some(reason) = stc.expunge_reason {
                             tracing::info!(
@@ -3651,6 +3718,10 @@ where
                             .expect("watched_state mutex")
                             .athlete_id;
                         for state in &stc.states {
+                            // Drop Ghost/NINJA powerup states (aux3 low 4 bits = 6).
+                            if state.aux3.map(|a| a & 0xF == 6).unwrap_or(false) {
+                                continue;
+                            }
                             if let Some(athlete_id) = state.id {
                                 let _ = inner.game_events_tx.send(GameEvent::PlayerState {
                                     athlete_id,
