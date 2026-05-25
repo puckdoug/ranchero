@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
+use serde_json::Value;
 use tokio::sync::broadcast;
 use zwift_stats::{AthleteRegistry, AutoLapConfig, EventBehavior, EventSubgroup};
 use zwift_store::AthletesDb;
@@ -64,6 +65,10 @@ pub struct WebState {
     /// client task starts and decremented when it ends; reported by
     /// `ranchero status` as the web server's connection count.
     pub active_connections: Arc<AtomicUsize>,
+    /// Current game-state snapshot (sauce `stats.mjs:1250`).  `None` until
+    /// the first `game-state` event is received from the relay.  Used by the
+    /// formatter to populate the `gameState` field for the self athlete only.
+    pub game_state: Mutex<Option<Value>>,
 }
 
 impl WebState {
@@ -79,6 +84,7 @@ impl WebState {
             event_behavior:  EventBehavior::default(),
             auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
+            game_state:      Mutex::new(None),
         }
     }
 
@@ -98,6 +104,7 @@ impl WebState {
             event_behavior:  EventBehavior::default(),
             auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
+            game_state:      Mutex::new(None),
         }
     }
 
@@ -113,6 +120,7 @@ impl WebState {
             event_behavior:  EventBehavior::default(),
             auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
+            game_state:      Mutex::new(None),
         }
     }
 

@@ -5,7 +5,9 @@
       "Bash(git stash *)",
       "Bash(wait)",
       "Bash(git checkout *)",
-      "Bash(cargo build *)"
+      "Bash(cargo build *)",
+      "Bash(cargo check *)",
+      "Bash(grep -q \"FAILED\\\\|ok$\\\\|error\\\\[\" /private/tmp/claude-501/-Users-doug-Development-Zwift-ranchero/d609e358-11f2-4678-8eae-3a4b660965ef/tasks/bvz70wt8d.output)"
     ]
   },
   "hooks": {

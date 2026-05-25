@@ -91,7 +91,7 @@ tests are still failing.
   - [x] ① Tests (red)
   - [x] ② Implementation (green)
 - **Step 14** — Live event streams: chat, rideon, game-state, watching-athlete-change
-  - [ ] ① Tests (red)
+  - [x] ① Tests (red)
   - [ ] ② Implementation (green)
 - **Step 15** — Segment leaderboards: fetchers + `segments.sqlite` + evictor + active-segment
   - [ ] ① Tests (red)

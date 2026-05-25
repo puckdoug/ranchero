@@ -1265,6 +1265,10 @@ pub enum GameEvent {
         position:     i32,
         total_riders: i32,
     },
+    /// Emitted when the watched athlete changes (sauce `stats.mjs:2659`).
+    WatchingAthleteChange {
+        athlete_id: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

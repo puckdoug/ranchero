@@ -427,6 +427,10 @@ fn is_v2_event(event: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tokio::sync::broadcast;
+    use tokio::time::{timeout, Duration};
+    use crate::daemon::relay::GameEvent;
     use crate::web::state::WebState;
 
     // S12-5: "nearby" and "groups" events must not match individual athlete IDs.
@@ -440,6 +444,215 @@ mod tests {
         assert!(
             !event_matches_athlete("groups", 42, &state),
             "S12-5: 'groups' must not match individual athlete IDs",
+        );
+    }
+
+    // Helper: create a WebState with a live game-event channel and return the
+    // sender so tests can broadcast events.
+    fn make_state_with_events() -> (Arc<WebState>, broadcast::Sender<GameEvent>) {
+        let (tx, _) = broadcast::channel::<GameEvent>(64);
+        let state = Arc::new(WebState::new().and_game_events(tx.clone()));
+        (state, tx)
+    }
+
+    // S14-1: Broadcasting GameEvent::Chat causes a subscriber to the "chat"
+    // event on the "stats" source to receive a value containing playerId and
+    // message (sauce stats.mjs:2650).
+    #[tokio::test]
+    async fn chat_stream_emits_on_world_update() {
+        let (state, tx) = make_state_with_events();
+        let delegation = DelegationMap::new();
+        let mut handle = delegation
+            .subscribe("stats", "chat", &AthleteV2Query::default(), &state)
+            .expect("stats/chat subscription must succeed");
+
+        let _ = tx.send(GameEvent::Chat {
+            player_id:      99,
+            to_player_id:   None,
+            message:        Some("hello world".into()),
+            first_name:     Some("Alice".into()),
+            last_name:      Some("Test".into()),
+            country_code:   Some(1),
+            event_subgroup: None,
+        });
+
+        let received = timeout(Duration::from_millis(200), handle.sink.recv())
+            .await
+            .expect("chat event should arrive within 200 ms")
+            .expect("channel must not close");
+
+        let (value, _) = received;
+        assert_eq!(
+            value["playerId"], 99,
+            "chat payload must include playerId",
+        );
+        assert_eq!(
+            value["message"], "hello world",
+            "chat payload must include message",
+        );
+    }
+
+    // S14-2: Broadcasting GameEvent::RideOn causes a subscriber to the "rideon"
+    // event on the "stats" source to receive a value containing fromPlayerId and
+    // toPlayerId (sauce stats.mjs:2591).
+    #[tokio::test]
+    async fn rideon_stream_emits_on_world_update() {
+        let (state, tx) = make_state_with_events();
+        let delegation = DelegationMap::new();
+        let mut handle = delegation
+            .subscribe("stats", "rideon", &AthleteV2Query::default(), &state)
+            .expect("stats/rideon subscription must succeed");
+
+        let _ = tx.send(GameEvent::RideOn {
+            from_player_id: 11,
+            to_player_id:   22,
+            first_name:     "Bob".into(),
+            last_name:      "Test".into(),
+            country_code:   1,
+        });
+
+        let received = timeout(Duration::from_millis(200), handle.sink.recv())
+            .await
+            .expect("rideon event should arrive within 200 ms")
+            .expect("channel must not close");
+
+        let (value, _) = received;
+        assert_eq!(
+            value["fromPlayerId"], 11,
+            "rideon payload must include fromPlayerId",
+        );
+        assert_eq!(
+            value["toPlayerId"], 22,
+            "rideon payload must include toPlayerId",
+        );
+    }
+
+    // S14-3: The "game-state" subscription emits when game state is available in
+    // WebState (sauce stats.mjs:1250, item 20.20 item 2); and the athlete
+    // payload for the self athlete includes a non-null gameState field.
+    #[tokio::test]
+    async fn game_state_stream_and_field() {
+        use crate::daemon::relay::RuntimeState;
+
+        let self_id: u32 = 42;
+        let (tx, _) = broadcast::channel::<GameEvent>(64);
+        let state = Arc::new({
+            let mut s = WebState::new().and_game_events(tx.clone());
+            s.self_athlete_id = Some(self_id);
+            s
+        });
+
+        // Seed the self athlete in the registry.
+        state.registry.write().unwrap().upsert(self_id, 0, 0, 0.0, 0.0);
+
+        // Set a game_state object on WebState (the feature under test stores it here).
+        *state.game_state.lock().unwrap() = Some(serde_json::json!({"connected": true}));
+
+        // Part a: subscribing to the game-state stream must succeed.
+        let delegation = DelegationMap::new();
+        let mut gs_handle = delegation
+            .subscribe("stats", "game-state", &AthleteV2Query::default(), &state)
+            .expect("stats/game-state subscription must succeed");
+
+        // Trigger a state-change event; the implementation should emit a game-state
+        // update to subscribers (fanout currently ignores non-PlayerState events).
+        let _ = tx.send(GameEvent::StateChange(RuntimeState::TcpEstablished));
+
+        let gs_received = timeout(Duration::from_millis(200), gs_handle.sink.recv())
+            .await
+            .expect("game-state event should arrive within 200 ms")
+            .expect("channel must not close");
+
+        let (gs_value, _) = gs_received;
+        assert!(
+            !gs_value.is_null(),
+            "game-state stream must deliver a non-null game-state object",
+        );
+
+        // Part b: the per-self-athlete subscription must include gameState when
+        // WebState.game_state is set.
+        let mut per_athlete_handle = delegation
+            .subscribe(
+                "stats",
+                &format!("athlete/{self_id}"),
+                &AthleteV2Query::default(),
+                &state,
+            )
+            .expect("per-athlete subscription must succeed");
+
+        let _ = tx.send(GameEvent::PlayerState {
+            athlete_id:    self_id as i64,
+            power_w:       200,
+            cadence_u_hz:  0,
+            speed_mm_h:    0,
+            world_time_ms: 0,
+            world:         0,
+            sport:         0,
+            distance:      0,
+            z:             0.0,
+            draft:         0,
+            heartrate:     0,
+        });
+
+        let pa_received = timeout(Duration::from_millis(200), per_athlete_handle.sink.recv())
+            .await
+            .expect("per-athlete event should arrive within 200 ms")
+            .expect("channel must not close");
+
+        let (pa_value, _) = pa_received;
+        assert!(
+            !pa_value["gameState"].is_null(),
+            "gameState must be non-null for the self athlete when WebState.game_state is set",
+        );
+    }
+
+    // S14-4: Changing the watched athlete broadcasts a "watching-athlete-change"
+    // event to subscribers on the "stats" source (sauce stats.mjs:2659).
+    #[tokio::test]
+    async fn watching_athlete_change_emitted() {
+        let (state, tx) = make_state_with_events();
+        let delegation = DelegationMap::new();
+        let mut handle = delegation
+            .subscribe(
+                "stats",
+                "watching-athlete-change",
+                &AthleteV2Query::default(),
+                &state,
+            )
+            .expect("stats/watching-athlete-change subscription must succeed");
+
+        // Simulate a watched-athlete switch by broadcasting the dedicated event.
+        let _ = tx.send(GameEvent::WatchingAthleteChange { athlete_id: 77 });
+
+        let received = timeout(Duration::from_millis(200), handle.sink.recv())
+            .await
+            .expect("watching-athlete-change event should arrive within 200 ms")
+            .expect("channel must not close");
+
+        let (value, _) = received;
+        assert_eq!(
+            value["athleteId"], 77,
+            "watching-athlete-change payload must include athleteId",
+        );
+    }
+
+    // S14-5: Subscribing to the "app" source for "setting-change" must succeed.
+    // Today create_delegation only knows "stats" and "gameConnection" so this
+    // fails; registering the "app" source fixes it (sauce stats.mjs, item 20.24).
+    #[tokio::test]
+    async fn app_source_setting_change() {
+        let (state, _tx) = make_state_with_events();
+        let delegation = DelegationMap::new();
+        let result = delegation.subscribe(
+            "app",
+            "setting-change",
+            &AthleteV2Query::default(),
+            &state,
+        );
+        assert!(
+            result.is_ok(),
+            "subscribing to app/setting-change must succeed; got: {:?}",
+            result.err(),
         );
     }
 }
