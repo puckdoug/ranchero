@@ -141,7 +141,7 @@ async fn athlete_v1_handler(
             let ts_ms = athlete.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
             HttpResponse::Ok()
                 .json(format_athlete_data_v1(athlete, state.watching_id, state.self_athlete_id,
-                                             None, now, ts_ms))
+                                             None, now, ts_ms, None))
         }
         None => HttpResponse::NotFound().finish(),
     }
@@ -251,7 +251,7 @@ async fn nearby_v1_handler(state: web::Data<Arc<WebState>>) -> HttpResponse {
         .iter()
         .map(|(_, a)| {
             let ts_ms = a.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
-            (a, format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms))
+            (a, format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms, None))
         })
         .collect();
     entries.sort_by(|(a, _), (b, _)| {
@@ -282,7 +282,7 @@ async fn groups_v1_handler(state: web::Data<Arc<WebState>>) -> HttpResponse {
     let registry = state.registry.read().unwrap();
     let body = group_athletes(&registry, |a| {
         let ts_ms = a.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
-        format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms)
+        format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms, None)
     });
     HttpResponse::Ok().json(body)
 }

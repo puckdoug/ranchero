@@ -7,7 +7,11 @@
       "Bash(git checkout *)",
       "Bash(cargo build *)",
       "Bash(cargo check *)",
-      "Bash(grep -q \"FAILED\\\\|ok$\\\\|error\\\\[\" /private/tmp/claude-501/-Users-doug-Development-Zwift-ranchero/d609e358-11f2-4678-8eae-3a4b660965ef/tasks/bvz70wt8d.output)"
+      "Bash(grep -q \"FAILED\\\\|ok$\\\\|error\\\\[\" /private/tmp/claude-501/-Users-doug-Development-Zwift-ranchero/d609e358-11f2-4678-8eae-3a4b660965ef/tasks/bvz70wt8d.output)",
+      "Bash(echo \"---EXIT $?\")",
+      "Bash(grep -q \"---EXIT\" /private/tmp/claude-501/-Users-doug-Development-Zwift-ranchero/d609e358-11f2-4678-8eae-3a4b660965ef/tasks/bhm7hj1od.output)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(echo \"EXIT:$?\")"
     ]
   },
   "hooks": {

@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+<<<<<<< Updated upstream
 use zwift_stats::{RoadHistory, PlayerStateView, LatLng};
+=======
+use zwift_stats::{RoadHistory, PlayerStateView};
+>>>>>>> Stashed changes
 
 struct TestState {
     road_id: u32,
     reverse: bool,
     road_time: f64,
     course_id: u32,
+<<<<<<< Updated upstream
     world_time: f64,
+=======
+>>>>>>> Stashed changes
     lat: f64,
     lng: f64,
     event_subgroup_id: u32,
@@ -23,9 +30,12 @@ impl PlayerStateView for TestState {
     fn lng(&self) -> f64 {
         self.lng
     }
+<<<<<<< Updated upstream
     fn course_id(&self) -> u32 {
         self.course_id
     }
+=======
+>>>>>>> Stashed changes
     fn road_id(&self) -> u32 {
         self.road_id
     }
@@ -41,15 +51,19 @@ impl PlayerStateView for TestState {
     fn group_id(&self) -> u32 {
         self.group_id
     }
+<<<<<<< Updated upstream
     fn world_time(&self) -> f64 {
         self.world_time
     }
+=======
+>>>>>>> Stashed changes
     fn time(&self) -> f64 {
         self.time
     }
     fn event_distance(&self) -> f64 {
         self.event_distance
     }
+<<<<<<< Updated upstream
     fn latlng(&self) -> LatLng {
         LatLng { lat: self.lat, lng: self.lng }
     }
@@ -60,6 +74,8 @@ impl PlayerStateView for TestState {
     fn draft(&self) -> f64 { 0.0 }
     fn distance(&self) -> f64 { 0.0 }
     fn altitude(&self) -> f64 { 0.0 }
+=======
+>>>>>>> Stashed changes
     fn is_empty(&self) -> bool {
         false
     }
@@ -74,7 +90,10 @@ fn same_road_no_shift_appends_to_a() {
         reverse: false,
         road_time: 0.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -90,7 +109,10 @@ fn same_road_no_shift_appends_to_a() {
         reverse: false,
         road_time: 5.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 5.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -104,7 +126,10 @@ fn same_road_no_shift_appends_to_a() {
         reverse: false,
         road_time: 0.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -125,7 +150,10 @@ fn road_change_shifts_a_to_b_b_to_c() {
         reverse: false,
         road_time: 0.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -141,7 +169,10 @@ fn road_change_shifts_a_to_b_b_to_c() {
         reverse: false,
         road_time: 0.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -155,7 +186,10 @@ fn road_change_shifts_a_to_b_b_to_c() {
         reverse: false,
         road_time: 0.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 5.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -176,7 +210,10 @@ fn direction_change_shifts_when_delta_below_minus_001() {
         reverse: false,
         road_time: 10.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -192,7 +229,10 @@ fn direction_change_shifts_when_delta_below_minus_001() {
         reverse: false,
         road_time: 10.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -206,7 +246,10 @@ fn direction_change_shifts_when_delta_below_minus_001() {
         reverse: true,
         road_time: 5.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 5.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -227,7 +270,10 @@ fn direction_change_wipes_a_when_delta_in_minus_001_to_0() {
         reverse: false,
         road_time: 10.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -243,7 +289,10 @@ fn direction_change_wipes_a_when_delta_in_minus_001_to_0() {
         reverse: false,
         road_time: 10.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -257,7 +306,10 @@ fn direction_change_wipes_a_when_delta_in_minus_001_to_0() {
         reverse: true,
         road_time: 9.9995,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 5.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -278,7 +330,10 @@ fn course_change_resets_b_and_c() {
         reverse: false,
         road_time: 0.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -294,7 +349,10 @@ fn course_change_resets_b_and_c() {
         reverse: false,
         road_time: 0.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -308,7 +366,10 @@ fn course_change_resets_b_and_c() {
         reverse: false,
         road_time: 0.0,
         course_id: 2,
+<<<<<<< Updated upstream
         world_time: 5.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,
@@ -329,7 +390,10 @@ fn first_state_seeds_aroad_without_shift() {
         reverse: false,
         road_time: 0.0,
         course_id: 1,
+<<<<<<< Updated upstream
         world_time: 0.0,
+=======
+>>>>>>> Stashed changes
         lat: 0.0,
         lng: 0.0,
         event_subgroup_id: 0,

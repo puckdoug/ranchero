@@ -49,7 +49,7 @@ fn format_v1_spreads_event_leader_and_remaining_distance() {
     };
     let ad = ad_with_event(1, sg);
 
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
 
     assert_eq!(
         result["eventLeader"],
@@ -96,7 +96,7 @@ fn format_v1_spreads_event_sweeper() {
     };
     let ad = ad_with_event(1, sg);
 
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
 
     assert_eq!(
         result["eventSweeper"],
@@ -115,7 +115,7 @@ fn format_v1_spreads_event_sweeper() {
 fn format_v1_event_fields_absent_without_active_event() {
     let ad = AthleteData::new(1, 1, 0, 0.0, 0.0);
 
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
 
     for key in &["eventLeader", "eventSweeper", "remaining",
                   "remainingMetric", "remainingType", "remainingEnd"] {
@@ -143,7 +143,7 @@ fn format_v1_remaining_present_for_non_leader_participant() {
     };
     let ad = ad_with_event(1, sg); // athlete 1 is not in either list
 
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
 
     assert!(
         result.get("eventLeader").is_none(),

@@ -534,6 +534,7 @@ pub fn format_athlete_data_v1(
     profile:      Option<&CachedProfile>,
     now:          f64,
     ts_offset_ms: f64,
+    game_state:   Option<serde_json::Value>,
 ) -> Value {
     let id  = athlete.athlete_id;
     let ftp = profile.and_then(|p| p.ftp).map(|v| v as f64);
@@ -594,7 +595,7 @@ pub fn format_athlete_data_v1(
         event_subgroup_id:   athlete.event_subgroup.as_ref().map(|sg| sg.id),
         event_position:      athlete.event_position,
         event_participants:  athlete.event_participants,
-        game_state:          None,  // only emitted for the self athlete with a live session
+        game_state:          if self_id == Some(id) { game_state } else { None },
         gap:                 athlete.gap,
         gap_distance:        athlete.gap_distance,
         is_gap_est:          athlete.is_gap_est.then_some(true),

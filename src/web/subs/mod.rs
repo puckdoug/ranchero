@@ -325,7 +325,7 @@ fn create_delegation(
                 tokio::spawn(stats_fanout_task(rx, sinks_ref, state_ref, event_str))
             }
         }
-        "gameConnection" => {
+        "gameConnection" | "app" => {
             // No events emitted yet; task parks until aborted.
             tokio::spawn(std::future::pending::<()>())
         }
@@ -333,6 +333,33 @@ fn create_delegation(
     };
 
     Ok(Arc::new(DelegationHandle { sinks, abort_handle: task.abort_handle() }))
+}
+
+// ---------------------------------------------------------------------------
+// Sink broadcast helper
+// ---------------------------------------------------------------------------
+
+/// Fan a single `Value` out to all sinks in `sinks`, estimating byte cost and
+/// disconnecting any client whose buffer would overflow.
+fn broadcast_to_sinks(sinks: &mut Vec<ClientSink>, data: Value) {
+    let byte_estimate = serde_json::to_string(&data)
+        .map(|s| s.len())
+        .unwrap_or(256)
+        + 50;
+    sinks.retain(|sink| {
+        let queued = sink.buffered_bytes.load(Relaxed);
+        if queued + byte_estimate > MAX_BUFFERED_BYTES {
+            tracing::warn!(
+                buffered = queued,
+                "outbound buffer exceeded limit; disconnecting client"
+            );
+            sink.close_notify.notify_one();
+            false
+        } else {
+            sink.buffered_bytes.fetch_add(byte_estimate, Relaxed);
+            sink.tx.send((data.clone(), byte_estimate)).is_ok()
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +382,11 @@ async fn stats_fanout_task(
                     Ok(id) => id,
                     Err(_) => continue,
                 };
+                let game_state = if state.self_athlete_id == Some(athlete_id_u32) {
+                    state.game_state.lock().unwrap().clone()
+                } else {
+                    None
+                };
                 let data = {
                     let registry = state.registry.read().unwrap();
                     registry.get(athlete_id_u32).map(|a| {
@@ -363,36 +395,47 @@ async fn stats_fanout_task(
                             .map(|d| d.as_secs_f64())
                             .unwrap_or(0.0);
                         let ts_ms = a.wt_offset * 1000.0 + ZWIFT_EPOCH_MS as f64;
-                        format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms)
+                        format_athlete_data_v1(a, state.watching_id, state.self_athlete_id, None, now, ts_ms, game_state)
                     })
                 };
                 if let Some(data) = data {
-                    // Estimate the serialized byte size of the complete event frame.
-                    // The actual frame wraps `data` with ~50 bytes of event envelope.
-                    let byte_estimate = serde_json::to_string(&data)
-                        .map(|s| s.len())
-                        .unwrap_or(256)
-                        + 50;
-
-                    let mut sinks = sinks.lock().unwrap();
-                    sinks.retain(|sink| {
-                        let queued = sink.buffered_bytes.load(Relaxed);
-                        if queued + byte_estimate > MAX_BUFFERED_BYTES {
-                            // Queue too deep: fire the out-of-band close signal so
-                            // the subscription_task closes the session immediately,
-                            // regardless of how many frames are still in the sink.
-                            tracing::warn!(
-                                buffered = queued,
-                                "outbound buffer exceeded limit; disconnecting client"
-                            );
-                            sink.close_notify.notify_one();
-                            false // remove this sink
-                        } else {
-                            sink.buffered_bytes.fetch_add(byte_estimate, Relaxed);
-                            sink.tx.send((data.clone(), byte_estimate)).is_ok()
-                        }
-                    });
+                    broadcast_to_sinks(&mut sinks.lock().unwrap(), data);
                 }
+            }
+            Ok(GameEvent::Chat { player_id, to_player_id, message, first_name, last_name, country_code, event_subgroup }) => {
+                if event != "chat" { continue; }
+                let data = serde_json::json!({
+                    "playerId":      player_id,
+                    "toPlayerId":    to_player_id,
+                    "message":       message,
+                    "firstName":     first_name,
+                    "lastName":      last_name,
+                    "countryCode":   country_code,
+                    "eventSubgroup": event_subgroup,
+                });
+                broadcast_to_sinks(&mut sinks.lock().unwrap(), data);
+            }
+            Ok(GameEvent::RideOn { from_player_id, to_player_id, first_name, last_name, country_code }) => {
+                if event != "rideon" { continue; }
+                let data = serde_json::json!({
+                    "fromPlayerId": from_player_id,
+                    "toPlayerId":   to_player_id,
+                    "firstName":    first_name,
+                    "lastName":     last_name,
+                    "countryCode":  country_code,
+                });
+                broadcast_to_sinks(&mut sinks.lock().unwrap(), data);
+            }
+            Ok(GameEvent::StateChange(_)) => {
+                if event != "game-state" { continue; }
+                if let Some(gs) = state.game_state.lock().unwrap().clone() {
+                    broadcast_to_sinks(&mut sinks.lock().unwrap(), gs);
+                }
+            }
+            Ok(GameEvent::WatchingAthleteChange { athlete_id }) => {
+                if event != "watching-athlete-change" { continue; }
+                let data = serde_json::json!({ "athleteId": athlete_id });
+                broadcast_to_sinks(&mut sinks.lock().unwrap(), data);
             }
             Ok(_) => {}
             Err(broadcast::error::RecvError::Closed)    => break,

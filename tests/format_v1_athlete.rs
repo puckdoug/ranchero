@@ -31,7 +31,7 @@ use zwift_stats::MostRecentState;
 #[test]
 fn v1_athlete_block_matches_golden() {
     let ad     = build_athlete(&[]);
-    let actual = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let actual = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
 
     let golden_str = std::fs::read_to_string("tests/fixtures/format/v1_athlete.json")
         .expect("golden file missing — run 18.6-I to create tests/fixtures/format/v1_athlete.json");
@@ -47,7 +47,7 @@ fn v1_athlete_block_matches_golden() {
 #[test]
 fn watching_omitted_when_not_watching() {
     let ad     = build_athlete(&[]);
-    let result = format_athlete_data_v1(&ad, Some(9999), None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, Some(9999), None, None, 0.0, 0.0, None);
     assert!(
         result.get("watching").is_none(),
         "expected `watching` to be absent, got: {:?}",
@@ -59,7 +59,7 @@ fn watching_omitted_when_not_watching() {
 #[test]
 fn self_omitted_when_not_self() {
     let ad     = build_athlete(&[]);
-    let result = format_athlete_data_v1(&ad, None, Some(9999), None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, Some(9999), None, 0.0, 0.0, None);
     assert!(
         result.get("self").is_none(),
         "expected `self` to be absent, got: {:?}",
@@ -72,7 +72,7 @@ fn self_omitted_when_not_self() {
 fn is_gap_est_omitted_when_false() {
     let mut ad = build_athlete(&[]);
     ad.is_gap_est = false;
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
     assert!(
         result.get("isGapEst").is_none(),
         "expected `isGapEst` to be absent, got: {:?}",
@@ -85,7 +85,7 @@ fn is_gap_est_omitted_when_false() {
 fn last_lap_null_with_one_lap() {
     let ad     = build_athlete(&[]);
     assert_eq!(ad.lap_slices.len(), 1, "build_athlete must start with one lap");
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
     assert_eq!(
         result["lastLap"],
         serde_json::Value::Null,
@@ -98,7 +98,7 @@ fn last_lap_null_with_one_lap() {
 fn state_null_with_no_state() {
     let ad     = build_athlete(&[]);
     assert!(ad.most_recent_state.is_none(), "build_athlete must have no state");
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
     assert_eq!(
         result["state"],
         serde_json::Value::Null,
@@ -122,7 +122,7 @@ fn state_latlng_is_array_not_separate_scalars() {
         event_subgroup_id: 0, group_id: 0, time: 0.0, event_distance: 0.0,
         grade: 0.0,
     });
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
     let state = &result["state"];
 
     let latlng = &state["latlng"];

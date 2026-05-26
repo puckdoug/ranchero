@@ -43,7 +43,7 @@ fn format_v1_populates_athlete_from_cache() {
         weight_g:   Some(72_000),
     };
 
-    let result = format_athlete_data_v1(&ad, None, None, Some(&profile), 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, Some(&profile), 0.0, 0.0, None);
 
     assert_ne!(
         result["athlete"],
@@ -72,7 +72,7 @@ fn tss_computed_from_ftp() {
         weight_g:   None,
     };
 
-    let result = format_athlete_data_v1(&ad, None, None, Some(&profile), 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, Some(&profile), 0.0, 0.0, None);
 
     assert_ne!(
         result["stats"]["power"]["tss"],
@@ -89,7 +89,7 @@ fn tss_computed_from_ftp() {
 fn athlete_null_on_cache_miss() {
     let ad = build_athlete(&[]);
 
-    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0);
+    let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
 
     assert_eq!(
         result["athlete"],

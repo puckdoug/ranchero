@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use crate::PlayerStateView;
+<<<<<<< Updated upstream
 use crate::periods::{ROAD_TIME_OFFSET, ROAD_TIME_SCALE, BOUNDARY_ERROR_TERM};
 
 pub type RoadKey = RoadDesc;
@@ -36,10 +37,17 @@ pub struct RoadHistory {
     tier_b: Vec<RoadPoint>,
     c_road: Option<RoadDesc>,
     tier_c: Vec<RoadPoint>,
+=======
+
+#[derive(Debug)]
+pub struct RoadHistory {
+    // Placeholder: will implement three-tier ladder in STEP 15.13
+>>>>>>> Stashed changes
 }
 
 impl RoadHistory {
     pub fn new() -> Self {
+<<<<<<< Updated upstream
         RoadHistory {
             a_road: None,
             tier_a: Vec::new(),
@@ -117,6 +125,17 @@ impl RoadHistory {
             }
         }
         None
+=======
+        RoadHistory {}
+    }
+
+    pub fn is_empty(&self) -> bool {
+        true
+    }
+
+    pub fn record(&mut self, state: &dyn PlayerStateView, prev: Option<&dyn PlayerStateView>) {
+        // Placeholder: will implement in STEP 15.13-I
+>>>>>>> Stashed changes
     }
 }
 
@@ -125,6 +144,7 @@ impl Default for RoadHistory {
         Self::new()
     }
 }
+<<<<<<< Updated upstream
 
 pub fn compare_road_positions(
     p1: &RoadHistory,
@@ -174,3 +194,5 @@ pub fn compare_road_positions(
 
     None
 }
+=======
+>>>>>>> Stashed changes

@@ -243,7 +243,7 @@ pub fn run_pipeline(fixture_path: &str) -> Value {
     let reg = state.registry.read().unwrap();
     let mut map = serde_json::Map::new();
     for (id, athlete) in reg.iter() {
-        let json = format_athlete_data_v1(athlete, None, None, None, 0.0, 0.0);
+        let json = format_athlete_data_v1(athlete, None, None, None, 0.0, 0.0, None);
         map.insert(id.to_string(), json);
     }
     Value::Object(map)
