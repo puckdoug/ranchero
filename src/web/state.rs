@@ -74,6 +74,14 @@ pub struct WebState {
     /// which is the production default until Step 18's world-meta tables
     /// land; tests attach an in-memory lookup directly.
     pub segment_env: Option<Arc<dyn SegmentLookup + Send + Sync>>,
+    /// In-memory key/value store backing the `getSetting` / `setSetting`
+    /// read-only RPC pair.  Widgets persist UI-only preferences here; values
+    /// do not propagate to Zwift (QA1).
+    pub settings: Mutex<HashMap<String, Value>>,
+    /// Ring of recent chat messages exposed by the `getChatHistory` RPC.
+    /// Producers (the `chat` subscription source) push entries onto the back;
+    /// readers receive a clone of the current buffer.
+    pub chat_history: Mutex<Vec<Value>>,
 }
 
 impl WebState {
@@ -91,6 +99,8 @@ impl WebState {
             active_connections: Arc::new(AtomicUsize::new(0)),
             game_state:      Mutex::new(None),
             segment_env:     None,
+            settings:        Mutex::new(HashMap::new()),
+            chat_history:    Mutex::new(Vec::new()),
         }
     }
 
@@ -112,6 +122,8 @@ impl WebState {
             active_connections: Arc::new(AtomicUsize::new(0)),
             game_state:      Mutex::new(None),
             segment_env:     None,
+            settings:        Mutex::new(HashMap::new()),
+            chat_history:    Mutex::new(Vec::new()),
         }
     }
 
@@ -129,6 +141,8 @@ impl WebState {
             active_connections: Arc::new(AtomicUsize::new(0)),
             game_state:      Mutex::new(None),
             segment_env:     None,
+            settings:        Mutex::new(HashMap::new()),
+            chat_history:    Mutex::new(Vec::new()),
         }
     }
 

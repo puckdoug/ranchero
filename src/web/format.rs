@@ -385,7 +385,7 @@ pub fn format_bucket_stats_v2(
 // v1 state formatter
 // ---------------------------------------------------------------------------
 
-fn format_state(state: &MostRecentState) -> Value {
+pub fn format_state(state: &MostRecentState) -> Value {
     json!({
         "worldTime":        state.world_time,
         "speed":            state.speed,

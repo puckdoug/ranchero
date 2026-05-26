@@ -98,7 +98,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 16** — RPC read-only getter surface
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 17** — Route tables (`zwift-routes` crate) + route progress
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)
