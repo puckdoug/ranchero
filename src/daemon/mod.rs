@@ -24,7 +24,7 @@ pub use control::{ControlRequest, ControlResponse, ShutdownResponse, StatusRespo
     format_not_running, format_status_response, control_socket_path};
 pub use pidfile::Pidfile;
 pub use probe::{OsProcessProbe, ProcessProbe};
-pub use stores::Stores;
+pub use stores::{Stores, segments_evict_tick_loop, SEGMENTS_EVICT_TICK_INTERVAL_SECS};
 
 use crate::config::ResolvedConfig;
 use crate::logging::LogOpts;

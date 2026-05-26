@@ -81,13 +81,11 @@ fn make_player_state(
         world_time:  Some(world_time as i64),
         road_time:   Some(road_time as i32),
         distance:    Some(distance as i32),
-        // The "current road" is packed in f19's bits in production wire
-        // frames; we use proto_view's exposed accessors via the public
-        // `route_player_state` path, so we set the underlying fields that
-        // make `ProtoView::road_id` / `reverse` / `course_id` resolve to
-        // the test values. If the implementer needs a different proto
-        // field to drive these, the test will need a corresponding tweak.
-        f19:         Some(road_id),
+        // ProtoView decodes:
+        //   road_id  from aux3 bits 8-23 → aux3 = road_id << 8
+        //   reverse  from f19 bit 2 (set = forward, clear = reverse)
+        aux3:        Some(road_id << 8),
+        f19:         Some(0b100),
         ..Default::default()
     }
 }

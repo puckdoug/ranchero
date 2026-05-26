@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use zwift_stats::{
-    apply_event_state, auto_lap_check, start_athlete_lap,
+    active_segment_check, apply_event_state, auto_lap_check, start_athlete_lap,
     ExpWeightedAvg, MostRecentState, PlayerStateView,
     periods::SMOOTH_GRADE_WINDOW,
 };
@@ -187,6 +187,14 @@ pub fn route_player_state(
         now,
         wall_clock_ms,
     );
+
+    // Active-segment detection (sauce stats.mjs:3077). Skipped when no
+    // SegmentLookup is attached; production paths will attach one once
+    // Step 18's world-meta tables land.
+    if let Some(env) = state.segment_env.as_ref() {
+        let mrs = ad.most_recent_state.expect("most_recent_state was just set above");
+        active_segment_check(ad, &mrs, env.as_ref(), now);
+    }
 }
 
 /// Populate the athlete registry from `proto`, then emit a

@@ -95,7 +95,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 15** — Segment leaderboards: fetchers + `segments.sqlite` + evictor + active-segment
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 16** — RPC read-only getter surface
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use serde_json::Value;
 use tokio::sync::broadcast;
-use zwift_stats::{AthleteRegistry, AutoLapConfig, EventBehavior, EventSubgroup};
+use zwift_stats::{AthleteRegistry, AutoLapConfig, EventBehavior, EventSubgroup, SegmentLookup};
 use zwift_store::AthletesDb;
 use crate::web::format::CachedProfile;
 
@@ -69,6 +69,11 @@ pub struct WebState {
     /// the first `game-state` event is received from the relay.  Used by the
     /// formatter to populate the `gameState` field for the self athlete only.
     pub game_state: Mutex<Option<Value>>,
+    /// Segment-geometry source consulted by `route_player_state` to drive
+    /// `active_segment_check`. `None` disables active-segment detection,
+    /// which is the production default until Step 18's world-meta tables
+    /// land; tests attach an in-memory lookup directly.
+    pub segment_env: Option<Arc<dyn SegmentLookup + Send + Sync>>,
 }
 
 impl WebState {
@@ -85,6 +90,7 @@ impl WebState {
             auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
             game_state:      Mutex::new(None),
+            segment_env:     None,
         }
     }
 
@@ -105,6 +111,7 @@ impl WebState {
             auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
             game_state:      Mutex::new(None),
+            segment_env:     None,
         }
     }
 
@@ -121,6 +128,7 @@ impl WebState {
             auto_lap_config: None,
             active_connections: Arc::new(AtomicUsize::new(0)),
             game_state:      Mutex::new(None),
+            segment_env:     None,
         }
     }
 
@@ -128,6 +136,25 @@ impl WebState {
     /// subscription source can create receivers.
     pub fn and_game_events(mut self, tx: broadcast::Sender<GameEvent>) -> Self {
         self.game_events_tx = Some(tx);
+        self
+    }
+
+    /// Builder method: attach a segment-geometry source so
+    /// `route_player_state` can drive `active_segment_check`. Returning
+    /// `Self` lets test setups chain `WebState::new().with_segment_env(env)`.
+    pub fn with_segment_env(
+        mut self,
+        env: Arc<dyn SegmentLookup + Send + Sync>,
+    ) -> Self {
+        self.segment_env = Some(env);
+        self
+    }
+
+    /// Builder method: set the watched athlete id. Used by tests that need
+    /// `WebState::new()` plus a non-default watcher; production paths set
+    /// this in `with_registry`.
+    pub fn with_watching(mut self, id: u32) -> Self {
+        self.watching_id = Some(id);
         self
     }
 }

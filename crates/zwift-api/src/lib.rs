@@ -571,6 +571,92 @@ impl ZwiftAuth {
             .map_err(|e| Error::ProtobufDecode(e.to_string()))
     }
 
+    /// Fetch the live cross-segment leaderboard from
+    /// `GET /live-segment-results-service/leaders` (protobuf-lite
+    /// `SegmentResults`). Mirrors sauce4zwift's `getLiveSegmentLeaders`
+    /// (`zwift.mjs:633`). Entries whose `id` is 0 / unset are filtered out,
+    /// matching sauce's `data.results.filter(x => +x.id)`.
+    pub async fn get_live_segment_leaders(&self) -> Result<Vec<zwift_proto::SegmentResult>> {
+        use prost::Message as _;
+
+        let resp = self.fetch_pb("/live-segment-results-service/leaders").await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        let results = zwift_proto::SegmentResults::decode(&bytes[..])
+            .map_err(|e| Error::ProtobufDecode(e.to_string()))?;
+        Ok(results
+            .segment_results
+            .into_iter()
+            .filter(|r| r.id.unwrap_or(0) != 0)
+            .collect())
+    }
+
+    /// Fetch the live leaderboard for one segment from
+    /// `GET /live-segment-results-service/leaderboard/{segment_id}`
+    /// (protobuf-lite `SegmentResults`). Mirrors sauce4zwift's
+    /// `getLiveSegmentLeaderboard` (`zwift.mjs:639`). Unlike
+    /// [`Self::get_live_segment_leaders`], no `id` filter is applied.
+    pub async fn get_live_segment_leaderboard(
+        &self,
+        segment_id: i64,
+    ) -> Result<Vec<zwift_proto::SegmentResult>> {
+        use prost::Message as _;
+
+        let urn = format!("/live-segment-results-service/leaderboard/{segment_id}");
+        let resp = self.fetch_pb(&urn).await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        let results = zwift_proto::SegmentResults::decode(&bytes[..])
+            .map_err(|e| Error::ProtobufDecode(e.to_string()))?;
+        Ok(results.segment_results)
+    }
+
+    /// Fetch segment results for one or more segment ids from
+    /// `GET /api/segment-results?world_id=1&segment_id=…` (protobuf-lite
+    /// `SegmentResults`). Mirrors sauce4zwift's `getSegmentResults`
+    /// (`zwift.mjs:645`). The returned list is sorted by `elapsed_ms`
+    /// ascending, matching sauce's `data.results.sort((a, b) => a.elapsed -
+    /// b.elapsed)`.
+    pub async fn get_segment_results(
+        &self,
+        segment_ids: &[i64],
+    ) -> Result<Vec<zwift_proto::SegmentResult>> {
+        use prost::Message as _;
+
+        let mut query = String::from("world_id=1");
+        for id in segment_ids {
+            query.push_str(&format!("&segment_id={id}"));
+        }
+        let urn = format!("/api/segment-results?{query}");
+
+        let resp = self.fetch_pb(&urn).await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        let mut results = zwift_proto::SegmentResults::decode(&bytes[..])
+            .map_err(|e| Error::ProtobufDecode(e.to_string()))?
+            .segment_results;
+        results.sort_by_key(|r| r.elapsed_ms);
+        Ok(results)
+    }
+
     /// Fetch the current `PlayerState` for `athlete_id` from
     /// `GET /relay/worlds/1/players/{id}` (protobuf-lite). Mirrors
     /// sauce4zwift's `getPlayerState` (`zwift.mjs:613`); a 404
