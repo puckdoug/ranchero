@@ -1,18 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo test *)",
+      "Bash(cargo *)",
       "Bash(git stash *)",
       "Bash(wait)",
       "Bash(git checkout *)",
-      "Bash(cargo build *)",
-      "Bash(cargo check *)",
-      "Bash(grep -q \"FAILED\\\\|ok$\\\\|error\\\\[\" /private/tmp/claude-501/-Users-doug-Development-Zwift-ranchero/d609e358-11f2-4678-8eae-3a4b660965ef/tasks/bvz70wt8d.output)",
-      "Bash(echo \"---EXIT $?\")",
-      "Bash(grep -q \"---EXIT\" /private/tmp/claude-501/-Users-doug-Development-Zwift-ranchero/d609e358-11f2-4678-8eae-3a4b660965ef/tasks/bhm7hj1od.output)",
-      "Bash(echo \"EXIT: $?\")",
-      "Bash(echo \"EXIT:$?\")",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(ps -p 28552 -o stat,etime)"
+    ],
+    "deny": [
+      "Bash(git commit)"
     ]
   },
   "hooks": {
@@ -22,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // empty' | grep -qE '\\.rs$' && cargo clippy --workspace 2>&1",
+            "command": "jq -r '.tool_input.file_path // empty' | grep -qE '\\.rs$' && cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1",
             "timeout": 120,
             "statusMessage": "Running cargo clippy..."
           }
