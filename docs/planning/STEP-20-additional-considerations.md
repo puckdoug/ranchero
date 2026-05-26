@@ -101,7 +101,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 17** — Route tables (`zwift-routes` crate) + route progress
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 18** — World-meta tables + position projection (lat/lng scalars)
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

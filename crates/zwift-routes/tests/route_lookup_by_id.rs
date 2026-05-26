@@ -19,7 +19,7 @@ fn lady_liberty_resolves_to_its_distance_world_and_segments() {
     assert_eq!(route.name, "Lady Liberty");
     assert_eq!(route.slug, "lady-liberty");
     assert_eq!(route.world, "new-york");
-    assert_eq!(route.lap, true);
+    assert!(route.lap);
 
     // Lap distance is 12.361 km in the upstream data.
     assert_relative_eq!(route.distance, 12.361, epsilon = 1e-9);
