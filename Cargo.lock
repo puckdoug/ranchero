@@ -5409,6 +5409,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zwift-routes"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "zwift-stats"
 version = "0.1.0"
 dependencies = [
