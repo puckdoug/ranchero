@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-<<<<<<< Updated upstream
 use zwift_stats::{MostRecentState, PlayerStateView, LatLng};
-=======
-use zwift_stats::{MostRecentState, PlayerStateView};
->>>>>>> Stashed changes
 
 #[test]
 fn most_recent_state_implements_view_trait() {
@@ -19,10 +15,7 @@ fn most_recent_state_implements_view_trait() {
         altitude: 100.0,
         lat: 40.7128,
         lng: -74.0060,
-<<<<<<< Updated upstream
         course_id: 0,
-=======
->>>>>>> Stashed changes
         road_id: 42,
         road_time: 50.0,
         reverse: false,
@@ -30,10 +23,7 @@ fn most_recent_state_implements_view_trait() {
         group_id: 10,
         time: 123.45,
         event_distance: 500.0,
-<<<<<<< Updated upstream
         grade: 0.0,
-=======
->>>>>>> Stashed changes
     };
 
     // Should be able to treat it as a trait object
@@ -54,10 +44,7 @@ fn view_trait_exposes_road_event_and_group_fields() {
         altitude: 100.0,
         lat: 40.7128,
         lng: -74.0060,
-<<<<<<< Updated upstream
         course_id: 0,
-=======
->>>>>>> Stashed changes
         road_id: 42,
         road_time: 50.0,
         reverse: false,
@@ -65,10 +52,7 @@ fn view_trait_exposes_road_event_and_group_fields() {
         group_id: 10,
         time: 123.45,
         event_distance: 500.0,
-<<<<<<< Updated upstream
         grade: 0.0,
-=======
->>>>>>> Stashed changes
     };
 
     // Access through trait
@@ -84,7 +68,6 @@ fn view_trait_exposes_road_event_and_group_fields() {
     assert_eq!(view.time(), 123.45, "time should be accessible");
     assert_eq!(view.event_distance(), 500.0, "event_distance should be accessible");
 }
-<<<<<<< Updated upstream
 
 // 15.12-T: motion and energy accessors added in C-3.1
 #[test]
@@ -123,5 +106,3 @@ fn view_trait_exposes_motion_and_energy_fields() {
     assert!((ll.lat - 51.5074).abs() < 1e-9, "latlng.lat");
     assert!((ll.lng - (-0.1278)).abs() < 1e-9, "latlng.lng");
 }
-=======
->>>>>>> Stashed changes

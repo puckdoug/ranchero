@@ -2,7 +2,6 @@
 
 //! [`AthleteData`] and [`AthleteRegistry`] — per-athlete state and garbage collection.
 
-<<<<<<< Updated upstream
 use std::collections::{HashMap, HashSet};
 use crate::{
     DataBucket, DataSlice, ExpWeightedAvg, Sample,
@@ -22,45 +21,24 @@ pub struct EventSubgroup {
     pub invited_leaders: Vec<u64>,
     /// Athlete ids (from EventSubgroupProtobuf.invited_sweepers) who sweep the event.
     pub invited_sweepers: Vec<u64>,
-=======
-use std::collections::HashMap;
-use crate::{
-    DataBucket, DataSlice, ExpWeightedAvg,
-    wbal::WBalAccumulator, zones::ZonesAccumulator,
-    streams::Streams, road_history::RoadHistory,
-    periods::{ATHLETE_GC_TTL_SECS, GROUP_GC_TTL_SECS},
-};
-
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct EventSubgroup {
-    // Placeholder: event subgroup tracking
->>>>>>> Stashed changes
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct EventPrivacy {
-<<<<<<< Updated upstream
     pub hide_w_bal: bool,
     pub hide_ftp: bool,
-=======
-    // Placeholder: event privacy flags
->>>>>>> Stashed changes
 }
 
 pub trait PlayerStateView {
     fn lat(&self) -> f64;
     fn lng(&self) -> f64;
-<<<<<<< Updated upstream
     fn latlng(&self) -> LatLng;
     fn course_id(&self) -> u32;
-=======
->>>>>>> Stashed changes
     fn road_id(&self) -> u32;
     fn road_time(&self) -> f64;
     fn reverse(&self) -> bool;
     fn event_subgroup_id(&self) -> u32;
     fn group_id(&self) -> u32;
-<<<<<<< Updated upstream
     fn world_time(&self) -> f64;
     fn time(&self) -> f64;
     fn event_distance(&self) -> f64;
@@ -71,10 +49,6 @@ pub trait PlayerStateView {
     fn draft(&self) -> f64;
     fn distance(&self) -> f64;
     fn altitude(&self) -> f64;
-=======
-    fn time(&self) -> f64;
-    fn event_distance(&self) -> f64;
->>>>>>> Stashed changes
     fn is_empty(&self) -> bool;
 }
 
@@ -90,10 +64,7 @@ pub struct MostRecentState {
     pub altitude: f64,
     pub lat: f64,
     pub lng: f64,
-<<<<<<< Updated upstream
     pub course_id: u32,
-=======
->>>>>>> Stashed changes
     pub road_id: u32,
     pub road_time: f64,
     pub reverse: bool,
@@ -101,10 +72,7 @@ pub struct MostRecentState {
     pub group_id: u32,
     pub time: f64,
     pub event_distance: f64,
-<<<<<<< Updated upstream
     pub grade: f64,
-=======
->>>>>>> Stashed changes
 }
 
 impl PlayerStateView for MostRecentState {
@@ -116,7 +84,6 @@ impl PlayerStateView for MostRecentState {
         self.lng
     }
 
-<<<<<<< Updated upstream
     fn latlng(&self) -> LatLng {
         LatLng { lat: self.lat, lng: self.lng }
     }
@@ -125,8 +92,6 @@ impl PlayerStateView for MostRecentState {
         self.course_id
     }
 
-=======
->>>>>>> Stashed changes
     fn road_id(&self) -> u32 {
         self.road_id
     }
@@ -147,13 +112,10 @@ impl PlayerStateView for MostRecentState {
         self.group_id
     }
 
-<<<<<<< Updated upstream
     fn world_time(&self) -> f64 {
         self.world_time
     }
 
-=======
->>>>>>> Stashed changes
     fn time(&self) -> f64 {
         self.time
     }
@@ -162,7 +124,6 @@ impl PlayerStateView for MostRecentState {
         self.event_distance
     }
 
-<<<<<<< Updated upstream
     fn speed(&self) -> f64 {
         self.speed
     }
@@ -191,8 +152,6 @@ impl PlayerStateView for MostRecentState {
         self.altitude
     }
 
-=======
->>>>>>> Stashed changes
     fn is_empty(&self) -> bool {
         false
     }
@@ -227,21 +186,15 @@ pub struct AthleteData {
     pub gap: Option<f64>,
     pub gap_distance: Option<f64>,
     pub is_gap_est: bool,
-<<<<<<< Updated upstream
     pub gap_speed_ema: Option<ExpWeightedAvg>,
-=======
->>>>>>> Stashed changes
     pub group_id: Option<u32>,
     pub event_subgroup: Option<EventSubgroup>,
     pub event_privacy: EventPrivacy,
     pub disabled_by_event: bool,
     pub event_start_pending: bool,
     pub auto_lap_mark: Option<f64>,
-<<<<<<< Updated upstream
     pub event_position: Option<u32>,
     pub event_participants: Option<u32>,
-=======
->>>>>>> Stashed changes
 }
 
 impl AthleteData {
@@ -264,11 +217,7 @@ impl AthleteData {
             slice_counter: 0,
             w_bal: WBalAccumulator::new(),
             time_in_power_zones: ZonesAccumulator::new(),
-<<<<<<< Updated upstream
             smooth_grade: ExpWeightedAvg::new(SMOOTH_GRADE_WINDOW, 0.0),
-=======
-            smooth_grade: ExpWeightedAvg::new(8.0, 0.0),
->>>>>>> Stashed changes
             streams: Streams::new(),
             road_history: RoadHistory::new(),
             lap_slices: Vec::new(),
@@ -278,21 +227,15 @@ impl AthleteData {
             gap: None,
             gap_distance: None,
             is_gap_est: false,
-<<<<<<< Updated upstream
             gap_speed_ema: None,
-=======
->>>>>>> Stashed changes
             group_id: None,
             event_subgroup: None,
             event_privacy: EventPrivacy::default(),
             disabled_by_event: false,
             event_start_pending: false,
             auto_lap_mark: None,
-<<<<<<< Updated upstream
             event_position: None,
             event_participants: None,
-=======
->>>>>>> Stashed changes
         };
 
         // Push initial lap slice

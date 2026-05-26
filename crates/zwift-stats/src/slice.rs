@@ -10,15 +10,12 @@ pub struct DataSlice {
     pub course_id: u32,
     pub sport: u8,
     pub bucket: DataBucket,
-<<<<<<< Updated upstream
     pub incomplete: bool,
     pub segment_id: Option<u32>,
     pub start_world_time: f64,
     pub event_subgroup_id: Option<u32>,
     pub start_event_distance: f64,
     pub end_event_distance: Option<f64>,
-=======
->>>>>>> Stashed changes
 }
 
 impl DataSlice {
@@ -37,15 +34,12 @@ impl DataSlice {
             course_id: ad.course_id,
             sport: ad.sport,
             bucket: ad.bucket.clone_reset(),
-<<<<<<< Updated upstream
             incomplete: false,
             segment_id: None,
             start_world_time: 0.0,
             event_subgroup_id: None,
             start_event_distance: 0.0,
             end_event_distance: None,
-=======
->>>>>>> Stashed changes
         }
     }
 
