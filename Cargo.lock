@@ -3034,6 +3034,7 @@ dependencies = [
  "zwift-relay",
  "zwift-stats",
  "zwift-store",
+ "zwift-worlds",
 ]
 
 [[package]]
@@ -5436,4 +5437,13 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "zwift-worlds"
+version = "0.1.0"
+dependencies = [
+ "approx",
+ "serde",
+ "serde_json",
 ]
