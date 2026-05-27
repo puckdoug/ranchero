@@ -121,6 +121,9 @@ fn state_latlng_is_array_not_separate_scalars() {
         course_id: 0, road_id: 0, road_time: 0.0, reverse: false,
         event_subgroup_id: 0, group_id: 0, time: 0.0, event_distance: 0.0,
         grade: 0.0,
+        x: 0.0,
+        y: 0.0,
+        progress: 0.0,
     });
     let result = format_athlete_data_v1(&ad, None, None, None, 0.0, 0.0, None);
     let state = &result["state"];

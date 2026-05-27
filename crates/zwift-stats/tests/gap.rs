@@ -41,6 +41,9 @@ fn record_road(
         time: 0.0,
         event_distance: 0.0,
         grade: 0.0,
+        x: 0.0,
+        y: 0.0,
+        progress: 0.0,
     };
     history.record(&state, None);
 }
@@ -169,6 +172,9 @@ fn make_state_raw(
         time: 0.0,
         event_distance: 0.0,
         grade: 0.0,
+        x: 0.0,
+        y: 0.0,
+        progress: 0.0,
     }
 }
 
@@ -304,6 +310,9 @@ fn make_state_with_speed(course_id: u32, road_id: u32, rpct: f64, world_time: f6
         time: 0.0,
         event_distance: 0.0,
         grade: 0.0,
+        x: 0.0,
+        y: 0.0,
+        progress: 0.0,
     }
 }
 

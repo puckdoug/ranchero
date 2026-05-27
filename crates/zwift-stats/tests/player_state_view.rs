@@ -24,6 +24,9 @@ fn most_recent_state_implements_view_trait() {
         time: 123.45,
         event_distance: 500.0,
         grade: 0.0,
+        x: 0.0,
+        y: 0.0,
+        progress: 0.0,
     };
 
     // Should be able to treat it as a trait object
@@ -53,6 +56,9 @@ fn view_trait_exposes_road_event_and_group_fields() {
         time: 123.45,
         event_distance: 500.0,
         grade: 0.0,
+        x: 0.0,
+        y: 0.0,
+        progress: 0.0,
     };
 
     // Access through trait
@@ -92,6 +98,9 @@ fn view_trait_exposes_motion_and_energy_fields() {
         time: 60.0,
         event_distance: 800.0,
         grade: 0.0,
+        x: 0.0,
+        y: 0.0,
+        progress: 0.0,
     };
 
     let view: &dyn PlayerStateView = &state;

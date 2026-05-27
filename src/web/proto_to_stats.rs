@@ -64,10 +64,20 @@ pub fn route_player_state(
     let hr_bpm      = proto.heartrate.unwrap_or(0) as f64;
     let draft       = proto.draft.unwrap_or(0) as f64;
 
-    // TODO: apply world-meta adjustment: (z - seaLevel + eleOffset) / 100 *
-    // physicsSlopeScale.  That requires vendoring the world-meta tables,
-    // deferred to a later step.
-    let altitude = proto.z.unwrap_or(0.0) as f64 / 100.0;
+    let world_meta = zwift_worlds::WorldMeta::by_course_id(course_id as i32);
+    let z_cm = proto.z.unwrap_or(0.0) as f64;
+    let altitude = match world_meta {
+        Some(meta) => meta.adjust_altitude(z_cm),
+        None       => z_cm / 100.0,
+    };
+    let proto_x = proto.x.unwrap_or(0.0) as f64;
+    let proto_y = proto.y_altitude.unwrap_or(0.0) as f64;
+    let (lat, lng) = match world_meta {
+        Some(meta) => meta.project_lat_lng(proto_x, proto_y),
+        None       => (0.0, 0.0),
+    };
+    let (mercator_x, mercator_y) = zwift_worlds::web_mercator_projection(lat, lng);
+    let progress = ((proto.progress.unwrap_or(0) >> 8) & 0xff) as f64 / 0xff as f64;
     let distance = proto.distance.unwrap_or(0) as f64;
 
     let mut registry = state.registry.write().unwrap();
@@ -164,8 +174,10 @@ pub fn route_player_state(
         draft,
         distance,
         altitude,
-        lat:               view.lat(),
-        lng:               view.lng(),
+        lat,
+        lng,
+        x:                 mercator_x,
+        y:                 mercator_y,
         course_id,
         road_id:           view.road_id(),
         road_time:         view.road_time(),
@@ -175,6 +187,7 @@ pub fn route_player_state(
         time:              view.time(),
         event_distance:    view.event_distance(),
         grade,
+        progress,
     });
 
     let sg_lookup = state.event_subgroups.read().unwrap();

@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "worldId": 1,
+    "courseId": 6,
+    "name": "Watopia",
+    "latOffset": -11.644904,
+    "lonOffset": 166.95,
+    "latDegDist": 110568.7,
+    "lonDegDist": 109394.66,
+    "physicsSlopeScale": 100.0,
+    "seaLevel": 0.0,
+    "eleOffset": 0.0,
+    "flippedHack": false,
+    "waterPlaneLevel": 0.0
+  }
+]

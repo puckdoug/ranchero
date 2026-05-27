@@ -687,6 +687,24 @@ impl ZwiftAuth {
         Ok(Some(state))
     }
 
+    /// Fetch the global Zwift game-info document from `GET /api/game_info`
+    /// (JSON response). Mirrors sauce4zwift's `getGameInfo` (`zwift.mjs:681`).
+    /// The returned value is the raw JSON tree so callers can pull out only
+    /// the fields they need without committing to a typed schema.
+    pub async fn get_game_info(&self) -> Result<serde_json::Value> {
+        let resp = self.fetch("/api/game_info").await?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        if !status.is_success() {
+            return Err(Error::Status {
+                status: status.as_u16(),
+                body: String::from_utf8_lossy(&bytes).into_owned(),
+            });
+        }
+        serde_json::from_slice::<serde_json::Value>(&bytes)
+            .map_err(|e| Error::AuthFailedBadSchema(e.to_string()))
+    }
+
     /// GET helper that mirrors [`Self::fetch`] but adds
     /// `Accept: application/x-protobuf-lite` so the server returns
     /// the protobuf-lite encoding sauce uses for `fetchPB` endpoints

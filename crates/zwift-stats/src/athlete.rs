@@ -52,7 +52,7 @@ pub trait PlayerStateView {
     fn is_empty(&self) -> bool;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct MostRecentState {
     pub world_time: f64,
     pub speed: f64,
@@ -64,6 +64,10 @@ pub struct MostRecentState {
     pub altitude: f64,
     pub lat: f64,
     pub lng: f64,
+    /// Web-Mercator-projected tile x-coordinate in `[0, 1]`.
+    pub x: f64,
+    /// Web-Mercator-projected tile y-coordinate in `[0, 1]`.
+    pub y: f64,
     pub course_id: u32,
     pub road_id: u32,
     pub road_time: f64,
@@ -73,6 +77,8 @@ pub struct MostRecentState {
     pub time: f64,
     pub event_distance: f64,
     pub grade: f64,
+    /// Workout progress fraction in `[0, 1]`, decoded from `(proto.progress >> 8) & 0xff) / 0xff`.
+    pub progress: f64,
 }
 
 impl PlayerStateView for MostRecentState {

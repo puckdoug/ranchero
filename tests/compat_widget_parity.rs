@@ -124,6 +124,9 @@ fn known_most_recent_state() -> MostRecentState {
         time:             0.0,
         event_distance:   0.0,
         grade:            0.0,
+        x:                0.0,
+        y:                0.0,
+        progress:         0.0,
     }
 }
 

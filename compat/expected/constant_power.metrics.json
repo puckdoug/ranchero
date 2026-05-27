@@ -225,9 +225,10 @@
         0.0
       ],
       "power": 250.0,
+      "progress": 0.0,
       "reverse": true,
+      "roadCompletion": 1005000.0,
       "roadId": 0,
-      "roadTime": 1005000.0,
       "speed": 35.0,
       "time": 0.0,
       "worldTime": 8.0

@@ -104,7 +104,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 18** — World-meta tables + position projection (lat/lng scalars)
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 - **Step 19** — Persistence wiring audit + `GameEvent::PlayerState` cleanup
   - [ ] ① Tests (red)
   - [ ] ② Implementation (green)

@@ -29,6 +29,9 @@ fn make_state(time: f64, event_subgroup_id: u32, event_distance: f64) -> MostRec
         time,
         event_distance,
         grade: 0.0,
+        x: 0.0,
+        y: 0.0,
+        progress: 0.0,
     }
 }
 
