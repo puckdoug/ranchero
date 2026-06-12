@@ -7,7 +7,8 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio::sync::broadcast;
 use zwift_stats::{AthleteRegistry, AutoLapConfig, EventBehavior, EventSubgroup, SegmentLookup};
-use zwift_store::AthletesDb;
+use zwift_store::{AthleteRecord, AthletesDb, SegmentsDb};
+use crate::daemon::Stores;
 use crate::web::format::CachedProfile;
 
 use crate::daemon::relay::GameEvent;
@@ -26,8 +27,35 @@ impl ProfileCache {
         Self { live: Mutex::new(HashMap::new()), db }
     }
 
+    /// Insert a freshly-fetched profile into the live layer and write through
+    /// to `athletes.sqlite` so the row survives a daemon restart. Live data is
+    /// authoritative; the SQLite fallback is consulted only on cache miss.
     pub fn insert_live(&self, id: u32, profile: CachedProfile) {
-        self.live.lock().unwrap().insert(id, profile);
+        self.live.lock().unwrap().insert(id, profile.clone());
+
+        let mut data = serde_json::Map::new();
+        if let Some(s) = &profile.first_name { data.insert("firstName".to_string(), serde_json::Value::String(s.clone())); }
+        if let Some(s) = &profile.last_name  { data.insert("lastName".to_string(),  serde_json::Value::String(s.clone())); }
+        if let Some(v) = profile.ftp         { data.insert("ftp".to_string(),       serde_json::Value::from(v)); }
+        if let Some(v) = profile.weight_g    { data.insert("weight".to_string(),    serde_json::Value::from(v)); }
+
+        let last_seen = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let rec = AthleteRecord {
+            id:        id as i64,
+            data:      serde_json::Value::Object(data),
+            last_seen,
+        };
+        if let Err(e) = self.db.upsert(&rec) {
+            tracing::warn!(
+                target: "ranchero::web::profile_cache",
+                error = %e,
+                athlete_id = id,
+                "profile_cache.upsert.failed",
+            );
+        }
     }
 
     pub fn get(&self, id: u32) -> Option<CachedProfile> {
@@ -82,6 +110,13 @@ pub struct WebState {
     /// Producers (the `chat` subscription source) push entries onto the back;
     /// readers receive a clone of the current buffer.
     pub chat_history: Mutex<Vec<Value>>,
+    /// Read-through profile cache backed by `athletes.sqlite`. Populated by
+    /// `with_stores`; `None` for the legacy test constructors that don't
+    /// open the daemon's on-disk SQLite databases.
+    profile_cache: Option<Arc<ProfileCache>>,
+    /// Handle to `segments.sqlite` for the segment-leaderboard fetchers and
+    /// the periodic evictor. Populated by `with_stores`.
+    segments_db: Option<Arc<SegmentsDb>>,
 }
 
 impl WebState {
@@ -101,6 +136,8 @@ impl WebState {
             segment_env:     None,
             settings:        Mutex::new(HashMap::new()),
             chat_history:    Mutex::new(Vec::new()),
+            profile_cache:   None,
+            segments_db:     None,
         }
     }
 
@@ -124,6 +161,8 @@ impl WebState {
             segment_env:     None,
             settings:        Mutex::new(HashMap::new()),
             chat_history:    Mutex::new(Vec::new()),
+            profile_cache:   None,
+            segments_db:     None,
         }
     }
 
@@ -143,6 +182,8 @@ impl WebState {
             segment_env:     None,
             settings:        Mutex::new(HashMap::new()),
             chat_history:    Mutex::new(Vec::new()),
+            profile_cache:   None,
+            segments_db:     None,
         }
     }
 
@@ -170,6 +211,34 @@ impl WebState {
     pub fn with_watching(mut self, id: u32) -> Self {
         self.watching_id = Some(id);
         self
+    }
+
+    /// Builder method: attach the daemon's on-disk SQLite stores. Wraps the
+    /// athletes DB in a `ProfileCache` (write-through, two-layer) and keeps a
+    /// handle to the segments DB so the leaderboard fetchers and the
+    /// periodic evictor reach the same file the daemon opened at startup.
+    /// Step 19 wires this from `run_daemon` so `Stores::open` is no longer
+    /// inert (20.28 item 3).
+    pub fn with_stores(mut self, stores: Stores) -> Self {
+        let Stores { kv: _, athletes, segments } = stores;
+        self.profile_cache = Some(Arc::new(ProfileCache::new(athletes)));
+        self.segments_db   = Some(Arc::new(segments));
+        self
+    }
+
+    /// Read-through profile cache backed by `athletes.sqlite`. Panics if
+    /// the cache wasn't attached via `with_stores`; production wiring in
+    /// `run_daemon` always attaches it.
+    pub fn profile_cache(&self) -> &ProfileCache {
+        self.profile_cache
+            .as_deref()
+            .expect("profile_cache: WebState built without with_stores()")
+    }
+
+    /// Handle to `segments.sqlite`. `None` for the legacy test
+    /// constructors; production wiring attaches it via `with_stores`.
+    pub fn segments_db(&self) -> Option<&Arc<SegmentsDb>> {
+        self.segments_db.as_ref()
     }
 }
 

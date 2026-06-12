@@ -102,19 +102,7 @@ async fn nearby_ws_emits_sorted_array_not_single_athlete() {
     let sub_resp = ws_recv(&mut ws).await;
     assert_eq!(sub_resp["success"], true, "subscribe must succeed; got {sub_resp}");
 
-    tx.send(GameEvent::PlayerState {
-        athlete_id:    1001,
-        power_w:       200,
-        cadence_u_hz:  5000,
-        speed_mm_h:    36_000_000,
-        world_time_ms: 1_000_000,
-        world:         0,
-        sport:         0,
-        distance:      0,
-        z:             0.0,
-        draft:         0,
-        heartrate:     0,
-    }).expect("broadcast send must succeed");
+    tx.send(GameEvent::PlayerState { athlete_id:    1001 }).expect("broadcast send must succeed");
 
     let event = tokio::time::timeout(
         std::time::Duration::from_secs(2),
@@ -163,19 +151,7 @@ async fn ws_subscribe_receives_event_then_unsubscribe_stops_stream() {
     assert_eq!(sub_resp["uid"],     1,           "got {sub_resp}");
 
     // Inject a PlayerState event for athlete 1001 to trigger a stats update.
-    tx.send(GameEvent::PlayerState {
-        athlete_id:    1001,
-        power_w:       200,
-        cadence_u_hz:  5000,
-        speed_mm_h:    36_000_000,
-        world_time_ms: 1_000_000,
-        world:         0,
-        sport:         0,
-        distance:      0,
-        z:             0.0,
-        draft:         0,
-        heartrate:     0,
-    }).expect("broadcast send must succeed");
+    tx.send(GameEvent::PlayerState { athlete_id:    1001 }).expect("broadcast send must succeed");
 
     // Receive the resulting event frame.
     let event = tokio::time::timeout(
@@ -203,19 +179,7 @@ async fn ws_subscribe_receives_event_then_unsubscribe_stops_stream() {
     // Send another event; no further event frame should arrive.
     // After unsubscribe the subscription task is aborted, leaving no receivers —
     // the send failure is expected and intentional.
-    tx.send(GameEvent::PlayerState {
-        athlete_id:    1001,
-        power_w:       250,
-        cadence_u_hz:  5200,
-        speed_mm_h:    37_000_000,
-        world_time_ms: 2_000_000,
-        world:         0,
-        sport:         0,
-        distance:      0,
-        z:             0.0,
-        draft:         0,
-        heartrate:     0,
-    }).ok();
+    tx.send(GameEvent::PlayerState { athlete_id:    1001 }).ok();
 
     let nothing = tokio::time::timeout(
         std::time::Duration::from_millis(200),

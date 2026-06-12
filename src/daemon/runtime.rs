@@ -277,7 +277,7 @@ async fn run_daemon(
     paths: DaemonPaths,
     cfg: ResolvedConfig,
     capture_file: Option<std::fs::File>,
-    _stores: Stores,
+    stores: Stores,
 ) -> io::Result<()> {
     use std::sync::Arc;
     use tokio::net::UnixListener;
@@ -300,7 +300,8 @@ async fn run_daemon(
         tokio::sync::broadcast::channel::<super::relay::GameEvent>(4096);
     let web_state = {
         let mut s = crate::web::WebState::with_rpc(crate::web::RpcRegistry::new())
-            .and_game_events(game_events_tx);
+            .and_game_events(game_events_tx)
+            .with_stores(stores);
         s.event_behavior   = cfg.event_behavior;
         s.watching_id      = cfg.watched_athlete_id.map(|id| id as u32);
         s.self_athlete_id  = cfg.watched_athlete_id.map(|id| id as u32);

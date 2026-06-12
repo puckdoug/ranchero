@@ -90,14 +90,7 @@ async fn subscribe(ws: &mut WsStream, source: &str, event: &str, sub_id: u64) {
 /// batch so the fanout task can process them as they arrive.
 async fn flood(tx: &broadcast::Sender<GameEvent>) {
     for i in 0u64..65_000 {
-        tx.send(GameEvent::PlayerState {
-            athlete_id:    1001,
-            power_w:       (i % 400) as i32,
-            cadence_u_hz:  5000,
-            speed_mm_h:    36_000_000,
-            world_time_ms: (i * 1000) as i64,
-            world: 0, sport: 0, distance: 0, z: 0.0, draft: 0, heartrate: 0,
-        }).ok();
+        tx.send(GameEvent::PlayerState { athlete_id:    1001 }).ok();
         if i % 128 == 0 {
             tokio::task::yield_now().await;
         }

@@ -87,19 +87,7 @@ async fn ws_recv(ws: &mut WsStream) -> serde_json::Value {
 ///
 /// Power=200W, HR=120bpm, speed=36_000_000mm/h (36km/h).
 fn known_player_state(athlete_id: i64) -> GameEvent {
-    GameEvent::PlayerState {
-        athlete_id,
-        power_w:       200,
-        cadence_u_hz:  80_000,
-        speed_mm_h:    36_000_000,
-        world_time_ms: 60_000,
-        world:         5,
-        sport:         0,
-        distance:      10_000,
-        z:             0.0,
-        draft:         0,
-        heartrate:     120,
-    }
+    GameEvent::PlayerState { athlete_id }
 }
 
 /// A `MostRecentState` that matches the `known_player_state` values.

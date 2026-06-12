@@ -77,19 +77,7 @@ async fn ws_recv(ws: &mut WsStream) -> serde_json::Value {
 }
 
 fn player_state(athlete_id: i64) -> GameEvent {
-    GameEvent::PlayerState {
-        athlete_id,
-        power_w:       200,
-        cadence_u_hz:  5000,
-        speed_mm_h:    36_000_000,
-        world_time_ms: 60_000,
-        world:         5,
-        sport:         0,
-        distance:      0,
-        z:             0.0,
-        draft:         0,
-        heartrate:     0,
-    }
+    GameEvent::PlayerState { athlete_id }
 }
 
 fn state_with_watching_athlete(tx: broadcast::Sender<GameEvent>) -> Arc<WebState> {

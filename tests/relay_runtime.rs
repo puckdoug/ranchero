@@ -3324,14 +3324,10 @@ async fn state_refresh_synthesizes_fake_server_packet_from_polled_state() {
 
     let mut found_synthesized = false;
     while let Ok(event) = events_rx.try_recv() {
-        if let GameEvent::PlayerState {
-            athlete_id: 54321,
-            power_w: 213,
-            cadence_u_hz: 1_500_000,
-            speed_mm_h: 40_000,
-            ..
-        } = event
-        {
+        // Step 19: `GameEvent::PlayerState` carries only `athlete_id`. The
+        // power / cadence / speed scalars travel on the dedicated
+        // `player_states()` proto stream.
+        if let GameEvent::PlayerState { athlete_id: 54321 } = event {
             found_synthesized = true;
             break;
         }

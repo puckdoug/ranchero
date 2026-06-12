@@ -107,7 +107,7 @@ tests are still failing.
   - [x] ② Implementation (green)
 - **Step 19** — Persistence wiring audit + `GameEvent::PlayerState` cleanup
   - [x] ① Tests (red)
-  - [ ] ② Implementation (green)
+  - [x] ② Implementation (green)
 
 ### Step 1 — Profile fetch and `Profile` struct
 

@@ -70,20 +70,10 @@ async fn ws_recv(ws: &mut WsStream) -> serde_json::Value {
     }
 }
 
-fn player_state(athlete_id: i64, power_w: i32) -> GameEvent {
-    GameEvent::PlayerState {
-        athlete_id,
-        power_w,
-        cadence_u_hz:  5000,
-        speed_mm_h:    36_000_000,
-        world_time_ms: 1_000_000,
-        world:         0,
-        sport:         0,
-        distance:      0,
-        z:             0.0,
-        draft:         0,
-        heartrate:     0,
-    }
+fn player_state(athlete_id: i64, _power_w: i32) -> GameEvent {
+    // Step 19: `GameEvent::PlayerState` carries only `athlete_id`. The
+    // power-watts parameter survives so call sites need not change.
+    GameEvent::PlayerState { athlete_id }
 }
 
 #[tokio::test]

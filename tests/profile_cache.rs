@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Step 2 — failing test for ProfileCache live-then-SQLite fallback.
-//
-// Red state: ProfileCache does not exist. The test will fail to compile
-// until Step 2 implementation adds it to src/web/state.rs.
+// ProfileCache: live data takes precedence over the SQLite fallback, and
+// `insert_live` writes through to `athletes.sqlite` so a fresh cache reopened
+// against the same file sees the same profile (Step 19 write-through).
 //
 // The test exercises the two-layer lookup:
-//   1. When a live profile has been inserted, get() returns it.
-//   2. When no live profile is present, get() falls back to the AthletesDb.
+//   1. When a live profile has been inserted, get() returns it; the SQLite
+//      row pre-populated for the same id is overwritten by the write-through.
+//   2. For a different id with no live entry, get() falls back to the
+//      AthletesDb row written directly by the test.
 
 use serde_json::json;
 use tempfile::tempdir;
@@ -15,14 +16,13 @@ use zwift_store::{AthletesDb, AthleteRecord};
 use ranchero::web::format::CachedProfile;
 use ranchero::web::state::ProfileCache;
 
-// S2-F: live data takes precedence; when live data is absent the SQLite
-// record is returned instead.
 #[test]
 fn profile_cache_serves_live_then_falls_back_to_sqlite() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("athletes.sqlite");
 
-    // Pre-populate SQLite with a profile at FTP 150.
+    // Pre-populate SQLite with two profiles: id 42 (will be overwritten by
+    // a live insert) and id 99 (no live insert, exercises fallback).
     {
         let db = AthletesDb::open(&db_path).unwrap();
         db.upsert(&AthleteRecord {
@@ -30,9 +30,15 @@ fn profile_cache_serves_live_then_falls_back_to_sqlite() {
             data:      json!({ "firstName": "SqliteRider", "ftp": 150 }),
             last_seen: 0,
         }).unwrap();
+        db.upsert(&AthleteRecord {
+            id:        99,
+            data:      json!({ "firstName": "FallbackRider", "ftp": 175 }),
+            last_seen: 0,
+        }).unwrap();
     }
 
-    // Phase 1: cache with a live entry at FTP 300 — live takes precedence.
+    // Phase 1: cache with a live entry at FTP 300 — live takes precedence
+    // and `insert_live` writes through to `athletes.sqlite` (Step 19).
     {
         let cache = ProfileCache::new(AthletesDb::open(&db_path).unwrap());
         cache.insert_live(42, CachedProfile {
@@ -55,19 +61,19 @@ fn profile_cache_serves_live_then_falls_back_to_sqlite() {
         );
     }
 
-    // Phase 2: fresh cache with no live data — SQLite fallback is used.
+    // Phase 2: fresh cache, no live data for id 99 — SQLite fallback wins.
     {
         let cache = ProfileCache::new(AthletesDb::open(&db_path).unwrap());
 
-        let got = cache.get(42).expect("SQLite fallback must return a profile");
+        let got = cache.get(99).expect("SQLite fallback must return a profile");
         assert_eq!(
             got.ftp,
-            Some(150),
+            Some(175),
             "SQLite record must be returned when no live data is available",
         );
         assert_eq!(
             got.first_name.as_deref(),
-            Some("SqliteRider"),
+            Some("FallbackRider"),
             "SQLite record name must be returned when no live data is available",
         );
     }

@@ -621,19 +621,7 @@ async fn run_state_refresher<A: AuthLogin>(
                 // Synthesize a "fake server packet" so downstream
                 // consumers see polled state the same as wire-delivered.
                 if let Some(athlete_id) = state.id {
-                    let _ = inner.game_events_tx.send(GameEvent::PlayerState {
-                        athlete_id,
-                        power_w:       state.power.unwrap_or(0),
-                        cadence_u_hz:  state.cadence_u_hz.unwrap_or(0),
-                        speed_mm_h:    state.speed.unwrap_or(0),
-                        world_time_ms: state.world_time.unwrap_or(0),
-                        world:         state.world.unwrap_or(0),
-                        sport:         state.sport.unwrap_or(0),
-                        distance:      state.distance.unwrap_or(0),
-                        z:             state.z.unwrap_or(0.0),
-                        draft:         state.draft.unwrap_or(0),
-                        heartrate:     state.heartrate.unwrap_or(0),
-                    });
+                    let _ = inner.game_events_tx.send(GameEvent::PlayerState { athlete_id });
                     // Surface the full proto for the relay-to-web bridge,
                     // which needs fields the scalar event above omits.
                     // `PlayerState` is `Copy`, so this passes a copy.
@@ -1196,28 +1184,17 @@ impl WatchedAthleteState {
 /// High-level events emitted by the orchestrator for downstream
 /// consumers (web/WS server, the per-athlete data model).
 ///
-/// `Eq` is intentionally absent: the `z` (altitude) field is `f32` and
-/// floating-point types do not implement `Eq`.
+/// `Eq` is intentionally absent: other variants in this enum carry `f32`
+/// fields, and floating-point types do not implement `Eq`.
+///
+/// Step 19 — `PlayerState` carries only `athlete_id`. Downstream consumers
+/// (the stats fanout) look the athlete up in the registry; the full
+/// `zwift_proto::PlayerState` travels separately on the dedicated
+/// `player_states()` broadcast for the relay-to-web bridge.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GameEvent {
     PlayerState {
-        athlete_id:    i64,
-        power_w:       i32,
-        cadence_u_hz:  i32,
-        speed_mm_h:    u32,
-        world_time_ms: i64,
-        /// Course identifier: `proto.world`.
-        world:         i32,
-        /// Sport: `proto.sport` (0 = cycling, 1 = running, 2 = swimming).
-        sport:         i32,
-        /// Per-session distance in metres: `proto.distance`.
-        distance:      i32,
-        /// Raw altitude from `proto.z`; world-meta adjustment deferred.
-        z:             f32,
-        /// Draft factor: `proto.draft`.
-        draft:         i32,
-        /// Heart rate in bpm: `proto.heartrate`.
-        heartrate:     i32,
+        athlete_id: i64,
     },
     Latency {
         latency_ms: i64,
@@ -3548,19 +3525,7 @@ where
                                 continue;
                             }
                             if let Some(athlete_id) = state.id {
-                                let _ = inner.game_events_tx.send(GameEvent::PlayerState {
-                                    athlete_id,
-                                    power_w:       state.power.unwrap_or(0),
-                                    cadence_u_hz:  state.cadence_u_hz.unwrap_or(0),
-                                    speed_mm_h:    state.speed.unwrap_or(0),
-                                    world_time_ms: state.world_time.unwrap_or(0),
-                                    world:         state.world.unwrap_or(0),
-                                    sport:         state.sport.unwrap_or(0),
-                                    distance:      state.distance.unwrap_or(0),
-                                    z:             state.z.unwrap_or(0.0),
-                                    draft:         state.draft.unwrap_or(0),
-                                    heartrate:     state.heartrate.unwrap_or(0),
-                                });
+                                let _ = inner.game_events_tx.send(GameEvent::PlayerState { athlete_id });
                                 // Surface the full proto for the relay-to-web
                                 // bridge, which needs fields the scalar event
                                 // above omits. `PlayerState` is `Copy`.
@@ -3741,19 +3706,7 @@ where
                                 continue;
                             }
                             if let Some(athlete_id) = state.id {
-                                let _ = inner.game_events_tx.send(GameEvent::PlayerState {
-                                    athlete_id,
-                                    power_w:       state.power.unwrap_or(0),
-                                    cadence_u_hz:  state.cadence_u_hz.unwrap_or(0),
-                                    speed_mm_h:    state.speed.unwrap_or(0),
-                                    world_time_ms: state.world_time.unwrap_or(0),
-                                    world:         state.world.unwrap_or(0),
-                                    sport:         state.sport.unwrap_or(0),
-                                    distance:      state.distance.unwrap_or(0),
-                                    z:             state.z.unwrap_or(0.0),
-                                    draft:         state.draft.unwrap_or(0),
-                                    heartrate:     state.heartrate.unwrap_or(0),
-                                });
+                                let _ = inner.game_events_tx.send(GameEvent::PlayerState { athlete_id });
                                 let _ = inner.player_states_tx.send(*state);
                                 if athlete_id == watched_id {
                                     {
@@ -5260,19 +5213,12 @@ mod tests {
             .expect("broadcast must deliver event");
 
         match event {
-            GameEvent::PlayerState {
-                athlete_id,
-                power_w,
-                cadence_u_hz,
-                speed_mm_h,
-                world_time_ms,
-                ..
-            } => {
+            GameEvent::PlayerState { athlete_id } => {
                 assert_eq!(athlete_id, 12345);
-                assert_eq!(power_w, 250);
-                assert_eq!(cadence_u_hz, 80_000_000);
-                assert_eq!(speed_mm_h, 35_000_000);
-                assert_eq!(world_time_ms, 200);
+                // Step 19: the variant only carries `athlete_id`. The
+                // power/cadence/speed/world_time scalars travel on the
+                // dedicated `player_states()` proto stream verified by
+                // `player_state_proto_surfaced_on_inbound_with_full_fidelity`.
             }
             other => panic!("expected GameEvent::PlayerState; got {other:?}"),
         }
@@ -5716,9 +5662,11 @@ mod tests {
             .expect("S8-1: GameEvent::PlayerState must arrive via UDP inbound");
 
         match event {
-            GameEvent::PlayerState { athlete_id, power_w, .. } => {
+            GameEvent::PlayerState { athlete_id } => {
                 assert_eq!(athlete_id, 42, "S8-1: athlete_id must match proto.id");
-                assert_eq!(power_w, 300, "S8-1: power_w must match proto.power");
+                // Step 19: the variant only carries `athlete_id`. The
+                // power/cadence/speed scalars travel on the dedicated
+                // `player_states()` proto stream.
             }
             other => panic!("expected GameEvent::PlayerState; got {other:?}"),
         }

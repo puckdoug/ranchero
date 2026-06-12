@@ -623,19 +623,7 @@ mod tests {
             )
             .expect("per-athlete subscription must succeed");
 
-        let _ = tx.send(GameEvent::PlayerState {
-            athlete_id:    self_id as i64,
-            power_w:       200,
-            cadence_u_hz:  0,
-            speed_mm_h:    0,
-            world_time_ms: 0,
-            world:         0,
-            sport:         0,
-            distance:      0,
-            z:             0.0,
-            draft:         0,
-            heartrate:     0,
-        });
+        let _ = tx.send(GameEvent::PlayerState { athlete_id: self_id as i64 });
 
         let pa_received = timeout(Duration::from_millis(200), per_athlete_handle.sink.recv())
             .await

@@ -118,19 +118,7 @@ async fn ws_new_client_can_subscribe_after_previous_client_disconnects() {
         "client B subscribe must succeed after client A disconnected; got {r}");
 
     // Client B must receive events normally.
-    tx.send(GameEvent::PlayerState {
-        athlete_id:    1001,
-        power_w:       200,
-        cadence_u_hz:  5000,
-        speed_mm_h:    36_000_000,
-        world_time_ms: 1_000_000,
-        world:         0,
-        sport:         0,
-        distance:      0,
-        z:             0.0,
-        draft:         0,
-        heartrate:     0,
-    }).expect("broadcast send");
+    tx.send(GameEvent::PlayerState { athlete_id:    1001 }).expect("broadcast send");
 
     let ev = tokio::time::timeout(
         std::time::Duration::from_secs(2),
