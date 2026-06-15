@@ -7,6 +7,9 @@ check:
 test:
   cargo test
 
+linkcheck:
+  lychee docs
+
 build:
   @cargo build
 
