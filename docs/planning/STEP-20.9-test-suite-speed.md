@@ -13,19 +13,20 @@ active. No loss of test coverage: every test that runs today still runs.
 
 "Complete test suite" here means the **default set** (`cargo test`). The
 `--include-ignored` set contains ~50 deliberately slow real-socket / daemon
-tests and is not expected to meet the one-minute bound; it stays gated as it
-is today.
+tests and is not expected to meet the one-minute bound; it stays excluded as
+it is today.
 
 ## Root cause (measured 2026-06-12)
 
 The same default set was measured at **363 s, then 95 s, then 30 s** on one
-tree. The variance is the point — the wall time is dominated by **cargo
-build-lock contention and per-binary orchestration**, not by test work:
+tree. The variance is the point — the wall time is dominated by **waiting on
+the shared build lock and by the overhead of running each binary separately**,
+not by the tests themselves:
 
 - A built test binary run **directly** executes in **~0.05 s**; via `cargo
   test --test X` it takes **~1 s** (cargo's per-invocation overhead).
 - A clean `cargo test` (nothing else touching cargo) is **30 s**, of which
-  only ~4.4 s is CPU. The rest is cargo orchestrating the binaries and waiting
+  only ~4.4 s is CPU. The rest is cargo managing the binaries and waiting
   on the shared `target/debug/.cargo-lock`.
 - The 95 s and 363 s runs happened while **other cargo processes ran
   concurrently** — during the review, measurement loops; in normal use,
@@ -33,21 +34,20 @@ build-lock contention and per-binary orchestration**, not by test work:
   concurrent `cargo` blocks on that one lock.
 - The slow-marker convention is healthy: **50 tests are already `#[ignore =
   "slow: …"]`**, and the binaries that first looked like 40–80 s offenders all
-  run in ~1 s in isolation — they were contention artifacts. So this is **not**
+  run in ~1 s when run alone — they were slow because of the shared lock, not slow tests. So this is **not**
   a "mark more slow tests" problem like the 2026-05-23 regression was.
 
 The structural cost is the **number of separate integration-test binaries**:
 **~182 across the workspace** — 92 under the root `tests/`, plus 90 under the
 crates (`zwift-stats` alone has 51, `zwift-store` 14, `zwift-relay` 11). Each
 is its own executable that links the full dependency tree at build time and is
-orchestrated separately at run time.
+run separately.
 
 ## Approach
 
-Three workstreams. A is the structural win; B removes the editor contention; C
-keeps it from regressing.
+Three tracks. A is the structural improvement; B stops the editor from competing for the lock; C keeps it from regressing.
 
-### A. Consolidate integration-test binaries (the big win)
+### A. Consolidate integration-test binaries (the main improvement)
 
 Adopt the single-binary integration-test pattern (one test executable per
 crate's `tests/` directory instead of one per file). Each former
@@ -63,8 +63,8 @@ tests/
 ```
 
 This cuts ~182 binaries toward ~8 (one per crate plus the root). One binary to
-link and orchestrate instead of dozens collapses both incremental link time
-(what you feel on rebuild) and run-phase overhead. Test names and `cargo test
+link and run instead of dozens cuts both incremental link time
+(what you feel on rebuild) and the overhead of running the test phase. Test names and `cargo test
 <path>` filters are preserved because the module paths carry them.
 
 Trade-off to note: tests in one binary share a process, so an `abort()`/
@@ -75,16 +75,16 @@ this suite that trade is clearly worth it; it is the widely-used Rust pattern.
 ### B. Give `rust-analyzer` its own target directory
 
 `rust-analyzer` runs background `cargo check`/builds that take the same
-`target/debug/.cargo-lock` the user's `cargo test` needs, so they serialize.
-Point the editor at a separate target dir so the two never contend:
+`target/debug/.cargo-lock` that `cargo test` also needs, so they block each other.
+Point the editor at a separate target directory so the two never compete for the same lock:
 
 - Add a checked-in editor setting (Zed `.zed/settings.json`:
   `"rust-analyzer": { "cargo": { "targetDir": "target/ra" } }`, or the VS Code
   equivalent `rust-analyzer.cargo.targetDir`), **or**
 - document the global editor setting if a per-repo file is not wanted.
 
-This alone removes the "useless while editing" symptom even before
-consolidation lands.
+This alone stops the "unusable while editing" problem, even before
+the binary consolidation is done.
 
 ## Tests first
 
@@ -96,18 +96,20 @@ checks. `-T` is the failing check; `-I` is the change that turns it green.
       count (`ls tests/*.rs crates/*/tests/*.rs | wc -l` ≈ 182). This is the
       red the step drives down.
       **Measured 2026-06-12:** binary count = **182** (92 root + 90 crates);
-      wall time = **~69 minutes** (1:09:13) at 0% CPU — entirely lock-wait
-      behind rust-analyzer holding `target/debug/.cargo-lock`; CPU was only
+      wall time = **~69 minutes** (1:09:13) at 0% CPU — entirely spent
+      waiting on the lock held by rust-analyzer; CPU was only
       ~15 s. Running the same binaries directly takes ~0.05 s each. One
       pre-existing failure: `relay_runtime::state_refresh_polls_…` (D6, fixed
-      in Step 30). The `udp` test that also appeared failed was a contention
-      flake — it passes cleanly in isolation.
-- [ ] **20.9.2-T** A coverage-parity snapshot: capture the full list of test
+      in Step 30). The `udp` test that also appeared failed was a timing
+      failure caused by the shared lock being held — it passes cleanly when run alone.
+- [x] **20.9.2-T** A coverage-parity snapshot: capture the full list of test
       names the default set runs today (`cargo test -- --list` across the
       workspace, normalized). Any consolidation must reproduce this list
       exactly.
-- [ ] **20.9.2-I** Keep this list as the acceptance oracle for every
-      consolidation commit below.
+      **Done 2026-06-15:** 1246 test names saved to
+      `docs/planning/test-name-baseline.txt` (sorted, one name per line).
+- [x] **20.9.2-I** Keep this list as the reference each consolidation step
+      checks against. Saved at `docs/planning/test-name-baseline.txt`.
 - [ ] **20.9.3-T** Consolidate the **root `tests/`**: move the 92 files under
       `tests/it/`, add `tests/main.rs` with one `mod` per file, lift the
       duplicated `test_config()`/fixtures into `tests/it/common.rs`. Assert the
@@ -147,7 +149,7 @@ checks. `-T` is the failing check; `-I` is the change that turns it green.
 
 - Clean `cargo test` is under one minute (target ~10–15 s) and the test-name
   list is byte-for-byte the same as before consolidation.
-- A `cargo test` started while `rust-analyzer` is active does not serialize
+- A `cargo test` started while `rust-analyzer` is active does not wait
   behind the editor's build lock.
 - The slow-marker convention still holds; the guard (20.9.8) is in place.
 - The one pre-existing failure (D6, the refresher self-id bug) is unrelated to
@@ -156,8 +158,8 @@ checks. `-T` is the failing check; `-I` is the change that turns it green.
 
 ## Dependencies
 
-- None. This is the first step in the post-review sequence and gates the rest
-  only in the sense that it should land before more tests are added.
+- None. This is the first step in the post-review sequence. It should be
+  done before more tests are added.
 
 ## Deferred
 
