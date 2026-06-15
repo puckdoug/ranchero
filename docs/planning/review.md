@@ -728,3 +728,49 @@ below is ready to be planned and built.
 10. **K1** (shared inbound decode) before the next change to the recv loops.
 11. Spec amendments from the decided deviations: §7.10 (keyring, V1) and
     §4.13 (polling slowdown, V3).
+
+---
+
+## Addendum — test-suite status and timing (2026-06-12)
+
+**Result: 593 passed, 1 failed, 50 ignored.** The single failure is the D6
+bug:
+`tests/relay_runtime.rs::state_refresh_polls_get_player_state_on_self_tuning_interval`
+— "refresher must poll the watched athlete's ID (54321), NOT the monitor's
+(12345); saw 12345". This is exactly the
+[`refresher-self-id-bug.md`](refresher-self-id-bug.md) failure, fixed by
+**Step 30**. No other test fails.
+
+### Timing — what is actually slow, and what is not
+
+I measured the same default set at **363 s, then 95 s, then 30 s** on the
+same tree. The variance is the finding: the wall time is dominated by **cargo
+build-lock contention**, not by the tests themselves.
+
+- A built integration-test binary, run directly, executes in **~0.05 s**.
+- The same binary via `cargo test --test X` takes **~1 s** — that second is
+  cargo's per-invocation overhead (build-graph and freshness check), not test
+  work.
+- A clean `cargo test` with nothing else touching cargo: **30 s**, of which
+  only ~4.4 s is CPU. The remaining ~26 s is cargo orchestrating **92
+  separate integration-test binaries** plus intermittent waits on the shared
+  build lock.
+- The 95 s and 363 s figures were measured while **other cargo processes ran
+  concurrently** (during the review, my own measurement loops; in normal use,
+  the editor's `rust-analyzer`, PID seen holding
+  `target/debug/.cargo-lock`). Every concurrent `cargo` invocation blocks on
+  that one lock, so the suite balloons. This is the "so slow as to be
+  useless" experience.
+- The slow-marker convention is healthy: **50 tests are `#[ignore =
+  "slow: …"]`**, and the six binaries that first appeared to take 40–80 s each
+  all run in ~1 s in isolation — they were contention artifacts, not unmarked
+  slow tests. (This is unlike the 2026-05-23 regression, which was genuinely
+  unmarked slow tests.)
+
+**So the problem to fix is structural, not a few mismarked tests:** 92
+separate integration binaries (heavy to build and orchestrate, each linking
+the full dependency tree) plus a build lock shared with `rust-analyzer`. A
+dedicated plan, [`STEP-20.9-test-suite-speed.md`](STEP-20.9-test-suite-speed.md),
+addresses both and runs first, ahead of Step 21. Target: a clean default set
+well under one minute (consolidation should bring it toward ~10 s) and
+resilient to editor lock contention.

@@ -48,16 +48,43 @@ Status legend: ☐ planned · ◐ in progress · ☑ complete
 |  17 | ☑ | HTTP + WebSocket server compatible with `webserver.mjs` | [STEP-17-web-server.md](done/STEP-17-web-server.md) |
 |  18 | ☑ | v1/v2 payload formatters (field-for-field parity) | [STEP-18-format-payloads.md](done/STEP-18-format-payloads.md), [STEP-18-parity-ledger.md](done/STEP-18-parity-ledger.md) |
 |  19 | ☑ | Compatibility test battery (AES vector, header roundtrip, metric parity, widget smoke) | [STEP-19-compatibility-tests.md](done/STEP-19-compatibility-tests.md) |
-|  20 | — | Additional considerations (parking lot) — deferred items from earlier steps plus the final-review gap analysis (20.21–20.28), with a revisit rule for each | [STEP-20-additional-considerations.md](STEP-20-additional-considerations.md) |
+|  20 | — | Additional considerations (parking lot) — deferred items from earlier steps plus the final-review gap analysis (20.21–20.28), with a revisit rule for each | [STEP-20-additional-considerations.md](done/STEP-20-additional-considerations.md) |
+
+### Post-review parity phase (Steps 20.9, 21–33)
+
+These steps come from the 2026-06-12 implementation review
+([review.md](review.md)), which found that several STEP-20 items were marked
+complete while their production wiring was missing. The steps below are
+ordered by the review's "Suggested order of work"; each closes the review
+findings named in its row. All design questions (Q1–Q8) were answered
+2026-06-12, so every step is ready to build. **Step 20.9 runs first** — it
+restores a fast test suite before the parity work adds more tests.
+
+| #   | Status | Step | Closes | File |
+|----:|:------:|:-----|:-------|:-----|
+| 20.9 | ☐ | Restore a fast, contention-resilient test suite | test-suite addendum | [STEP-20.9-test-suite-speed.md](STEP-20.9-test-suite-speed.md) |
+|  21 | ☐ | Forward relay game events to the web layer | G1, K4 | [STEP-21-relay-web-event-bridge.md](STEP-21-relay-web-event-bridge.md) |
+|  22 | ☐ | Athlete profile fetch driver + W′/zones configuration | G3, G4 | [STEP-22-profile-fetch-and-wprime-zones.md](STEP-22-profile-fetch-and-wprime-zones.md) |
+|  23 | ☐ | 1 Hz nearby/groups processor | G2, D2 | [STEP-23-nearby-groups-processor.md](STEP-23-nearby-groups-processor.md) |
+|  24 | ☐ | Event-metadata producer | G5 | [STEP-24-event-metadata-producer.md](STEP-24-event-metadata-producer.md) |
+|  25 | ☐ | `streams/*` WebSocket push | D3 | [STEP-25-streams-websocket-push.md](STEP-25-streams-websocket-push.md) |
+|  26 | ☐ | Segment leaderboards: fetch, store, evict, serve | G6 | [STEP-26-segment-leaderboards.md](STEP-26-segment-leaderboards.md) |
+|  27 | ☐ | Route progress + geometry RPC getters | G7, D4 | [STEP-27-route-progress-and-geometry-rpcs.md](STEP-27-route-progress-and-geometry-rpcs.md) |
+|  28 | ☐ | Watched-athlete switching + real game-state event | G8, V4 | [STEP-28-watched-switching-and-game-state.md](STEP-28-watched-switching-and-game-state.md) |
+|  29 | ☐ | Motion-based idle suspension | D5, V2 | [STEP-29-motion-based-idle-suspension.md](STEP-29-motion-based-idle-suspension.md) |
+|  30 | ☐ | State refresher must not poll the monitor account | D6 | [STEP-30-refresher-self-id-fix.md](STEP-30-refresher-self-id-fix.md) |
+|  31 | ☐ | Settings persistence + cadence clamp | G9, D1 | [STEP-31-settings-persistence-and-cadence-clamp.md](STEP-31-settings-persistence-and-cadence-clamp.md) |
+|  32 | ☐ | Extract the shared TCP/UDP inbound-decode path | K1 | [STEP-32-shared-inbound-decode.md](STEP-32-shared-inbound-decode.md) |
+|  33 | ☐ | Spec amendments for decided deviations | V1, V3 | [STEP-33-spec-amendments.md](STEP-33-spec-amendments.md) |
 
 Later steps may be renumbered or split as the project progresses. Steps
-01–19 are complete and their files have moved to `done/`. STEP 20 is the
-parking lot; its final-review additions (20.21–20.28) record the gaps
-between the verified payload shapes / isolated math and the end-to-end
-production data path, and several of those are blocking for full
-sauce4zwift parity rather than optional. STEP 12 also has a series of
-corrective sub-steps (12.5–12.17, 12.20, 12.30) in `done/` that are not
-listed individually in the index above.
+01–19 are complete and their files have moved to `done/`. STEP 20 (now in
+`done/`) is the parking lot; its final-review additions (20.21–20.28) record
+the gaps between the verified payload shapes / isolated math and the
+end-to-end production data path. Steps 21–33 are the planned response to
+those gaps. STEP 12 also has a series of corrective sub-steps (12.5–12.17,
+12.20, 12.30) in `done/` that are not listed individually in the index
+above.
 
 ## Crate layout (target)
 
