@@ -134,10 +134,16 @@ checks. `-T` is the failing check; `-I` is the change that turns it green.
       `tests/main.rs` created with 51 `#[path]` declarations. No shared
       helpers needed — all fixture paths use `CARGO_MANIFEST_DIR` and are
       unaffected by the move. 234 passed; 0 failed; 2 ignored; 0.85s.
-- [ ] **20.9.5-T** Consolidate the remaining crates' `tests/` (`zwift-store`,
+- [x] **20.9.5-T** Consolidate the remaining crates' `tests/` (`zwift-store`,
       `zwift-relay`, `zwift-api`, `zwift-routes`, `zwift-worlds`,
       `zwift-proto`); assert one binary each, same test names.
-- [ ] **20.9.5-I** Implement; green.
+      **Done 2026-06-21:** all six crates consolidated; one binary each.
+      Totals: zwift-store 46, zwift-api 21, zwift-relay 136 (10 ignored),
+      zwift-routes 12, zwift-store 48 (1 ignored), zwift-worlds 12. All green.
+- [x] **20.9.5-I** Implement; green.
+      **Done 2026-06-21:** 39 files moved across six crates via `git mv`;
+      six `tests/main.rs` files created with `#[path]` declarations.
+      275 passed; 0 failed; 12 ignored across the six crates.
 - [ ] **20.9.6-T** Re-measure clean `cargo test`: assert wall time is **under
       60 s** (target ~10–15 s) on an otherwise-idle machine, with the
       20.9.2 test-name list intact.
