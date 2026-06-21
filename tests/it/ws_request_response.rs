@@ -13,41 +13,13 @@
 //!
 //! See docs/plans/STEP-17-web-server.md, item 17.16-T.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
-use ranchero::config::{EditingMode, ResolvedConfig, ZwiftEndpoints};
 use ranchero::web::{start, RpcRegistry, WebState};
 use serde_json::{json, Value};
 use tokio::sync::Notify;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-
-fn test_config() -> ResolvedConfig {
-    ResolvedConfig {
-        main_email:            None,
-        main_password:         None,
-        monitor_email:         None,
-        monitor_password:      None,
-        server_bind:           "127.0.0.1".into(),
-        server_port:           0,
-        server_https:          false,
-        log_level:             None,
-        log_file:              PathBuf::from("/tmp/ranchero-ws-rr-test.log"),
-        pidfile:               PathBuf::from("/tmp/ranchero-ws-rr-test.pid"),
-        config_path:           None,
-        editing_mode:          EditingMode::Default,
-        zwift_endpoints:       ZwiftEndpoints {
-            auth_base: "http://127.0.0.1:1".into(),
-            api_base:  "http://127.0.0.1:1".into(),
-        },
-        relay_enabled:         false,
-        watched_athlete_id:    None,
-        server_pages_root:     PathBuf::from("pages"),
-        server_https_cert_dir: PathBuf::from("https"),
-        event_behavior:        Default::default(),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,7 +55,7 @@ async fn ws_recv(ws: &mut WsStream) -> Value {
 #[tokio::test]
 #[ignore = "slow: real socket"]
 async fn ws_nested_form_dispatches_rpc() {
-    let cfg   = test_config();
+    let cfg   = super::common::test_config("ws-rr");
     let state = Arc::new(WebState::with_rpc(RpcRegistry::new()));
     let shutdown = Arc::new(Notify::new());
 
@@ -111,7 +83,7 @@ async fn ws_nested_form_dispatches_rpc() {
 #[tokio::test]
 #[ignore = "slow: real socket"]
 async fn ws_flat_form_dispatches_rpc() {
-    let cfg   = test_config();
+    let cfg   = super::common::test_config("ws-rr");
     let state = Arc::new(WebState::with_rpc(RpcRegistry::new()));
     let shutdown = Arc::new(Notify::new());
 
@@ -140,7 +112,7 @@ async fn ws_flat_form_dispatches_rpc() {
 #[tokio::test]
 #[ignore = "slow: real socket"]
 async fn ws_extra_field_is_ignored() {
-    let cfg   = test_config();
+    let cfg   = super::common::test_config("ws-rr");
     let state = Arc::new(WebState::with_rpc(RpcRegistry::new()));
     let shutdown = Arc::new(Notify::new());
 
@@ -168,7 +140,7 @@ async fn ws_extra_field_is_ignored() {
 #[tokio::test]
 #[ignore = "slow: real socket"]
 async fn ws_unknown_rpc_name_returns_error() {
-    let cfg   = test_config();
+    let cfg   = super::common::test_config("ws-rr");
     let state = Arc::new(WebState::with_rpc(RpcRegistry::new()));
     let shutdown = Arc::new(Notify::new());
 
@@ -201,7 +173,7 @@ async fn ws_unknown_rpc_name_returns_error() {
 #[tokio::test]
 #[ignore = "slow: real socket"]
 async fn ws_malformed_frame_no_method_returns_error() {
-    let cfg   = test_config();
+    let cfg   = super::common::test_config("ws-rr");
     let state = Arc::new(WebState::with_rpc(RpcRegistry::new()));
     let shutdown = Arc::new(Notify::new());
 

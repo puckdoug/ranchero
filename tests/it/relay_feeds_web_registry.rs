@@ -22,13 +22,12 @@
 //!
 //! See docs/plans/STEP-17-web-server.md, item 17.38-T.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use actix_web::{test as axtest, web, App};
 use futures_util::{SinkExt, StreamExt};
-use ranchero::config::{EditingMode, ResolvedConfig, ZwiftEndpoints};
+use ranchero::config::ResolvedConfig;
 use ranchero::daemon::relay::GameEvent;
 use ranchero::web::{http::configure_api, proto_to_stats, start, WebState};
 use serde_json::json;
@@ -38,32 +37,6 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn test_config() -> ResolvedConfig {
-    ResolvedConfig {
-        main_email:            None,
-        main_password:         None,
-        monitor_email:         None,
-        monitor_password:      None,
-        server_bind:           "127.0.0.1".into(),
-        server_port:           0,
-        server_https:          false,
-        log_level:             None,
-        log_file:              PathBuf::from("/tmp/ranchero-bridge-test.log"),
-        pidfile:               PathBuf::from("/tmp/ranchero-bridge-test.pid"),
-        config_path:           None,
-        editing_mode:          EditingMode::Default,
-        zwift_endpoints:       ZwiftEndpoints {
-            auth_base: "http://127.0.0.1:1".into(),
-            api_base:  "http://127.0.0.1:1".into(),
-        },
-        relay_enabled:         false,
-        watched_athlete_id:    Some(54321),
-        server_pages_root:     PathBuf::from("pages"),
-        server_https_cert_dir: PathBuf::from("https"),
-        event_behavior:        Default::default(),
-    }
-}
 
 type WsStream = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -113,6 +86,11 @@ fn player_state_proto() -> zwift_proto::PlayerState {
 /// Fails to compile until 17.38-I adds `proto_to_stats::bridge_player_state_event`.
 /// Once that function exists with correct ordering (registry update → event
 /// emit), this test passes without modification.
+fn test_config() -> ResolvedConfig {
+    let mut cfg = super::common::test_config("bridge");
+    cfg.watched_athlete_id = Some(54321);
+    cfg
+}
 #[tokio::test]
 #[ignore = "slow: real socket"]
 async fn bridge_populates_registry_then_triggers_ws_event() {

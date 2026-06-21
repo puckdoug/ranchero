@@ -9,7 +9,7 @@
 //   b) replaces the ftp parameter with profile: Option<&CachedProfile>
 //   c) uses profile.ftp to compute TSS and profile fields to populate `athlete`
 
-mod support;
+use crate::support;
 
 use ranchero::web::format::{format_athlete_data_v1, CachedProfile};
 use support::{build_athlete, SampleRow};

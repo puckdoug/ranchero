@@ -12,7 +12,7 @@
 //!
 //! See docs/plans/STEP-18-format-payloads.md, items 18.0-T and 18.0-I.
 
-mod support;
+use crate::support;
 
 use serde_json::json;
 

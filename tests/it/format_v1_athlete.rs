@@ -11,7 +11,7 @@
 //!
 //! See docs/plans/STEP-18-format-payloads.md, items 18.6-T and 18.7-T.
 
-mod support;
+use crate::support;
 
 use ranchero::web::format::format_athlete_data_v1;
 use support::{assert_json_parity, build_athlete};

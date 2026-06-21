@@ -16,7 +16,7 @@
 //!
 //! See docs/plans/STEP-18-format-payloads.md, item 18.12-T.
 
-mod support;
+use crate::support;
 
 use ranchero::web::format::format_athlete_streams;
 use support::{assert_json_parity, build_athlete, SampleRow};

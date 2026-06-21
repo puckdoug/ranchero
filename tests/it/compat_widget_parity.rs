@@ -18,13 +18,12 @@
 //!
 //! See docs/planning/STEP-19-compatibility-tests.md, item 19.6.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use ranchero::config::{EditingMode, ResolvedConfig, ZwiftEndpoints};
 use ranchero::daemon::relay::GameEvent;
+use ranchero::config::ResolvedConfig;
 use ranchero::web::{start, AthleteRegistry, WebState};
 use serde_json::json;
 use tokio::sync::{broadcast, Notify};
@@ -36,29 +35,7 @@ use zwift_stats::MostRecentState;
 // ---------------------------------------------------------------------------
 
 fn test_config(log_name: &str) -> ResolvedConfig {
-    ResolvedConfig {
-        main_email:            None,
-        main_password:         None,
-        monitor_email:         None,
-        monitor_password:      None,
-        server_bind:           "127.0.0.1".into(),
-        server_port:           0,
-        server_https:          false,
-        log_level:             None,
-        log_file:              PathBuf::from(format!("/tmp/ranchero-{log_name}.log")),
-        pidfile:               PathBuf::from(format!("/tmp/ranchero-{log_name}.pid")),
-        config_path:           None,
-        editing_mode:          EditingMode::Default,
-        zwift_endpoints:       ZwiftEndpoints {
-            auth_base: "http://127.0.0.1:1".into(),
-            api_base:  "http://127.0.0.1:1".into(),
-        },
-        relay_enabled:         false,
-        watched_athlete_id:    None,
-        server_pages_root:     PathBuf::from("pages"),
-        server_https_cert_dir: PathBuf::from("https"),
-        event_behavior:        Default::default(),
-    }
+    super::common::test_config(log_name)
 }
 
 type WsStream = tokio_tungstenite::WebSocketStream<

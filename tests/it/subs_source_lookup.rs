@@ -11,42 +11,14 @@
 //!
 //! See docs/plans/STEP-17-web-server.md, item 17.20-T.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
-use ranchero::config::{EditingMode, ResolvedConfig, ZwiftEndpoints};
 use ranchero::daemon::relay::GameEvent;
 use ranchero::web::{start, WebState};
 use serde_json::json;
 use tokio::sync::{broadcast, Notify};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-
-fn test_config() -> ResolvedConfig {
-    ResolvedConfig {
-        main_email:            None,
-        main_password:         None,
-        monitor_email:         None,
-        monitor_password:      None,
-        server_bind:           "127.0.0.1".into(),
-        server_port:           0,
-        server_https:          false,
-        log_level:             None,
-        log_file:              PathBuf::from("/tmp/ranchero-subs-source-test.log"),
-        pidfile:               PathBuf::from("/tmp/ranchero-subs-source-test.pid"),
-        config_path:           None,
-        editing_mode:          EditingMode::Default,
-        zwift_endpoints:       ZwiftEndpoints {
-            auth_base: "http://127.0.0.1:1".into(),
-            api_base:  "http://127.0.0.1:1".into(),
-        },
-        relay_enabled:         false,
-        watched_athlete_id:    None,
-        server_pages_root:     PathBuf::from("pages"),
-        server_https_cert_dir: PathBuf::from("https"),
-        event_behavior:        Default::default(),
-    }
-}
 
 type WsStream = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -88,7 +60,7 @@ async fn stats_source_is_recognized() {
     let (tx, _) = broadcast::channel::<GameEvent>(16);
     let state = Arc::new(WebState::new().and_game_events(tx));
 
-    let cfg      = test_config();
+    let cfg      = super::common::test_config("subs-source");
     let shutdown = Arc::new(Notify::new());
     let handle   = start(&cfg, state, shutdown.clone()).await.expect("server must start");
     let url      = format!("ws://{}/api/ws/events", handle.local_addr());
@@ -110,7 +82,7 @@ async fn game_connection_source_is_recognized() {
     let (tx, _) = broadcast::channel::<GameEvent>(16);
     let state = Arc::new(WebState::new().and_game_events(tx));
 
-    let cfg      = test_config();
+    let cfg      = super::common::test_config("subs-source");
     let shutdown = Arc::new(Notify::new());
     let handle   = start(&cfg, state, shutdown.clone()).await.expect("server must start");
     let url      = format!("ws://{}/api/ws/events", handle.local_addr());
@@ -138,7 +110,7 @@ async fn unknown_source_returns_descriptive_error() {
     let (tx, _) = broadcast::channel::<GameEvent>(16);
     let state = Arc::new(WebState::new().and_game_events(tx));
 
-    let cfg      = test_config();
+    let cfg      = super::common::test_config("subs-source");
     let shutdown = Arc::new(Notify::new());
     let handle   = start(&cfg, state, shutdown.clone()).await.expect("server must start");
     let url      = format!("ws://{}/api/ws/events", handle.local_addr());

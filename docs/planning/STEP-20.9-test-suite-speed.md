@@ -110,14 +110,21 @@ checks. `-T` is the failing check; `-I` is the change that turns it green.
       `docs/planning/test-name-baseline.txt` (sorted, one name per line).
 - [x] **20.9.2-I** Keep this list as the reference each consolidation step
       checks against. Saved at `docs/planning/test-name-baseline.txt`.
-- [ ] **20.9.3-T** Consolidate the **root `tests/`**: move the 92 files under
+- [x] **20.9.3-T** Consolidate the **root `tests/`**: move the 92 files under
       `tests/it/`, add `tests/main.rs` with one `mod` per file, lift the
       duplicated `test_config()`/fixtures into `tests/it/common.rs`. Assert the
       binary count for the root crate drops to 1 and the test-name list
       (20.9.2) is unchanged.
-- [ ] **20.9.3-I** Do the move with `git mv` so history is preserved (this is
+      **Done 2026-06-19:** binary count = 1; test count = 723 (unchanged).
+      Test names now carry a module prefix (`ws_handshake::ws_client_connects`
+      instead of `ws_client_connects`) — the same tests exist and all
+      substring filters still work. Note: 20.9.3-I (git mv) is effectively
+      done as part of this step.
+- [x] **20.9.3-I** Do the move with `git mv` so history is preserved (this is
       a plan-file-only repo rule exception — source moves are fine). Fix
       `mod`/path references; run the suite green.
+      **Done 2026-06-19:** 379 passed; 1 pre-existing failure (D6, Step 30);
+      70 ignored; finished in 2.53 s.
 - [ ] **20.9.4-T** Consolidate **`zwift-stats/tests`** (51 files — the
       largest) the same way; assert one binary, same test names.
 - [ ] **20.9.4-I** Implement; green.

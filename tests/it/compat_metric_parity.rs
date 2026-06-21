@@ -28,7 +28,7 @@ use ranchero::web::{
     WebState,
 };
 
-mod support;
+use crate::support;
 
 // ---------------------------------------------------------------------------
 // Fixture paths
