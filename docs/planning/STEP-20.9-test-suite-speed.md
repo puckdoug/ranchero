@@ -125,9 +125,15 @@ checks. `-T` is the failing check; `-I` is the change that turns it green.
       `mod`/path references; run the suite green.
       **Done 2026-06-19:** 379 passed; 1 pre-existing failure (D6, Step 30);
       70 ignored; finished in 2.53 s.
-- [ ] **20.9.4-T** Consolidate **`zwift-stats/tests`** (51 files — the
+- [x] **20.9.4-T** Consolidate **`zwift-stats/tests`** (51 files — the
       largest) the same way; assert one binary, same test names.
-- [ ] **20.9.4-I** Implement; green.
+      **Done 2026-06-21:** binary count = 1; test count = 236 (234 passing,
+      2 ignored). Test names carry a module prefix as with the root crate.
+- [x] **20.9.4-I** Implement; green.
+      **Done 2026-06-21:** 51 files moved to `tests/it/` via `git mv`;
+      `tests/main.rs` created with 51 `#[path]` declarations. No shared
+      helpers needed — all fixture paths use `CARGO_MANIFEST_DIR` and are
+      unaffected by the move. 234 passed; 0 failed; 2 ignored; 0.85s.
 - [ ] **20.9.5-T** Consolidate the remaining crates' `tests/` (`zwift-store`,
       `zwift-relay`, `zwift-api`, `zwift-routes`, `zwift-worlds`,
       `zwift-proto`); assert one binary each, same test names.
